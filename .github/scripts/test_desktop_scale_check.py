@@ -137,7 +137,7 @@ def make_runner_harness(root, history=None):
                   exit 0
                   ;;
                 evaluate)
-                  printf 'evaluate\\n' >> "$EVALUATE_CALL_LOG"
+                  printf 'evaluate %s\\n' "$*" >> "$EVALUATE_CALL_LOG"
                   status="${MOCK_EVALUATE_STATUS:-0}"
                   if [[ "$status" != 0 ]]; then exit "$status"; fi
                   ;;
@@ -1152,23 +1152,58 @@ class DesktopScaleCheckTests(unittest.TestCase):
 
         for scenario in scenarios:
             with self.subTest(scenario=scenario):
-                head = [make_sample()]
-                head[0]["scenarios"][scenario].update(
-                    {"one_ms": 10.0, "hundred_ms": 16.0}
-                )
+                head = [make_sample(), make_sample()]
+                for sample, hundred_ms in zip(head, (14.0, 18.0)):
+                    sample["scenarios"][scenario].update(
+                        {"one_ms": 10.0, "hundred_ms": hundred_ms}
+                    )
 
                 result = scale_check.evaluate(
-                    history, [make_sample()], head, report_only=True
+                    history,
+                    [make_sample(), make_sample()],
+                    head,
+                    report_only=True,
+                    enforce_calibration_ratio=True,
                 )
 
                 self.assertTrue(result["report_only"])
                 self.assertEqual(result["calibrating"], 19)
                 self.assertTrue(
                     any(
-                        scenario in failure and "1.5x" in failure
+                        scenario in failure and "1.60x" in failure
                         for failure in result["failures"]
                     )
                 )
+
+    def test_calibrating_single_sample_is_not_ratio_gated_without_pr_flag(self):
+        self.require_implementation()
+        history = [make_sample() for _ in range(scale_check.MIN_DEV_RUNS - 1)]
+        head = [make_sample()]
+        scenario = "updates.getDifference (1,000 messages; 50 / 5,000 dialogs)"
+        head[0]["scenarios"][scenario].update(
+            {"one_ms": 10.0, "hundred_ms": 16.0}
+        )
+
+        result = scale_check.evaluate(
+            history, [make_sample()], head, report_only=True
+        )
+
+        self.assertFalse(
+            any(
+                scenario in failure and "1.5x" in failure
+                for failure in result["failures"]
+            )
+        )
+        with self.assertRaisesRegex(
+            scale_check.ScaleCheckError, "require two head samples"
+        ):
+            scale_check.evaluate(
+                history,
+                [make_sample()],
+                head,
+                report_only=True,
+                enforce_calibration_ratio=True,
+            )
 
     def test_calibrating_summary_reports_the_ratios_used_by_the_gate(self):
         self.require_implementation()
@@ -1181,10 +1216,19 @@ class DesktopScaleCheckTests(unittest.TestCase):
             )
 
         result = scale_check.evaluate(
-            history, [make_sample()], head, report_only=True
+            history,
+            [make_sample(), make_sample()],
+            head,
+            report_only=True,
+            enforce_calibration_ratio=True,
         )
         summary = scale_check.format_summary(result, head[-1])
 
+        self.assertIn(
+            "The 1.5x cap for dialogs, contact change and update burst "
+            "uses median PR head ratios.",
+            summary,
+        )
         self.assertTrue(
             any(
                 scenario in failure and "1.60x" in failure
@@ -1195,6 +1239,49 @@ class DesktopScaleCheckTests(unittest.TestCase):
             "| messages.getDialogs page (100 dialogs) | n/a → 10.00 ms | "
             "n/a → 14.00 ms | 1.60x (n=3; range 1.40–2.00x) | "
             "50 ms main-thread step | calibrating: 19/20 |",
+            summary,
+        )
+
+    def test_uncalibrated_pr_uses_two_interleaved_pairs_for_ratio_gate(self):
+        self.require_implementation()
+        runner = (
+            Path(__file__).parents[2]
+            / ".github/scripts/run_desktop_scale_check.sh"
+        )
+        history = [make_sample() for _ in range(scale_check.MIN_DEV_RUNS - 1)]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            repo_root, _runner_temp, env = make_runner_harness(root, history)
+            result = subprocess.run(
+                ["bash", str(runner)],
+                cwd=repo_root,
+                env=env,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            calls = (root / "docker-calls.txt").read_text().splitlines()
+            fetch_calls = (root / "fetch-calls.txt").read_text().splitlines()
+            evaluate_calls = (root / "evaluate-calls.txt").read_text().splitlines()
+            summary = (root / "step-summary.md").read_text()
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(len(calls), 4)
+        self.assertEqual(
+            [line.split()[1] for line in calls],
+            [
+                "/desktop-scale/Teagram",
+                "/usr/src/tdesktop/out/Debug/Teagram",
+                "/desktop-scale/Teagram",
+                "/usr/src/tdesktop/out/Debug/Teagram",
+            ],
+        )
+        self.assertEqual(fetch_calls, ["fetch", "fetch-binary"])
+        self.assertIn("--enforce-calibration-ratio", evaluate_calls[0])
+        self.assertIn(
+            "| updates.getDifference (1,000 messages; 50 / 5,000 dialogs) | "
+            "n/a → 10.00 ms | n/a → 12.00 ms | "
+            "1.20x (n=2; range 1.20–1.20x) |",
             summary,
         )
 
@@ -1731,7 +1818,7 @@ class DesktopScaleCheckTests(unittest.TestCase):
 
         self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
         self.assertFalse(sample_path.exists())
-        self.assertIn("head-1 failed with status 2", summary)
+        self.assertIn("base-1 failed with status 2", summary)
 
     def test_binary_fetch_timeout_names_budget_and_rerun_action(self):
         self.require_implementation()
@@ -1867,7 +1954,7 @@ class DesktopScaleCheckTests(unittest.TestCase):
 
         self.assertEqual(result.returncode, 3, result.stdout + result.stderr)
         self.assertIn("app report Outcome: FAIL; sample recorded as invalid", result.stdout)
-        self.assertIn("Desktop scale run head-1 exited with status 1", result.stdout)
+        self.assertIn("Desktop scale run base-1 exited with status 1", result.stdout)
         self.assertIn("app report Outcome: FAIL; sample recorded as invalid", summary)
         self.assertNotIn("Could not parse the report", result.stdout)
 
@@ -1962,7 +2049,7 @@ class DesktopScaleCheckTests(unittest.TestCase):
             summary = (root / "step-summary.md").read_text()
 
         self.assertEqual(result.returncode, 42, result.stdout + result.stderr)
-        self.assertIn("head-1 failed with status 42", summary)
+        self.assertIn("base-1 failed with status 42", summary)
         self.assertNotIn("unknown", summary)
         self.assertNotIn("did not emit its report", result.stdout)
 
@@ -1985,7 +2072,7 @@ class DesktopScaleCheckTests(unittest.TestCase):
 
         self.assertEqual(result.returncode, 124, result.stdout + result.stderr)
         self.assertIn("budget was exhausted", result.stdout)
-        self.assertIn("head-1 failed with status 124", summary)
+        self.assertIn("base-1 failed with status 124", summary)
         self.assertFalse((root / "docker-calls.txt").exists())
 
         with tempfile.TemporaryDirectory() as directory:
@@ -2005,7 +2092,7 @@ class DesktopScaleCheckTests(unittest.TestCase):
 
         self.assertEqual(result.returncode, 124, result.stdout + result.stderr)
         self.assertIn("exit 124", result.stdout)
-        self.assertIn("head-1 failed with status 124", summary)
+        self.assertIn("base-1 failed with status 124", summary)
         self.assertFalse((root / "evaluate-calls.txt").exists())
 
     def test_unexpected_cli_error_prints_a_traceback(self):

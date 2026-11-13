@@ -50,8 +50,8 @@ if [[ "$GITHUB_EVENT_NAME" == 'pull_request' \
 		if [[ "$scale_history_truncated" == 'true' ]]; then
 			scale_history_args+=(--history-truncated)
 		fi
-		if [[ "$GITHUB_EVENT_NAME" == 'pull_request' \
-			&& "$scale_baseline_count" -ge 20 ]]; then
+		# PR ratio checks use two pairs before the dev timing baseline calibrates.
+		if [[ "$GITHUB_EVENT_NAME" == 'pull_request' ]]; then
 			binary_fetch_started=$SECONDS
 			set +e
 			timeout "${binary_fetch_budget_seconds}s" python3 "$scale_script" fetch-binary \
@@ -67,12 +67,15 @@ if [[ "$GITHUB_EVENT_NAME" == 'pull_request' \
 					printf '::error::PR base Teagram artifact fetch timed out after the '
 					printf '%s-second budget; re-run this job.\n' "$binary_fetch_budget_seconds"
 				else
-					echo "::error::PR base Teagram artifact fetch failed with status $binary_fetch_status after dev history was available."
+					printf '::error::PR base Teagram artifact fetch failed with status %s; ' \
+						"$binary_fetch_status"
+					printf 'the two-pair ratio check requires the base binary.\n'
 				fi
 				cat >> "$GITHUB_STEP_SUMMARY" <<EOF
 ### Desktop data scale check
 
-No timing verdict was produced because the PR base binary fetch failed with status $binary_fetch_status after $scale_baseline_count dev samples were available.
+No timing verdict was produced because the PR base binary fetch failed with status $binary_fetch_status.
+The two-pair ratio check requires the base binary.
 EOF
 				exit "$binary_fetch_status"
 			fi
@@ -309,6 +312,9 @@ evaluate_samples() {
 	if [[ "$report_only" == 'true' ]]; then
 		args+=(--report-only)
 	fi
+	if [[ "$GITHUB_EVENT_NAME" == 'pull_request' ]]; then
+		args+=(--enforce-calibration-ratio)
+	fi
 	: > "$evaluation_file"
 	: > "$summary_file"
 	set +e
@@ -357,8 +363,7 @@ if [[ "$GITHUB_REF" == 'refs/heads/dev' ]]; then
 	exit "${evaluation_status:-2}"
 fi
 
-if [[ "$GITHUB_EVENT_NAME" == 'pull_request' \
-	&& "$scale_baseline_count" -ge 20 ]]; then
+if [[ "$GITHUB_EVENT_NAME" == 'pull_request' ]]; then
 	for pair in 1 2; do
 		if run_interleaved_pair "$pair"; then
 			:

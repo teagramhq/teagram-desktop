@@ -332,6 +332,7 @@ def evaluate(
     absolute_budget_head_runs=None,
     history_malformed_count=0,
     history_first_error=None,
+    enforce_calibration_ratio=False,
 ):
     history = _valid_records(history)
     if absolute_budget_head_runs is None:
@@ -365,6 +366,10 @@ def evaluate(
         for scenario in SCENARIOS
     }
     if count < MIN_DEV_RUNS:
+        if enforce_calibration_ratio and len(head_runs) < 2:
+            raise ScaleCheckError(
+                "pre-calibration ratio checks require two head samples"
+            )
         failures = list(contact_load_failures)
         rows = {}
         for scenario in SCENARIOS:
@@ -382,7 +387,8 @@ def evaluate(
                 "ratio_max": max(ratios) if ratios else None,
             }
             if (
-                scenario in CALIBRATION_RATIO_SCENARIOS
+                enforce_calibration_ratio
+                and scenario in CALIBRATION_RATIO_SCENARIOS
                 and ratio is not None
                 and ratio > MAX_SCALE_RATIO
             ):
@@ -399,6 +405,7 @@ def evaluate(
             "rows": rows,
             "failures": failures,
             "report_only": True,
+            "calibration_ratio_gate": enforce_calibration_ratio,
             "history_truncated": history_truncated,
             "history_unavailable": history_unavailable,
             "history_malformed_count": history_malformed_count,
@@ -536,6 +543,11 @@ def format_summary(result, current_sample=None, retry_note=None):
             f"Timing thresholds are report-only while calibrating: "
             f"{result['calibrating']}/{MIN_DEV_RUNS}."
         )
+        if result.get("calibration_ratio_gate"):
+            lines.append(
+                "The 1.5x cap for dialogs, contact change and update burst "
+                "uses median PR head ratios."
+            )
     else:
         lines.append(
             f"Noise uses the latest {MIN_DEV_RUNS} valid `dev` runs; "
@@ -1084,6 +1096,7 @@ def _cmd_evaluate(args):
         absolute_budget_head_runs,
         args.history_malformed_count,
         args.history_first_error,
+        args.enforce_calibration_ratio,
     )
     _write_json(args.output, result)
     if args.summary_output:
@@ -1149,6 +1162,7 @@ def _build_parser():
     compare.add_argument("--history-unavailable", action="store_true")
     compare.add_argument("--history-malformed-count", type=int, default=0)
     compare.add_argument("--history-first-error")
+    compare.add_argument("--enforce-calibration-ratio", action="store_true")
     compare.set_defaults(function=_cmd_evaluate)
 
     annotate = commands.add_parser("annotate")
