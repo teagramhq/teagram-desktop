@@ -794,7 +794,7 @@ void UiStallWatchdog::run() {
 		};
 		if (_condition.wait_until(lock, postedAt + _countThreshold,
 								  acknowledged)) {
-			if (_stopping) {
+			if (_stopping && (_acknowledgedSequence < current)) {
 				return;
 			}
 			const auto duration = _acknowledgedAt - postedAt;
@@ -810,7 +810,7 @@ void UiStallWatchdog::run() {
 			TotalStallCount.fetch_add(1, std::memory_order_relaxed);
 			if (!waitUntil(postedAt + _logThreshold)) {
 				detectedAt = Clock::now();
-			} else if (_stopping) {
+			} else if (_stopping && (_acknowledgedSequence < current)) {
 				return;
 			} else if (_acknowledgedAt - postedAt >= _logThreshold) {
 				detectedAt = _acknowledgedAt;
