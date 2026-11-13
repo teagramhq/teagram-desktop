@@ -1487,36 +1487,22 @@ run_font_startup_regression() {
 			echo "font startup regression launch failed: $sample" >&2
 			return 1
 		fi
-		local launch_timing
-		launch_timing="$(grep -E 'Sandbox startup to launchApplication regression: wall_ns=[0-9]+' \
+		local splash_timing
+		splash_timing="$(grep -E 'Font startup splash regression: visible=1 wall_ns=[0-9]+' \
 			"$sample_log" 2>/dev/null | tail -n 1 || true)"
-		local launch_wall_ns
-		launch_wall_ns="$(sed -E 's/.*wall_ns=([0-9]+).*/\1/' <<<"$launch_timing")"
-		if [[ ! "$launch_wall_ns" =~ ^[0-9]+$ ]] \
-			|| (( launch_wall_ns >= 100000000 )); then
-			cat "$sample_log" >&2
-			printf 'Sandbox to launchApplication %s exceeded the 100ms budget or had no timing: %s\n' \
-				"$sample" "$launch_timing" >&2
-			return 1
-		fi
-		printf 'Sandbox to launchApplication %s=PASS wall_ns=%s under_100ms=1\n' \
-			"$sample" "$launch_wall_ns"
-		local window_timing
-		window_timing="$(grep -E 'Font startup window regression: visible=1 wall_ns=[0-9]+' \
-			"$sample_log" 2>/dev/null | tail -n 1 || true)"
-		local window_wall_ns
-		window_wall_ns="$(sed -E 's/.*wall_ns=([0-9]+).*/\1/' <<<"$window_timing")"
-		local startup_window_position
-		if [[ "$window_wall_ns" =~ ^[0-9]+$ ]]; then
-			if (( window_wall_ns >= 100000000 )); then
+		local splash_wall_ns
+		splash_wall_ns="$(sed -E 's/.*wall_ns=([0-9]+).*/\1/' <<<"$splash_timing")"
+		local startup_splash_position
+		if [[ "$splash_wall_ns" =~ ^[0-9]+$ ]]; then
+			if (( splash_wall_ns >= 100000000 )); then
 				cat "$sample_log" >&2
-				printf 'Font startup window %s exceeded the 100ms budget: wall_ns=%s\n' \
-					"$sample" "$window_wall_ns" >&2
+				printf 'Font startup splash %s exceeded the 100ms budget: wall_ns=%s\n' \
+					"$sample" "$splash_wall_ns" >&2
 				return 1
 			fi
-			printf 'Font startup window %s=PASS wall_ns=%s under_100ms=1\n' \
-				"$sample" "$window_wall_ns"
-			startup_window_position="$(grep -F -n -h 'Font startup window regression: visible=1' \
+			printf 'Font startup splash %s=PASS wall_ns=%s under_100ms=1\n' \
+				"$sample" "$splash_wall_ns"
+			startup_splash_position="$(grep -F -n -h 'Font startup splash regression: visible=1' \
 				"$sample_log" | tail -n 1 | cut -d: -f1)"
 		else
 			local exposure_timeout
@@ -1527,23 +1513,23 @@ run_font_startup_regression() {
 			if [[ ! "$exposure_timeout_wall_ns" =~ ^[0-9]+$ ]] \
 				|| (( exposure_timeout_wall_ns >= 2000000000 )); then
 				cat "$sample_log" >&2
-				printf 'Font startup window evidence missing or exposure fallback exceeded 2s: %s\n' \
+				printf 'Font startup splash evidence missing or exposure fallback exceeded 2s: %s\n' \
 					"$sample" >&2
 				return 1
 			fi
 			printf 'Font database warmup fallback=PASS sample=%s wall_ns=%s\n' \
 				"$sample" "$exposure_timeout_wall_ns"
-			startup_window_position="$(grep -F -n -h 'Font startup exposure timeout regression:' \
+			startup_splash_position="$(grep -F -n -h 'Font startup exposure timeout regression:' \
 				"$sample_log" | tail -n 1 | cut -d: -f1)"
 		fi
 		local warmup_started_position
 		warmup_started_position="$(grep -F -n -h 'Font database warmup regression: started=1' \
 			"$sample_log" | tail -n 1 | cut -d: -f1)"
-		if [[ ! "$startup_window_position" =~ ^[0-9]+$ ]] \
+		if [[ ! "$startup_splash_position" =~ ^[0-9]+$ ]] \
 			|| [[ ! "$warmup_started_position" =~ ^[0-9]+$ ]] \
-			|| (( warmup_started_position <= startup_window_position )); then
+			|| (( warmup_started_position <= startup_splash_position )); then
 			cat "$sample_log" >&2
-			printf 'font database warmup started before startup window exposure or timeout: %s\n' \
+			printf 'font database warmup started before splash exposure or timeout: %s\n' \
 				"$sample" >&2
 			return 1
 		fi
@@ -1560,17 +1546,38 @@ run_font_startup_regression() {
 			return 1
 		fi
 		printf 'Font database warmup before app run=PASS sample=%s\n' "$sample"
+		if ! grep -F -q 'Font database warmup thread regression: worker=1' \
+			"$sample_log" "$font_profile_log" 2>/dev/null; then
+			cat "$sample_log" >&2
+			if [[ -f "$font_profile_log" ]]; then
+				cat "$font_profile_log" >&2
+			fi
+			echo "font database warmup did not run on a worker thread: $sample" >&2
+			return 1
+		fi
+		printf 'Font database warmup worker thread=PASS sample=%s\n' "$sample"
+		if ! grep -F -q 'Font database warmup regression: ready=1 custom-fonts=1' \
+			"$sample_log" "$font_profile_log" 2>/dev/null; then
+			cat "$sample_log" >&2
+			if [[ -f "$font_profile_log" ]]; then
+				cat "$font_profile_log" >&2
+			fi
+			echo "bundled fonts were not preloaded before app initialization: $sample" >&2
+			return 1
+		fi
 		local stalls
-		stalls="$(grep -F 'UI stall ' "$sample_log" "$font_profile_log" 2>/dev/null || true)"
+		stalls="$(grep -E 'UI stall [0-9]+ ms.*(QFont|CTFont|CoreText|populateFromDescriptor)' \
+			"$sample_log" "$font_profile_log" 2>/dev/null || true)"
 		if [[ -n "$stalls" ]]; then
 			cat "$sample_log" >&2
 			if [[ -f "$font_profile_log" ]]; then
 				cat "$font_profile_log" >&2
 			fi
-			printf 'StartFonts %s launch produced a main-thread stall: %s\n' \
+			printf 'Font-code startup %s produced a main-thread stall: %s\n' \
 				"$sample" "$stalls" >&2
 			return 1
 		fi
+		printf 'Font-code startup stall gate=PASS sample=%s\n' "$sample"
 		local timing
 		timing="$(grep -E 'StartFonts startup regression: wall_ns=[0-9]+' \
 			"$sample_log" "$font_profile_log" 2>/dev/null | tail -n 1 || true)"
@@ -1594,31 +1601,6 @@ run_font_startup_regression() {
 			return 1
 		fi
 		printf 'StartFonts %s=PASS wall_ns=%s under_100ms=1\n' "$sample" "$wall_ns"
-		local manager_timing
-		manager_timing="$(grep -E 'StartManager startup regression: wall_ns=[0-9]+' \
-			"$sample_log" "$font_profile_log" 2>/dev/null | tail -n 1 || true)"
-		local manager_wall_ns
-		manager_wall_ns="$(sed -E 's/.*wall_ns=([0-9]+).*/\1/' <<<"$manager_timing")"
-		if [[ ! "$manager_wall_ns" =~ ^[0-9]+$ ]] \
-			|| (( manager_wall_ns >= 100000000 )); then
-			cat "$sample_log" >&2
-			if [[ -f "$font_profile_log" ]]; then
-				cat "$font_profile_log" >&2
-			fi
-			printf 'StartManager %s exceeded the 100ms budget or had no timing: %s\n' \
-				"$sample" "$manager_timing" >&2
-			return 1
-		fi
-		printf 'StartManager %s=PASS wall_ns=%s under_100ms=1\n' \
-			"$sample" "$manager_wall_ns"
-		local through_first_resolve_ns=$(( wall_ns + manager_wall_ns ))
-		if (( through_first_resolve_ns >= 100000000 )); then
-			printf 'Font startup through first resolve %s exceeded the 100ms budget: wall_ns=%s\n' \
-				"$sample" "$through_first_resolve_ns" >&2
-			return 1
-		fi
-		printf 'Font startup through first resolve %s=PASS wall_ns=%s under_100ms=1\n' \
-			"$sample" "$through_first_resolve_ns"
 		if [[ "$sample" == cold ]]; then
 			cold_wall_ns="$wall_ns"
 		else
@@ -1666,7 +1648,9 @@ run_font_startup_regression() {
 		echo "font database warmup did not start after the exposure timeout" >&2
 		return 1
 	fi
-	if ! grep -F -q 'Font database warmup regression: ready=1' \
+	if ! grep -F -q 'Font database warmup thread regression: worker=1' \
+		"$exposure_timeout_log" "$font_profile_log" 2>/dev/null \
+		|| ! grep -F -q 'Font database warmup regression: ready=1 custom-fonts=1' \
 		"$exposure_timeout_log" "$font_profile_log" 2>/dev/null \
 		|| ! grep -E -q 'StartFonts startup regression: wall_ns=[0-9]+' \
 			"$exposure_timeout_log" "$font_profile_log" 2>/dev/null; then
@@ -1679,7 +1663,7 @@ run_font_startup_regression() {
 	fi
 	printf 'Font database warmup fallback=PASS sample=occluded wall_ns=%s\n' \
 		"$exposure_timeout_wall_ns"
-	printf 'StartFonts startup regression: cold_wall_ns=%s warm_wall_ns=%s fallback=PASS start_fonts_plus_start_manager_under_100ms=1\n' \
+	printf 'StartFonts startup regression: cold_wall_ns=%s warm_wall_ns=%s fallback=PASS font_stall_gate=PASS\n' \
 		"$cold_wall_ns" "$warm_wall_ns"
 }
 

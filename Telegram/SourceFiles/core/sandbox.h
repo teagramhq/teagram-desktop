@@ -165,7 +165,6 @@ private:
 
 #ifdef Q_OS_MAC
 	QElapsedTimer _fontStartupTimer;
-	bool _fontStartupLaunchTimingLogged = false;
 	bool _fontDatabaseWarmupStarted = false;
 	bool _fontDatabaseWarmupDone = false;
 	bool _fontDatabaseWarmupSucceeded = false;

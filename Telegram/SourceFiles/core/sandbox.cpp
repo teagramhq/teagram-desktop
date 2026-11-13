@@ -27,6 +27,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #ifdef Q_OS_MAC
 #include "window/main_window.h"
 #include "core/mac_protected_path_runtime.h"
+#include "ui/style/style_core_font.h"
 #endif // Q_OS_MAC
 #include "base/timer.h"
 #include "base/concurrent_timer.h"
@@ -409,17 +410,6 @@ void Sandbox::QuitWhenStarted() {
 }
 
 void Sandbox::launchApplication() {
-#ifdef Q_OS_MAC
-	if (!_fontStartupLaunchTimingLogged) {
-		_fontStartupLaunchTimingLogged = true;
-		if (qEnvironmentVariableIsSet("TDESKTOP_FONT_STARTUP_REGRESSION")) {
-			fprintf(stderr,
-					"Sandbox startup to launchApplication regression: "
-					"wall_ns=%lld\n",
-					static_cast<long long>(_fontStartupTimer.nsecsElapsed()));
-		}
-	}
-#endif // Q_OS_MAC
 	InvokeQueued(this, [=] {
 		if (Quitting()) {
 			quit();
@@ -435,7 +425,7 @@ void Sandbox::launchApplication() {
 					const auto visible = _fontStartupWindow->isVisible()
 										 && _fontStartupWindow->isExposed();
 					fprintf(stderr,
-							"Font startup window regression: visible=%d "
+						"Font startup splash regression: visible=%d "
 							"wall_ns=%lld\n",
 							visible ? 1 : 0,
 							static_cast<long long>(
@@ -523,6 +513,9 @@ void Sandbox::startFontDatabaseWarmup() {
 	_fontDatabaseWarmupStarted = true;
 	try {
 		_fontDatabaseWarmupThread = std::thread([this] {
+			const auto worker = QThread::currentThreadId() != _mainThreadId;
+			const auto openSansLoaded
+				= style::internal::PreloadCustomFonts();
 			{
 #if QT_VERSION < QT_VERSION_CHECK(6, 0, 0)
 				const auto families = QFontDatabase().families();
@@ -531,15 +524,23 @@ void Sandbox::startFontDatabaseWarmup() {
 #endif // Qt < 6.0.0
 				Q_UNUSED(families);
 			}
+			if (qEnvironmentVariableIsSet(
+					"TDESKTOP_FONT_STARTUP_REGRESSION")) {
+				fprintf(stderr,
+						"Font database warmup thread regression: worker=%d\n",
+						worker ? 1 : 0);
+			}
 			QMetaObject::invokeMethod(
 				this,
-				[this] {
+				[this, openSansLoaded] {
+					style::internal::SetPreloadedCustomFonts(openSansLoaded);
 					_fontDatabaseWarmupDone = true;
 					_fontDatabaseWarmupSucceeded = true;
 					if (qEnvironmentVariableIsSet(
 							"TDESKTOP_FONT_STARTUP_REGRESSION")) {
 						fprintf(stderr,
-								"Font database warmup regression: ready=1\n");
+								"Font database warmup regression: ready=1 "
+								"custom-fonts=1\n");
 					}
 					if (_launchAfterFontDatabaseWarmup && !Quitting()) {
 						_launchAfterFontDatabaseWarmup = false;
