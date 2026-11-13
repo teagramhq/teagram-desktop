@@ -2378,9 +2378,12 @@ class LocalEndpointRefreshDiscoveryStub final {
 			std::fprintf(
 				stderr,
 				"Endpoint refresh fixture connection %d: kind=%d prefix=%lld "
+				"received=%lld trace=[%s] "
 				"incoming=%lld available=%lld pending=%d state=%d\n",
 				i, int(connection->kind),
 				static_cast<long long>(connection->startPrefix.size()),
+				static_cast<long long>(connection->received),
+				connection->trace.constData(),
 				static_cast<long long>(connection->incoming.size()),
 				static_cast<long long>(
 					connection->socket ? connection->socket->bytesAvailable()
@@ -2446,6 +2449,8 @@ class LocalEndpointRefreshDiscoveryStub final {
 		ConnectionKind kind = ConnectionKind::Unknown;
 		QByteArray startPrefix;
 		bool startPrefixRead = false;
+		qint64 received = 0;
+		QByteArray trace;
 		QByteArray incoming;
 		std::array<uchar, 32> clientToServerKey = {};
 		std::array<uchar, 32> serverToClientKey = {};
@@ -2514,6 +2519,7 @@ class LocalEndpointRefreshDiscoveryStub final {
 		MTP::aesCtrEncrypt(bytes::make_detached_span(data),
 						   connection->clientToServerKey.data(),
 						   &connection->clientToServerState);
+		connection->received += data.size();
 		connection->incoming += data;
 		while (true) {
 			auto packet = QByteArray();
@@ -2527,19 +2533,23 @@ class LocalEndpointRefreshDiscoveryStub final {
 	void processPacket(const std::shared_ptr<Connection> &connection,
 					   const QByteArray &packet) {
 		if (packet.size() < 20 || (packet.size() % 4)) {
+			connection->trace += 's' + QByteArray::number(packet.size());
 			return;
 		}
 		if (!EndpointRefreshReadLong(packet.constData())) {
+			connection->trace += 'q';
 			respondToFakePq(connection, packet);
 			return;
 		}
 		if (!_verifierAuthKey || packet.size() < 40
 			|| EndpointRefreshReadLong(packet.constData())
 				   != _verifierAuthKey->keyId()) {
+			connection->trace += 'k';
 			return;
 		}
 		const auto encryptedSize = packet.size() - 24;
 		if (encryptedSize <= 0 || (encryptedSize % 16)) {
+			connection->trace += 'e' + QByteArray::number(encryptedSize);
 			return;
 		}
 		auto messageKey = MTPint128();
@@ -2552,8 +2562,14 @@ class LocalEndpointRefreshDiscoveryStub final {
 							  uint32(encryptedSize), &aesKey, &aesIv);
 		const auto requestId = EndpointRefreshConfigRequestId(plain);
 		if (!requestId) {
+			const auto first = (plain.size() >= 36)
+				? EndpointRefreshReadInt(plain.constData() + 32)
+				: uint32(0);
+			connection->trace += 'n' + QByteArray::number(plain.size()) + ':'
+								 + QByteArray::number(first, 16) + ' ';
 			return;
 		}
+		connection->trace += 'g';
 		connection->pending = PendingConfig{
 			.serverSalt = EndpointRefreshReadLong(plain.constData()),
 			.sessionId = EndpointRefreshReadLong(plain.constData() + 8),
