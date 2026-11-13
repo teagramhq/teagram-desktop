@@ -204,6 +204,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <QtGui/QKeyEvent>
 #include <QtGui/QKeySequence>
 #include <QtGui/QMouseEvent>
+#include <QtNetwork/QHostAddress>
+#include <QtNetwork/QTcpServer>
+#include <QtNetwork/QTcpSocket>
 #include <QtWidgets/QApplication>
 
 #include <algorithm>
@@ -232,6 +235,41 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 namespace Tests {
 #ifdef TDESKTOP_LIFECYCLE_REGRESSION
+class AccountLifecycleRegressionAccess {
+public:
+	[[nodiscard]] static bool restoredSession(
+			const Main::Account &account) {
+		return account._restoredSession;
+	}
+	[[nodiscard]] static bool endpointVerificationPending(
+			const Main::Account &account) {
+		return account._mtpForEndpointVerification != nullptr;
+	}
+	[[nodiscard]] static bool verifierUsesStoredFileKey(
+			const Main::Account &account,
+			const MTP::AuthKeyPtr &expected) {
+		if (!account._mtpForEndpointVerification || !expected) {
+			return false;
+		}
+		const auto keys
+			= account._mtpForEndpointVerification->getKeysForWrite();
+		return ranges::any_of(keys, [&](const MTP::AuthKeyPtr &key) {
+			return key
+				&& key->dcId() == expected->dcId()
+				&& key->type() == MTP::AuthKey::Type::ReadFromFile
+				&& key->equals(expected);
+		});
+	}
+	static void finishEndpointVerification(
+			Main::Account &account,
+			bool authenticated) {
+		account.serverEndpointVerificationFinished(authenticated);
+	}
+	static void cancelEndpointRefresh(Main::Account &account) {
+		account.cancelServerEndpointRefresh();
+	}
+};
+
 namespace {
 
 auto gLifecycleWriteCounts = LifecycleWriteCountsForRegressionTest();
@@ -2077,6 +2115,213 @@ ConfigurePinnedServer(not_null<Main::Account *> account,
 										  data);
 }
 
+void AppendEndpointRefreshLength(QByteArray &target, quint32 value) {
+	target.append(char(value >> 24));
+	target.append(char(value >> 16));
+	target.append(char(value >> 8));
+	target.append(char(value));
+}
+
+void AppendEndpointRefreshLength(QByteArray &target, quint16 value) {
+	target.append(char(value >> 8));
+	target.append(char(value));
+}
+
+[[nodiscard]] QByteArray EndpointRefreshDiscoveryResponse(
+	const QByteArray &nonce) {
+	const auto der = RegressionServerKey()->getSubjectPublicKeyInfo();
+	auto result = QByteArray("telegramd-key-r1", 16) + nonce;
+	AppendEndpointRefreshLength(result, quint32(6 + der.size()));
+	AppendEndpointRefreshLength(result, quint32(2));
+	AppendEndpointRefreshLength(result, quint16(der.size()));
+	result += QByteArray(reinterpret_cast<const char*>(der.data()),
+						 int(der.size()));
+	return result;
+}
+
+class LocalEndpointRefreshDiscoveryStub final {
+public:
+	LocalEndpointRefreshDiscoveryStub() {
+		if (!_server.listen(QHostAddress(u"127.0.0.1"_q))) {
+			return;
+		}
+		QObject::connect(
+			&_server,
+			&QTcpServer::newConnection,
+			&_server,
+			[this] {
+				while (_server.hasPendingConnections()) {
+					auto socket = _server.nextPendingConnection();
+					auto request = std::make_shared<QByteArray>();
+					auto responded = std::make_shared<bool>(false);
+					const auto respond = [=] {
+						*request += socket->readAll();
+						if (*responded || request->size() < 48
+							|| request->left(16)
+								!= QByteArray("telegramd-key-v1", 16)) {
+							return;
+						}
+						*responded = true;
+						socket->write(EndpointRefreshDiscoveryResponse(
+							request->mid(16, 32)));
+						socket->disconnectFromHost();
+					};
+					QObject::connect(socket, &QTcpSocket::readyRead, socket,
+									 respond);
+					QObject::connect(socket, &QTcpSocket::disconnected,
+									 socket, &QObject::deleteLater);
+					if (socket->bytesAvailable()) {
+						respond();
+					}
+				}
+			});
+	}
+
+	[[nodiscard]] bool listening() const {
+		return _server.isListening();
+	}
+
+	[[nodiscard]] quint16 port() const {
+		return _server.serverPort();
+	}
+
+	[[nodiscard]] bool originalEndpointUnreachable() const {
+		auto socket = QTcpSocket();
+		socket.connectToHost(QHostAddress::LocalHostIPv6, port());
+		return !socket.waitForConnected(100);
+	}
+
+	[[nodiscard]] bool configureOriginalPin(
+			not_null<Main::Account *> account,
+			const std::shared_ptr<MTP::details::RSAPublicKey> &key) const {
+		const auto selection = MTP::CheckServerSelection(
+			u"127.0.0.1:"_q + QString::number(port()));
+		if (!selection.valid()) {
+			return false;
+		}
+		const auto configured = account->mtp().dcOptions().setCustomServer(
+			MTP::CustomServer{
+				.dcId = 2,
+				.ip = "::1",
+				.port = int(port()),
+				.ipv6 = true,
+				.key = key,
+				.serverSelection
+				= selection.normalizedSelection.toStdString(),
+				.discoveryPolicy = selection.policy,
+				.discoveryOrigin = (u"local:"_q
+					+ selection.normalizedSelection).toStdString(),
+			});
+		return configured && account->local().writeMtpConfig(true);
+	}
+
+	void close() {
+		_server.close();
+		for (const auto socket : _server.findChildren<QTcpSocket *>()) {
+			socket->abort();
+		}
+	}
+
+private:
+	QTcpServer _server;
+};
+
+[[nodiscard]] bool AccountEndpointRefreshWaitsForStoredProof(
+	not_null<Main::Account *> account,
+		const LocalEndpointRefreshDiscoveryStub &discovery,
+		const MTP::AuthKeyPtr &storedAuthKey) {
+	auto &mtp = account->mtp();
+	const auto original = mtp.dcOptions().customServer();
+	const auto verificationAlreadyPending
+		= AccountLifecycleRegressionAccess::endpointVerificationPending(
+			*account);
+	if (!discovery.listening() || !discovery.originalEndpointUnreachable()
+		|| !account->sessionExists()
+		|| !AccountLifecycleRegressionAccess::restoredSession(*account)
+		|| !storedAuthKey
+		|| (!mtp.isServerEnrollmentNetworkAllowed()
+			&& !verificationAlreadyPending)) {
+		return false;
+	}
+	const auto restore = gsl::finally([&] {
+		AccountLifecycleRegressionAccess::cancelEndpointRefresh(*account);
+		const auto current = mtp.dcOptions().customServer();
+		if (!MTP::SameCustomServerPin(original, current)
+			&& mtp.dcOptions().refreshCustomServerEndpoint(current, original)) {
+			static_cast<void>(account->local().writeMtpConfig(true));
+		}
+		if (!mtp.isServerEnrollmentNetworkAllowed()) {
+			mtp.resume();
+		}
+	});
+	const auto requestRefresh = [&] {
+		mtp.requestServerEndpointRefresh(original.dcId);
+		return WaitForRegressionCondition([&] {
+			return AccountLifecycleRegressionAccess::
+				endpointVerificationPending(*account);
+		});
+	};
+	const auto pausedRequestIsRefused = [&] {
+		auto failures = 0;
+		auto sender = MTP::Sender(&mtp);
+		const auto requestId
+			= sender.request(MTPupdates_GetState())
+				  .fail([&](const MTP::Error &error) {
+					  if (MTP::IsServerEnrollmentPausedError(error)) {
+						  ++failures;
+					  }
+				  })
+				  .send();
+		const auto queued = sender.pending(requestId);
+		QCoreApplication::processEvents();
+		return queued && !sender.pending(requestId) && failures == 1;
+	};
+	if (!requestRefresh() || mtp.isServerEnrollmentNetworkAllowed()
+		|| !MTP::SameCustomServerPin(original, mtp.dcOptions().customServer())
+		|| !AccountLifecycleRegressionAccess::verifierUsesStoredFileKey(
+			*account, storedAuthKey)
+		|| !pausedRequestIsRefused()) {
+		return false;
+	}
+	AccountLifecycleRegressionAccess::finishEndpointVerification(*account, false);
+	if (AccountLifecycleRegressionAccess::endpointVerificationPending(*account)
+		|| mtp.isServerEnrollmentNetworkAllowed()
+		|| !MTP::SameCustomServerPin(original, mtp.dcOptions().customServer())
+		|| !pausedRequestIsRefused()) {
+		return false;
+	}
+	AccountLifecycleRegressionAccess::cancelEndpointRefresh(*account);
+	mtp.resume();
+	if (!mtp.isServerEnrollmentNetworkAllowed() || !requestRefresh()
+		|| mtp.isServerEnrollmentNetworkAllowed()
+		|| !AccountLifecycleRegressionAccess::verifierUsesStoredFileKey(
+			*account, storedAuthKey)
+		|| !pausedRequestIsRefused()) {
+		return false;
+	}
+	AccountLifecycleRegressionAccess::finishEndpointVerification(*account, true);
+	const auto moved = mtp.dcOptions().customServer();
+	if (AccountLifecycleRegressionAccess::endpointVerificationPending(*account)
+		|| !mtp.isServerEnrollmentNetworkAllowed() || moved.ip != "127.0.0.1"
+		|| moved.ipv6 || moved.port != int(discovery.port())
+		|| !MTP::SameCustomServerEndpointRefreshIdentity(original, moved)) {
+		return false;
+	}
+	auto failures = 0;
+	auto sender = MTP::Sender(&mtp);
+	const auto requestId
+		= sender.request(MTPupdates_GetState())
+			  .fail([&](const MTP::Error &) { ++failures; })
+			  .send();
+	const auto resumed = sender.pending(requestId);
+	QCoreApplication::processEvents();
+	const auto remainsPending = sender.pending(requestId);
+	if (remainsPending) {
+		mtp.cancel(requestId);
+	}
+	return resumed && remainsPending && !failures;
+}
+
 [[nodiscard]] bool
 MtpRequestCompletesAfterEndpointRefresh(not_null<Main::Account *> account,
 										const MTP::AuthKeyPtr &storedAuthKey) {
@@ -2089,8 +2334,8 @@ MtpRequestCompletesAfterEndpointRefresh(not_null<Main::Account *> account,
 		return false;
 	}
 	auto candidate = original;
-	candidate.port
-		= (original.port == 65535) ? original.port - 1 : original.port + 1;
+	candidate.ip = "127.0.0.1";
+	candidate.ipv6 = false;
 	const auto proofKey = RegressionAuthKey(0x11);
 	const auto authenticatedProof = storedAuthKey->equals(proofKey);
 	if (!authenticatedProof) {
@@ -14571,9 +14816,13 @@ RunAiComposeApplyHandlerRegression(not_null<Window::Controller *> window,
 
 	const auto initialKey = RegressionAuthKey(0x11);
 	forgotten->mtp().dcPersistentKeyChanged(2, initialKey);
-	if (!ConfigurePinnedServer(forgotten, originalKey)) {
+	auto endpointRefreshDiscovery = LocalEndpointRefreshDiscoveryStub();
+	if (!endpointRefreshDiscovery.listening()
+		|| !endpointRefreshDiscovery.originalEndpointUnreachable()
+		|| !endpointRefreshDiscovery.configureOriginalPin(forgotten,
+												 originalKey)) {
 		return failAccountLifecycle(
-			"could not configure the matching server after Forget");
+			"could not prepare the local endpoint refresh fixture after Forget");
 	}
 	forgotten->setSessionUserId(UserId(4242));
 	const auto sessionCreated = forgotten->createSession(
@@ -14615,6 +14864,12 @@ RunAiComposeApplyHandlerRegression(not_null<Window::Controller *> window,
 		return failAccountLifecycle(
 			"active teardown did not persist its final authorization snapshot");
 	}
+	if (!AccountEndpointRefreshWaitsForStoredProof(
+			active, endpointRefreshDiscovery, finalKey)) {
+		return failAccountLifecycle(
+			"restored Account did not keep requests paused until endpoint proof");
+	}
+	endpointRefreshDiscovery.close();
 
 	const auto teardownFailureKey = RegressionAuthKey(0x33);
 	active->mtp().dcPersistentKeyChanged(2, teardownFailureKey);

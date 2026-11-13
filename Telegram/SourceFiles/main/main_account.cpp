@@ -1445,11 +1445,6 @@ void Account::serverEndpointVerificationFinished(bool authenticated) {
 		_serverEndpointRefreshRetryTimer->stop();
 		return;
 	}
-	if (_mtp
-		&& MTP::SameCustomServerPin(original, _mtp->dcOptions().customServer())
-		&& MTP::CanResumeServerEnrollment(_mtp->dcOptions())) {
-		_mtp->resume();
-	}
 	++_serverEndpointRefreshFailures;
 	scheduleServerEndpointRefreshRetry();
 }

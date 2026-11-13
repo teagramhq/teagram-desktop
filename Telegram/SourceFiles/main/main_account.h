@@ -32,6 +32,12 @@ namespace Intro::details {
 class ServerEndpointRefreshDiscovery;
 } // namespace Intro::details
 
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+namespace Tests {
+class AccountLifecycleRegressionAccess;
+} // namespace Tests
+#endif
+
 namespace Main {
 
 namespace details {
@@ -154,6 +160,10 @@ public:
 	}
 
 private:
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+	friend class ::Tests::AccountLifecycleRegressionAccess;
+#endif
+
 	static constexpr auto kDefaultSaveDelay = crl::time(1000);
 	enum class DestroyReason {
 		Quitting,
