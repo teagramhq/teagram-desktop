@@ -292,6 +292,28 @@ std::shared_ptr<Show> FieldAutocomplete::uiShow() const {
 	return _show;
 }
 
+void FieldAutocomplete::setCurrentPeer(PeerData *peer) {
+	if (_currentPeer == peer) {
+		return;
+	}
+	hideFast();
+	_currentPeer = peer;
+	_emoji = nullptr;
+	_addInlineBots = false;
+	rowsUpdated(MentionRows(), HashtagRows(), BotCommandRows(), StickerRows(),
+				false);
+	if (peer) {
+		showFiltered(not_null<PeerData *>(peer), QString(), false);
+	} else {
+		_chat = nullptr;
+		_user = nullptr;
+		_channel = nullptr;
+		_type = Type::Mentions;
+	}
+}
+
+PeerData *FieldAutocomplete::currentPeer() const { return _currentPeer; }
+
 void FieldAutocomplete::requestRefresh() {
 	_refreshRequests.fire({});
 }
@@ -369,6 +391,7 @@ void FieldAutocomplete::showFiltered(
 		not_null<PeerData*> peer,
 		QString query,
 		bool addInlineBots) {
+	_currentPeer = peer;
 	_chat = peer->asChat();
 	_user = peer->asUser();
 	_channel = peer->asChannel();
@@ -1891,6 +1914,7 @@ void InitFieldAutocomplete(
 		descriptor.stOverride);
 	const auto raw = autocomplete.get();
 	const auto field = descriptor.field;
+	raw->setCurrentPeer(descriptor.peer);
 
 	field->rawTextEdit()->installEventFilter(raw);
 
@@ -1916,12 +1940,12 @@ void InitFieldAutocomplete(
 		field->insertTag(data.hashtag);
 	}, raw->lifetime());
 
-	const auto peer = descriptor.peer;
 	const auto features = descriptor.features;
 	const auto processShortcut = descriptor.processShortcut;
-	const auto shortcutMessages = (processShortcut != nullptr)
-		? &peer->owner().shortcutMessages()
-		: nullptr;
+	const auto shortcutMessages
+		= (processShortcut != nullptr)
+			  ? &descriptor.peer->owner().shortcutMessages()
+			  : nullptr;
 	raw->botCommandChosen(
 	) | rpl::on_next([=](FieldAutocomplete::BotCommandChosen data) {
 		if (!features().autocompleteCommands) {
@@ -1967,6 +1991,10 @@ void InitFieldAutocomplete(
 	}, raw->lifetime());
 
 	const auto check = [=] {
+		const auto peer = raw->currentPeer();
+		if (!peer) {
+			return;
+		}
 		auto parsed = ParseMentionHashtagBotCommandQuery(field, features());
 		if (parsed.query.isEmpty()) {
 		} else if (parsed.query[0] == '#'
@@ -1991,6 +2019,10 @@ void InitFieldAutocomplete(
 	};
 
 	const auto updateStickersByEmoji = [=] {
+		const auto peer = raw->currentPeer();
+		if (!peer) {
+			return;
+		}
 		const auto errorForStickers = Data::RestrictionError(
 			peer,
 			ChatRestriction::SendStickers);
@@ -2013,35 +2045,32 @@ void InitFieldAutocomplete(
 	raw->stickersUpdateRequests(
 	) | rpl::on_next(updateStickersByEmoji, raw->lifetime());
 
-	peer->owner().botCommandsChanges(
-	) | rpl::filter([=](not_null<PeerData*> changed) {
-		return (peer == changed);
-	}) | rpl::on_next([=] {
-		if (raw->clearFilteredBotCommands()) {
-			check();
-		}
-	}, raw->lifetime());
+	descriptor.peer->owner().botCommandsChanges()
+		| rpl::filter([=](not_null<PeerData *> changed) {
+			  return (raw->currentPeer() == changed.get());
+		  })
+		| rpl::on_next(
+			[=] {
+				if (raw->clearFilteredBotCommands()) {
+					check();
+				}
+			},
+			raw->lifetime());
 
-	peer->owner().stickers().updated(
-		Data::StickersType::Stickers
-	) | rpl::on_next(updateStickersByEmoji, raw->lifetime());
+	descriptor.peer->owner().stickers().updated(Data::StickersType::Stickers)
+		| rpl::on_next(updateStickersByEmoji, raw->lifetime());
 
-	QObject::connect(
-		field->rawTextEdit(),
-		&QTextEdit::cursorPositionChanged,
-		raw,
-		check,
-		Qt::QueuedConnection);
+	QObject::connect(field->rawTextEdit(), &QTextEdit::cursorPositionChanged,
+					 raw, check, Qt::QueuedConnection);
 
-	field->changes() | rpl::on_next(
-		updateStickersByEmoji,
-		raw->lifetime());
+	field->changes() | rpl::on_next(updateStickersByEmoji, raw->lifetime());
 
-	peer->session().changes().peerUpdates(
-		Data::PeerUpdate::Flag::Rights
-	) | rpl::filter([=](const Data::PeerUpdate &update) {
-		return (update.peer == peer);
-	}) | rpl::on_next(updateStickersByEmoji, raw->lifetime());
+	descriptor.peer->session().changes().peerUpdates(
+		Data::PeerUpdate::Flag::Rights)
+		| rpl::filter([=](const Data::PeerUpdate &update) {
+			  return (update.peer.get() == raw->currentPeer());
+		  })
+		| rpl::on_next(updateStickersByEmoji, raw->lifetime());
 
 	if (shortcutMessages) {
 		shortcutMessages->shortcutsChanged(

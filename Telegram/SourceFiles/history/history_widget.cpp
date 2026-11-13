@@ -1275,10 +1275,14 @@ void HistoryWidget::refreshTopBarActiveChat() {
 }
 
 void HistoryWidget::refreshTabbedPanel() {
+	if (_peer && _tabbedPanel && !_tabbedPanel->isSelectorStolen()) {
+		return;
+	}
+	if (_tabbedPanel) {
+		setTabbedPanel(nullptr);
+	}
 	if (_peer && controller()->hasTabbedSelectorOwnership()) {
 		createTabbedPanel();
-	} else {
-		setTabbedPanel(nullptr);
 	}
 }
 
@@ -1833,11 +1837,19 @@ int HistoryWidget::itemTopForHighlight(
 }
 
 void HistoryWidget::initFieldAutocomplete() {
-	_emojiSuggestions = nullptr;
-	_autocomplete = nullptr;
 	if (!_peer) {
+		if (_autocomplete) {
+			_autocomplete->setCurrentPeer(nullptr);
+		}
 		return;
 	}
+	if (_autocomplete) {
+		_autocomplete->setCurrentPeer(_peer);
+		return;
+	}
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+	++_fieldAutocompleteBuildCountForRegressionTest;
+#endif
 	const auto processShortcut = [=](QString shortcut) {
 		if (!_peer) {
 			return;
@@ -1905,9 +1917,7 @@ void HistoryWidget::initFieldAutocomplete() {
 				context);
 		},
 	});
-	const auto allow = [=](const auto&) {
-		return _peer->isSelf();
-	};
+	const auto allow = [=](const auto &) { return _peer && _peer->isSelf(); };
 	_emojiSuggestions.reset(Ui::Emoji::SuggestionsController::Init(
 		this,
 		_field,
@@ -6865,16 +6875,38 @@ int HistoryWidget::attachMenuCacheSizeForRegressionTest() const {
 	return int(_attachBotsMenuCache.size());
 }
 
+int HistoryWidget::fieldAutocompleteBuildCountForRegressionTest() const {
+	return _fieldAutocompleteBuildCountForRegressionTest;
+}
+
+PeerData *HistoryWidget::fieldAutocompletePeerForRegressionTest() const {
+	return _autocomplete ? _autocomplete->currentPeer() : nullptr;
+}
+
+int HistoryWidget::tabbedPanelBuildCountForRegressionTest() const {
+	return _tabbedPanelBuildCountForRegressionTest;
+}
+
 bool HistoryWidget::updateControlsGeometryStartsPendingRevealForRegressionTest(
 	not_null<HistoryItem *> item) {
-	updateControlsGeometry();
 	const auto scrollSize = _scroll->size();
 	if (_itemRevealAnimations.contains(item)) {
 		return false;
 	}
+	auto previousShowAnimation = std::move(_showAnimation);
+	_showAnimation = std::make_unique<Window::SlideAnimation>();
 	_itemRevealPending.emplace(item);
 	updateControlsGeometry();
-	return (_scroll->size() == scrollSize) && !_itemRevealPending.contains(item)
+	const auto pendingRetainedDuringShowAnimation
+		= _itemRevealPending.contains(item);
+	_showAnimation = std::move(previousShowAnimation);
+	if (_showAnimation) {
+		showFinished();
+	} else {
+		updateControlsGeometry();
+	}
+	return pendingRetainedDuringShowAnimation && (_scroll->size() == scrollSize)
+		   && !_itemRevealPending.contains(item)
 		   && _itemRevealAnimations.contains(item);
 }
 
@@ -7353,6 +7385,9 @@ bool HistoryWidget::returnTabbedSelector() {
 }
 
 void HistoryWidget::createTabbedPanel() {
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+	++_tabbedPanelBuildCountForRegressionTest;
+#endif
 	setTabbedPanel(std::make_unique<TabbedPanel>(
 		this,
 		controller(),
@@ -8567,8 +8602,11 @@ void HistoryWidget::updateSendRestriction() {
 void HistoryWidget::updateHistoryGeometry(bool initial, bool loadedDown,
 										  const ScrollChange &change,
 										  bool listChanged) {
+	auto clearPendingReveal = true;
 	const auto guard = gsl::finally([&] {
-		_itemRevealPending.clear();
+		if (clearPendingReveal) {
+			_itemRevealPending.clear();
+		}
 	});
 	if (!_history
 		|| (initial && _historyInited)
@@ -8577,6 +8615,7 @@ void HistoryWidget::updateHistoryGeometry(bool initial, bool loadedDown,
 	}
 	if (_showAnimation) {
 		_updateHistoryGeometryRequired = true;
+		clearPendingReveal = false;
 		return;
 	}
 

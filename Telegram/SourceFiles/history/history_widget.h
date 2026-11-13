@@ -327,6 +327,9 @@ public:
 	[[nodiscard]] bool
 	attachMenuContainsBotForRegressionTest(UserId botId) const;
 	[[nodiscard]] int attachMenuCacheSizeForRegressionTest() const;
+	[[nodiscard]] int fieldAutocompleteBuildCountForRegressionTest() const;
+	[[nodiscard]] PeerData *fieldAutocompletePeerForRegressionTest() const;
+	[[nodiscard]] int tabbedPanelBuildCountForRegressionTest() const;
 	[[nodiscard]] bool
 	updateControlsGeometryStartsPendingRevealForRegressionTest(
 		not_null<HistoryItem *> item);
@@ -1036,6 +1039,8 @@ private:
 	bool _attachMenuShowWhenReady = false;
 	bool _attachMenuClickWhenReady = false;
 #ifdef TDESKTOP_LIFECYCLE_REGRESSION
+	int _fieldAutocompleteBuildCountForRegressionTest = 0;
+	int _tabbedPanelBuildCountForRegressionTest = 0;
 	int _attachMenuBuildCountForRegressionTest = 0;
 	qint64 _attachMenuBuildMaxCallbackCpuNanosecondsForRegressionTest = 0;
 	qint64 _attachMenuBuildMaxCallbackWallNanosecondsForRegressionTest = 0;

@@ -68,6 +68,8 @@ public:
 	~FieldAutocomplete();
 
 	[[nodiscard]] std::shared_ptr<Show> uiShow() const;
+	void setCurrentPeer(PeerData *peer);
+	[[nodiscard]] PeerData *currentPeer() const;
 
 	bool clearFilteredBotCommands();
 	void showFiltered(
@@ -174,6 +176,7 @@ private:
 
 	const std::shared_ptr<Show> _show;
 	const not_null<Main::Session*> _session;
+	PeerData *_currentPeer = nullptr;
 	const style::EmojiPan &_st;
 	QPixmap _cache;
 	MentionRows _mrows;

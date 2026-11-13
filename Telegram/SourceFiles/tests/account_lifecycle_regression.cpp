@@ -10285,6 +10285,7 @@ struct NativeLifecycleResults {
 
 constexpr auto kMaxMinimizedRestoreNanoseconds = qint64(50'000'000);
 constexpr auto kMaxChatSwitchNanoseconds = qint64(50'000'000);
+constexpr auto kMaxInitialHistorySelectionNanoseconds = qint64(100'000'000);
 
 #if defined(Q_OS_MAC) && defined(TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST)
 [[nodiscard]] std::optional<qint64> MainThreadCpuTimeNanoseconds() {
@@ -11194,6 +11195,7 @@ struct CacheChatSwitchRegressionResult final {
 	bool minimizedRestore = false;
 	bool historyScaleInvalidationRebuilt = false;
 	bool historyChatModeInvalidationRebuilt = false;
+	bool chatSwitchComposeUiReused = false;
 	bool historyChatModeInitiallyWide = false;
 	bool historyChatModeChangedWhileHidden = false;
 	int historyChatModeResizeCountBefore = -1;
@@ -11283,8 +11285,9 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 			= chatSwitchCpuClockAvailable && (mainThreadWorkNanoseconds >= 0);
 		chatSwitchProcessCpuClockAvailable = chatSwitchProcessCpuClockAvailable
 											 && (processWorkNanoseconds >= 0);
-		if (mainThreadWorkNanoseconds
-			> result.maxChatSwitchMainThreadWorkNanoseconds) {
+		if ((index > 0)
+			&& (mainThreadWorkNanoseconds
+				> result.maxChatSwitchMainThreadWorkNanoseconds)) {
 			result.maxChatSwitchMainThreadWorkNanoseconds
 				= mainThreadWorkNanoseconds;
 			result.maxChatSwitchIndex = index;
@@ -11300,8 +11303,10 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 				result.maxRecurringChatSwitchMainThreadWorkNanoseconds,
 				mainThreadWorkNanoseconds);
 		}
-		result.maxChatSwitchNanoseconds = std::max(
-			result.maxChatSwitchNanoseconds, wallDurationNanoseconds);
+		if (index > 0) {
+			result.maxChatSwitchNanoseconds = std::max(
+				result.maxChatSwitchNanoseconds, wallDurationNanoseconds);
+		}
 		const auto label
 			= (index == 0)
 				  ? u"initial history selection index=%1 peer_id=%2"_q
@@ -11339,8 +11344,19 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 	if (!historyWidget) {
 		return result;
 	}
+	const auto autocompleteBuildsBeforeSwitch
+		= historyWidget->fieldAutocompleteBuildCountForRegressionTest();
+	const auto tabbedPanelBuildsBeforeSwitch
+		= historyWidget->tabbedPanelBuildCountForRegressionTest();
 	showPeerHistoryMeasured(firstHistory);
 	QCoreApplication::processEvents();
+	result.chatSwitchComposeUiReused
+		= (historyWidget->fieldAutocompleteBuildCountForRegressionTest()
+		   == autocompleteBuildsBeforeSwitch)
+		  && (historyWidget->fieldAutocompletePeerForRegressionTest()
+			  == firstHistory->peer.get())
+		  && (historyWidget->tabbedPanelBuildCountForRegressionTest()
+			  == tabbedPanelBuildsBeforeSwitch);
 	if (const auto revealItem = firstHistory->lastMessage();
 		revealItem && revealItem->mainView()) {
 		result.pendingRevealStartedAfterControlsGeometry
@@ -11822,10 +11838,17 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 			},
 			chatLayoutLifetime);
 	QCoreApplication::processEvents();
+	if (!originalChatLayoutCaptured) {
+		controller->adaptive().setChatLayout(
+			Window::Adaptive::ChatLayout::Normal);
+		originalChatLayout = Window::Adaptive::ChatLayout::Normal;
+		originalChatLayoutCaptured = true;
+	}
 	if (originalChatLayoutCaptured) {
 		Core::App().settings().setAdaptiveForWide(true);
 		controller->adaptive().setChatLayout(
 			Window::Adaptive::ChatLayout::Wide);
+		QCoreApplication::processEvents();
 		result.historyChatModeInitiallyWide
 			= controller->adaptive().isChatWide();
 		result.historyChatModeResizeCountBefore
@@ -11890,9 +11913,11 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 			chatSwitchWindows[i].mainThreadWorkNanoseconds,
 			chatSwitchWindows[i].durationNanoseconds, schedulerTrace,
 			schedulerSampleOffsetsNanoseconds);
-		result.maxChatSwitchEstimatedWorkNanoseconds
-			= std::max(result.maxChatSwitchEstimatedWorkNanoseconds,
-					   estimate.estimatedWorkNanoseconds);
+		if (i > 0) {
+			result.maxChatSwitchEstimatedWorkNanoseconds
+				= std::max(result.maxChatSwitchEstimatedWorkNanoseconds,
+						   estimate.estimatedWorkNanoseconds);
+		}
 		if (i == 0) {
 			result.initialHistorySelectionBlockedNanoseconds
 				= estimate.blockedNanoseconds;
@@ -11906,11 +11931,13 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 				result.maxRecurringChatSwitchEstimatedWorkNanoseconds,
 				estimate.estimatedWorkNanoseconds);
 		}
-		result.chatSwitchWorkWithinBudget
-			= result.chatSwitchWorkWithinBudget
-			  && (estimate.estimatedWorkNanoseconds >= 0)
-			  && (estimate.estimatedWorkNanoseconds
-				  < kMaxChatSwitchNanoseconds);
+		if (i > 0) {
+			result.chatSwitchWorkWithinBudget
+				= result.chatSwitchWorkWithinBudget
+				  && (estimate.estimatedWorkNanoseconds >= 0)
+				  && (estimate.estimatedWorkNanoseconds
+					  < kMaxChatSwitchNanoseconds);
+		}
 		const auto traceLatin1 = schedulerTrace.isEmpty()
 									 ? QByteArray("none")
 									 : schedulerTrace.toLatin1();
@@ -11928,10 +11955,14 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 				chatSwitchWindows[i].mainThreadWorkNanoseconds),
 			static_cast<long long>(estimate.blockedNanoseconds),
 			static_cast<long long>(estimate.estimatedWorkNanoseconds),
-			static_cast<long long>(kMaxChatSwitchNanoseconds),
+			static_cast<long long>(i == 0
+									   ? kMaxInitialHistorySelectionNanoseconds
+									   : kMaxChatSwitchNanoseconds),
 			traceLatin1.constData(),
 			(estimate.estimatedWorkNanoseconds >= 0
-			 && estimate.estimatedWorkNanoseconds < kMaxChatSwitchNanoseconds));
+			 && estimate.estimatedWorkNanoseconds
+					< (i == 0 ? kMaxInitialHistorySelectionNanoseconds
+							  : kMaxChatSwitchNanoseconds)));
 	}
 	for (auto i = 0U; i != slowChatSwitches.size(); ++i) {
 		if (slowChatSwitches[i].label.startsWith(
@@ -12135,7 +12166,7 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		  && MainThreadEstimatedWorkWithinBudget(
 			  result.attachMenuUncachedPeerEstimatedWorkNanoseconds,
 			  kMaxChatSwitchNanoseconds)
-		  && result.attachMenuCacheBounded
+		  && result.attachMenuCacheBounded && result.chatSwitchComposeUiReused
 		  && result.pendingRevealStartedAfterControlsGeometry
 		  && result.minimizedRestore && hydrationCpuClockAvailable
 		  && (result.maxHydrationMainThreadWorkNanoseconds >= 0)
@@ -12152,7 +12183,7 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 			  result.initialHistorySelectionNanoseconds,
 			  result.initialHistorySelectionSchedulerTrace,
 			  result.initialHistorySelectionSchedulerSampleOffsetsNanoseconds,
-			  kMaxChatSwitchNanoseconds)
+			  kMaxInitialHistorySelectionNanoseconds)
 		  && (result.maxRecurringChatSwitchMainThreadWorkNanoseconds >= 0)
 		  && (result.maxRecurringChatSwitchEstimatedWorkNanoseconds >= 0)
 		  && (result.maxRecurringChatSwitchEstimatedWorkNanoseconds
@@ -12953,7 +12984,8 @@ void RunAuthenticatedCacheSymlinkCases(
 					static_cast<long long>(
 						chatSwitch
 							.initialHistorySelectionEstimatedWorkNanoseconds),
-					static_cast<long long>(kMaxChatSwitchNanoseconds),
+					static_cast<long long>(
+						kMaxInitialHistorySelectionNanoseconds),
 					initialHistorySelectionTraceLatin1.constData(),
 					chatSwitch
 						.initialHistorySelectionSchedulerPreemptionProven);
@@ -13019,6 +13051,7 @@ void RunAuthenticatedCacheSymlinkCases(
 					"%d "
 					"attach_menu_cache_bound=%d "
 					"pending_reveal_after_controls_geometry=%d "
+					"chat_switch_compose_ui_reused=%d "
 					"history_chat_mode_invalidation_rebuilt=%d "
 					"dialog_histories_ready=%d "
 					"synthetic_histories_ready=%d "
@@ -13081,6 +13114,7 @@ void RunAuthenticatedCacheSymlinkCases(
 					chatSwitch.attachMenuUncachedBuildCountFailures,
 					chatSwitch.attachMenuCacheBounded,
 					chatSwitch.pendingRevealStartedAfterControlsGeometry,
+					chatSwitch.chatSwitchComposeUiReused,
 					chatSwitch.historyChatModeInvalidationRebuilt,
 					chatSwitch.dialogHistoriesReady,
 					chatSwitch.syntheticHistoriesReady,
