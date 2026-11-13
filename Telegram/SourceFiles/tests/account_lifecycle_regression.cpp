@@ -122,6 +122,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "mtproto/mtproto_auth_key.h"
 #include "mtproto/mtproto_config.h"
 #include "mtproto/mtproto_response.h"
+#include "mtproto/mtproto_server_enrollment.h"
 #include "mtproto/sender.h"
 #include "payments/payments_checkout_process.h"
 #include "payments/payments_form.h"
@@ -2074,6 +2075,98 @@ ConfigurePinnedServer(not_null<Main::Account *> account,
 	std::fill(data.begin(), data.end(), static_cast<gsl::byte>(byte));
 	return std::make_shared<MTP::AuthKey>(MTP::AuthKey::Type::Generated, 2,
 										  data);
+}
+
+[[nodiscard]] bool
+MtpRequestCompletesAfterEndpointRefresh(not_null<Main::Account *> account,
+										const MTP::AuthKeyPtr &storedAuthKey) {
+	auto &mtp = account->mtp();
+	if (!storedAuthKey || !mtp.isServerEnrollmentNetworkAllowed()) {
+		return false;
+	}
+	const auto original = mtp.dcOptions().customServer();
+	if (!original.key) {
+		return false;
+	}
+	auto candidate = original;
+	candidate.port
+		= (original.port == 65535) ? original.port - 1 : original.port + 1;
+	const auto proofKey = RegressionAuthKey(0x11);
+	const auto authenticatedProof = storedAuthKey->equals(proofKey);
+	if (!authenticatedProof) {
+		return false;
+	}
+
+	auto callbackCount = 0;
+	auto failureCount = 0;
+	auto callbackRequestId = MTP::mtpRequestId(0);
+	const auto requestId = mtp.send(
+		MTPupdates_GetState(),
+		[&](const MTP::Response &response) {
+			++callbackCount;
+			callbackRequestId = response.requestId;
+			return true;
+		},
+		[&](const MTP::Error &, const MTP::Response &) {
+			++failureCount;
+			return true;
+		});
+	auto pinChanged = false;
+	const auto restore = gsl::finally([&] {
+		if (mtp.hasCallback(requestId)) {
+			mtp.cancel(requestId);
+		}
+		if (pinChanged
+			&& mtp.dcOptions().refreshCustomServerEndpoint(candidate,
+														   original)) {
+			static_cast<void>(account->local().writeMtpConfig(true));
+		}
+		if (!mtp.isServerEnrollmentNetworkAllowed()) {
+			mtp.resume();
+		}
+	});
+	if (!mtp.hasCallback(requestId)) {
+		return false;
+	}
+
+	mtp.pauseForServerEndpointRefresh();
+	if (mtp.isServerEnrollmentNetworkAllowed() || !mtp.hasCallback(requestId)
+		|| callbackCount != 0) {
+		return false;
+	}
+
+	auto configPersisted = false;
+	auto requestsResumed = false;
+	const auto committed = MTP::CommitServerEndpointRefresh(
+		original, candidate, authenticatedProof,
+		[&] {
+			pinChanged = mtp.dcOptions().refreshCustomServerEndpoint(original,
+																	 candidate);
+			return pinChanged;
+		},
+		[&] {
+			configPersisted = account->local().writeMtpConfig(true);
+			return configPersisted;
+		},
+		[&] {
+			mtp.resume();
+			requestsResumed = mtp.isServerEnrollmentNetworkAllowed();
+		},
+		[&] {
+			static_cast<void>(mtp.dcOptions().refreshCustomServerEndpoint(
+				candidate, original));
+		});
+	if (!committed || !configPersisted || !requestsResumed
+		|| !mtp.hasCallback(requestId) || callbackCount != 0) {
+		return false;
+	}
+
+	mtp.processCallback(MTP::Response{
+		.reply = MTP::mtpBuffer{1},
+		.requestId = requestId,
+	});
+	return callbackCount == 1 && failureCount == 0
+		   && callbackRequestId == requestId && !mtp.hasCallback(requestId);
 }
 
 [[nodiscard]] bool IncompleteStoredSessionStartsPaused(Main::Domain &domain) {
@@ -14500,6 +14593,10 @@ RunAiComposeApplyHandlerRegression(not_null<Window::Controller *> window,
 									"reuse the retained cache payload");
 	}
 	forgotten->mtp().resume();
+	if (!MtpRequestCompletesAfterEndpointRefresh(forgotten, initialKey)) {
+		return failAccountLifecycle(
+			"accepted MTP request did not complete after endpoint refresh");
+	}
 	const auto finalKey = RegressionAuthKey(0x22);
 	const auto finalKeyId = finalKey->keyId();
 	forgotten->mtp().dcPersistentKeyChanged(2, finalKey);
