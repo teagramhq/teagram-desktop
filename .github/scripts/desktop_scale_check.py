@@ -366,7 +366,8 @@ def evaluate(
     }
     if count < MIN_DEV_RUNS:
         failures = list(contact_load_failures)
-        for scenario in CALIBRATION_RATIO_SCENARIOS:
+        rows = {}
+        for scenario in SCENARIOS:
             ratios = [
                 sample["scenarios"][scenario]["hundred_ms"]
                 / sample["scenarios"][scenario]["one_ms"]
@@ -374,7 +375,17 @@ def evaluate(
                 if scenario in sample["scenarios"]
             ]
             ratio = statistics.median(ratios) if ratios else None
-            if ratio is not None and ratio > MAX_SCALE_RATIO:
+            rows[scenario] = {
+                "ratio": ratio,
+                "ratio_sample_count": len(ratios),
+                "ratio_min": min(ratios) if ratios else None,
+                "ratio_max": max(ratios) if ratios else None,
+            }
+            if (
+                scenario in CALIBRATION_RATIO_SCENARIOS
+                and ratio is not None
+                and ratio > MAX_SCALE_RATIO
+            ):
                 failures.append(
                     f"{scenario}: median 100x/1x ratio is "
                     f"{ratio:.2f}x (limit {MAX_SCALE_RATIO:.1f}x)"
@@ -385,7 +396,7 @@ def evaluate(
             "scenario_counts": scenario_counts,
             "exceptions": dict(STATIC_EXCEPTIONS),
             "additional_exceptions": {},
-            "rows": {},
+            "rows": rows,
             "failures": failures,
             "report_only": True,
             "history_truncated": history_truncated,
@@ -584,15 +595,14 @@ def format_summary(result, current_sample=None, retry_note=None):
             hundred = _format_ms(current.get("hundred_ms"))
             one_pair = f"n/a → {one}"
             hundred_pair = f"n/a → {hundred}"
-            one_ms = current.get("one_ms")
-            hundred_ms = current.get("hundred_ms")
-            ratio = (
-                f"{hundred_ms / one_ms:.2f}x "
-                f"(n=1; range {hundred_ms / one_ms:.2f}–"
-                f"{hundred_ms / one_ms:.2f}x)"
-                if one_ms and hundred_ms is not None
-                else "n/a (n=0; range n/a)"
-            )
+            if row.get("ratio") is None:
+                ratio = "n/a (n=0; range n/a)"
+            else:
+                ratio = (
+                    f"{row['ratio']:.2f}x "
+                    f"(n={row['ratio_sample_count']}; range "
+                    f"{row['ratio_min']:.2f}–{row['ratio_max']:.2f}x)"
+                )
             baseline_count = result.get("scenario_counts", {}).get(scenario, 0)
             noise = f"calibrating: {baseline_count}/{MIN_DEV_RUNS}"
         else:

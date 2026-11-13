@@ -1170,6 +1170,34 @@ class DesktopScaleCheckTests(unittest.TestCase):
                     )
                 )
 
+    def test_calibrating_summary_reports_the_ratios_used_by_the_gate(self):
+        self.require_implementation()
+        scenario = "messages.getDialogs page (100 dialogs)"
+        history = [make_sample() for _ in range(scale_check.MIN_DEV_RUNS - 1)]
+        head = [make_sample() for _ in range(3)]
+        for sample, hundred_ms in zip(head, (16.0, 20.0, 14.0)):
+            sample["scenarios"][scenario].update(
+                {"one_ms": 10.0, "hundred_ms": hundred_ms}
+            )
+
+        result = scale_check.evaluate(
+            history, [make_sample()], head, report_only=True
+        )
+        summary = scale_check.format_summary(result, head[-1])
+
+        self.assertTrue(
+            any(
+                scenario in failure and "1.60x" in failure
+                for failure in result["failures"]
+            )
+        )
+        self.assertIn(
+            "| messages.getDialogs page (100 dialogs) | n/a → 10.00 ms | "
+            "n/a → 14.00 ms | 1.60x (n=3; range 1.40–2.00x) | "
+            "50 ms main-thread step | calibrating: 19/20 |",
+            summary,
+        )
+
     def test_contact_load_ceiling_applies_during_and_after_calibration(self):
         self.require_implementation()
         base = [make_sample(), make_sample()]
