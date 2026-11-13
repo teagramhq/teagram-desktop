@@ -116,6 +116,8 @@ else
 fi
 if [[ "$mode" == font-stall ]]; then
     printf 'UI stall 197 ms (started 2026-11-13T00:00:00): QFontDatabase::addApplicationFont <- CTFontManagerCopyAvailableFontFamilyNames\\n'
+elif [[ "$mode" == harfbuzz-stall ]]; then
+    printf 'UI stall 182 ms (started 2026-11-13T00:00:00): QTextEngine::shape <- QFontMetricsF::horizontalAdvance\\n'
 elif [[ "$mode" == media-stall ]]; then
     printf 'UI stall 155 ms (started 2026-11-13T00:00:00): Core::Application::mediaDevices() <- AVCapture defaults\\n'
 fi
@@ -220,6 +222,10 @@ assert 'StartFonts cold exceeded the 100ms budget' in font_startup_cold_failure
 font_startup_font_stall = run_font_startup_fixture(
     50_000_000, 50_000_000, 1, mode='font-stall')
 assert 'Font-code startup cold produced a main-thread stall' in font_startup_font_stall
+font_startup_harfbuzz_stall = run_font_startup_fixture(
+    50_000_000, 50_000_000, 1, mode='harfbuzz-stall')
+assert 'Font-code startup cold produced a main-thread stall' \
+    in font_startup_harfbuzz_stall
 font_startup_media_stall = run_font_startup_fixture(
     50_000_000, 50_000_000, 0, mode='media-stall')
 assert 'Font-code startup stall gate=PASS sample=cold' in font_startup_media_stall
