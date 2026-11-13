@@ -2319,6 +2319,40 @@ class LocalEndpointRefreshDiscoveryStub final {
 
 	[[nodiscard]] quint16 port() const { return _server.serverPort(); }
 
+  [[nodiscard]] bool splitDiscoveryRequestIsBuffered() {
+	  auto socket = QTcpSocket();
+	  socket.connectToHost(QHostAddress::LocalHost, port());
+	  if (!socket.waitForConnected(1000)) {
+		  return false;
+	  }
+	  const auto nonce = QByteArray(32, char(0x42));
+	  const auto request = QByteArray("telegramd-key-v1", 16) + nonce;
+	  const auto prefix = request.left(24);
+	  if (socket.write(prefix) != prefix.size()) {
+		  return false;
+	  }
+	  if (!WaitForRegressionCondition(
+			  [&] {
+				  return ranges::any_of(
+					  _connections, [&](const auto &connection) {
+						  return connection->kind == ConnectionKind::Discovery
+								 && connection->incoming == prefix;
+					  });
+			  },
+			  1000, 1)) {
+		  return false;
+	  }
+	  const auto suffix = request.mid(prefix.size());
+	  if (socket.write(suffix) != suffix.size()) {
+		  return false;
+	  }
+	  const auto expected = EndpointRefreshDiscoveryResponse(nonce);
+	  return WaitForRegressionCondition(
+				 [&] { return socket.bytesAvailable() >= expected.size(); },
+				 1000, 1)
+			 && (socket.readAll() == expected);
+  }
+
 	void setVerifierAuthKey(const MTP::AuthKeyPtr &key) {
 		_verifierAuthKey = key;
 	}
@@ -2415,10 +2449,10 @@ class LocalEndpointRefreshDiscoveryStub final {
 								   : ConnectionKind::Mtproto;
 		}
 		if (connection->kind == ConnectionKind::Discovery) {
-			const auto request = connection->socket->readAll();
-			if (request.size() >= 48) {
-				connection->socket->write(
-					EndpointRefreshDiscoveryResponse(request.mid(16, 32)));
+			connection->incoming += connection->socket->readAll();
+			if (connection->incoming.size() >= 48) {
+				connection->socket->write(EndpointRefreshDiscoveryResponse(
+					connection->incoming.mid(16, 32)));
 				connection->socket->disconnectFromHost();
 			}
 			return;
@@ -15227,6 +15261,7 @@ RunAiComposeApplyHandlerRegression(not_null<Window::Controller *> window,
 	forgotten->mtp().dcPersistentKeyChanged(2, initialKey);
 	auto endpointRefreshDiscovery = LocalEndpointRefreshDiscoveryStub();
 	if (!endpointRefreshDiscovery.listening()
+		|| !endpointRefreshDiscovery.splitDiscoveryRequestIsBuffered()
 		|| !endpointRefreshDiscovery.originalEndpointUnreachable()
 		|| !endpointRefreshDiscovery.configureOriginalPin(forgotten,
 														  originalKey)) {
