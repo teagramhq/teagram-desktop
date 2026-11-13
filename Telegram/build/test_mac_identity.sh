@@ -37,6 +37,7 @@ esac
 if [ "$MODE" != observer ]; then
 	python3 - "$ROOT" <<'PY'
 import pathlib
+import re
 import sys
 
 root = pathlib.Path(sys.argv[1])
@@ -45,6 +46,7 @@ runtime = (root / 'Telegram/SourceFiles/core/mac_protected_path_runtime.mm').rea
 runtime_header = (root / 'Telegram/SourceFiles/core/mac_protected_path_runtime.h').read_text(encoding='utf-8')
 profile_test = (root / 'Telegram/build/test_mac_profile_guard.sh').read_text(encoding='utf-8')
 workflow = (root / '.github/workflows/mac.yml').read_text(encoding='utf-8')
+case_runner = (root / 'Telegram/build/run_mac_lifecycle_cases.sh').read_text(encoding='utf-8')
 diagnose = (root / 'Telegram/build/diagnose_mac_seatbelt.py').read_text(encoding='utf-8')
 policy = (root / 'Telegram/SourceFiles/core/mac_protected_path_policy.cpp').read_text(encoding='utf-8')
 root_cmake = (root / 'CMakeLists.txt').read_text(encoding='utf-8')
@@ -103,6 +105,18 @@ assert 'TDESKTOP_MAC_PROFILE_TEST_PROFILE_ARTIFACT' in runtime
 assert 'TDESKTOP_MAC_PROFILE_TEST_DIAGNOSTICS=0' in profile_test
 assert 'seatbelt_compile_failure_silent=PASS' in profile_test
 assert 'seatbelt-profile-${BUILD_VARIANT}.sb' in workflow
+profile_step = workflow.split(
+    '- name: Run protected profile and IPC integration tests.', 1
+)[1].split('\n      - name:', 1)[0]
+profile_timeout = re.search(
+    r'^\s*timeout-minutes:\s*([0-9]+)\s*$', profile_step, re.MULTILINE
+)
+case_timeout = re.search(
+    r'CASE_TIMEOUT_SECONDS="\$\{TDESKTOP_MAC_LIFECYCLE_CASE_TIMEOUT_SECONDS:-([0-9]+)\}"',
+    case_runner,
+)
+assert profile_timeout and case_timeout
+assert int(profile_timeout.group(1)) * 60 >= int(case_timeout.group(1)) + 120
 assert '(allow default)' in policy
 assert '(deny file*' in policy
 assert 'FirmlinkAlias' in policy

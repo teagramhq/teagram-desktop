@@ -721,7 +721,8 @@ jobs:
 
       - name: Run protected profile and IPC integration tests.
         id: profile-ipc
-        timeout-minutes: 15
+        # The lifecycle case runner allows 20 minutes, plus time for prior cases and cleanup.
+        timeout-minutes: 25
         if: ${{ !cancelled() && steps.ccache-profile.outputs.protected_path_integration == 'ON' && steps.build.outcome == 'success' }}
         run: |
           set -Eeuo pipefail
