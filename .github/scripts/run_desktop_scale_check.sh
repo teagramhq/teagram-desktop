@@ -6,10 +6,11 @@ history_file="$RUNNER_TEMP/desktop-scale-history.json"
 summary_file="$RUNNER_TEMP/desktop-scale-summary.md"
 evaluation_file="$RUNNER_TEMP/desktop-scale-evaluation.json"
 app_mount="$RUNNER_TEMP/desktop-scale-dev"
-scale_budget_seconds="${DESKTOP_SCALE_RUN_BUDGET_SECONDS:-180}"
+scale_budget_seconds="${DESKTOP_SCALE_RUN_BUDGET_SECONDS:-270}"
+# Four calibrated runs took 162s; allow margin over the six-run 243s projection.
 # A hosted upload of the 236 MB Teagram artifact took 27 seconds.
 # Reserve 50 seconds for the base-run lookup, download, and extraction.
-# The history, binary fetch, and scale caps total 285 seconds.
+# The history, binary fetch, and scale caps total 375 seconds.
 binary_fetch_budget_seconds=50
 scale_history_args=()
 scale_baseline_count=0

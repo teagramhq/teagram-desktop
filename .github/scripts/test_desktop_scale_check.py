@@ -184,10 +184,16 @@ def make_runner_harness(root, history=None):
                 sys.exit(status)
             slow_counts = set(os.environ.get("MOCK_DOCKER_SLOW_COUNTS", "").split(","))
             stall_counts = set(os.environ.get("MOCK_DOCKER_STALL_COUNTS", "").split(","))
-            ratio_counts = set(os.environ.get("MOCK_DOCKER_RATIO_COUNTS", "").split(","))
+            ratio_counts = {}
+            for ratio_count in os.environ.get(
+                "MOCK_DOCKER_RATIO_COUNTS", ""
+            ).split(","):
+                if ratio_count:
+                    count_text, ratio_text = ratio_count.split("=", 1)
+                    ratio_counts[count_text] = ratio_text
             outcome = os.environ.get("MOCK_DOCKER_OUTCOME", "PASS")
             one = "13.00" if str(count) in slow_counts else "10.00"
-            hundred = "16.00" if str(count) in ratio_counts else "12.00"
+            hundred = ratio_counts.get(str(count), "12.00")
             dialogs_stalls = "1" if str(count) in stall_counts else "0"
             print(f\"\"\"DESKTOP_SCALE_REPORT_BEGIN
             | Scenario | 1x | 100x | Ratio | Absolute budget | Noise band |
@@ -232,7 +238,7 @@ def make_runner_harness(root, history=None):
             "GH_TOKEN": "token",
             "PR_BASE_SHA": "base-sha",
             "IMAGE_TAG": "tdesktop:test",
-            "DESKTOP_SCALE_RUN_BUDGET_SECONDS": "60",
+            "DESKTOP_SCALE_RUN_BUDGET_SECONDS": "270",
             "MOCK_RECORD_COUNT": str(len(history or [])),
             "MOCK_HISTORY_FILE": str(history_file),
             "MOCK_FETCH_STATUS": "0",
@@ -1325,7 +1331,7 @@ class DesktopScaleCheckTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             repo_root, _runner_temp, env = make_runner_harness(root, history)
-            env["MOCK_DOCKER_RATIO_COUNTS"] = "1,2"
+            env["MOCK_DOCKER_RATIO_COUNTS"] = "1=16.00,2=16.00"
             result = subprocess.run(
                 ["bash", str(runner)],
                 cwd=repo_root,
@@ -1348,6 +1354,48 @@ class DesktopScaleCheckTests(unittest.TestCase):
         )
         self.assertEqual(fetch_calls, ["fetch"])
         self.assertIn("1.60x (n=3; range 1.20–1.60x)", summary)
+
+    def test_uncalibrated_pr_retry_can_rescue_two_sample_ratio_median(self):
+        self.require_implementation()
+        runner = (
+            Path(__file__).parents[2]
+            / ".github/scripts/run_desktop_scale_check.sh"
+        )
+        history = [make_sample() for _ in range(scale_check.MIN_DEV_RUNS - 1)]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            repo_root, _runner_temp, env = make_runner_harness(root, history)
+            env["MOCK_DOCKER_RATIO_COUNTS"] = "1=18.00,2=13.00,3=12.00"
+            result = subprocess.run(
+                ["bash", str(runner)],
+                cwd=repo_root,
+                env=env,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            calls = (root / "docker-calls.txt").read_text().splitlines()
+            fetch_calls = (root / "fetch-calls.txt").read_text().splitlines()
+            summary = (root / "step-summary.md").read_text()
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(len(calls), 3)
+        self.assertTrue(
+            all(
+                line.split()[1] == "/usr/src/tdesktop/out/Debug/Teagram"
+                for line in calls
+            )
+        )
+        self.assertEqual(fetch_calls, ["fetch"])
+        self.assertIn("1.30x (n=3; range 1.20–1.80x)", summary)
+
+    def test_linux_workflow_allows_the_calibrated_six_run_retry(self):
+        workflow = Path(__file__).parents[1] / "workflows/linux.yml"
+
+        self.assertIn(
+            'DESKTOP_SCALE_RUN_BUDGET_SECONDS: "270"',
+            workflow.read_text(),
+        )
 
     def test_contact_load_ceiling_applies_during_and_after_calibration(self):
         self.require_implementation()
