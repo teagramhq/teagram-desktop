@@ -1550,7 +1550,7 @@ run_font_startup_regression() {
 			return 1
 		fi
 		local stalls
-		stalls="$(grep -E 'UI stall [0-9]+ ms.*(QFont|CTFont|CoreText|populateFromDescriptor)' \
+		stalls="$(grep -E 'UI stall [0-9]+ ms.*(QFont|QRawFont|CTFont|CoreText|populateFromDescriptor)' \
 			"$sample_log" "$font_profile_log" 2>/dev/null || true)"
 		if [[ -n "$stalls" ]]; then
 			cat "$sample_log" >&2
