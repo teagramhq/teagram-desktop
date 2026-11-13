@@ -2445,6 +2445,7 @@ class LocalEndpointRefreshDiscoveryStub final {
 		QPointer<QTcpSocket> socket;
 		ConnectionKind kind = ConnectionKind::Unknown;
 		QByteArray startPrefix;
+		bool startPrefixRead = false;
 		QByteArray incoming;
 		std::array<uchar, 32> clientToServerKey = {};
 		std::array<uchar, 32> serverToClientKey = {};
@@ -2480,11 +2481,12 @@ class LocalEndpointRefreshDiscoveryStub final {
 
 	void readMtproto(const std::shared_ptr<Connection> &connection,
 					 QByteArray data) {
-		if (connection->startPrefix.size() < 64) {
+		if (!connection->startPrefixRead) {
 			connection->startPrefix += data;
 			if (connection->startPrefix.size() < 64) {
 				return;
 			}
+			connection->startPrefixRead = true;
 			const auto prefix = connection->startPrefix.left(64);
 			data = connection->startPrefix.mid(64);
 			connection->startPrefix.clear();
