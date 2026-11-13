@@ -721,9 +721,11 @@ jobs:
 
       - name: Run protected profile and IPC integration tests.
         id: profile-ipc
-        # The lifecycle case runner allows 20 minutes, plus time for prior cases and cleanup.
-        timeout-minutes: 25
+        # Leave time for the case runner to retain diagnostics before the step timeout.
+        timeout-minutes: 15
         if: ${{ !cancelled() && steps.ccache-profile.outputs.protected_path_integration == 'ON' && steps.build.outcome == 'success' }}
+        env:
+          TDESKTOP_MAC_LIFECYCLE_CASE_TIMEOUT_SECONDS: "600"
         run: |
           set -Eeuo pipefail
           diagnostics="$RUNNER_TEMP/macos-regression-diagnostics/profile-ipc"

@@ -46,7 +46,6 @@ runtime = (root / 'Telegram/SourceFiles/core/mac_protected_path_runtime.mm').rea
 runtime_header = (root / 'Telegram/SourceFiles/core/mac_protected_path_runtime.h').read_text(encoding='utf-8')
 profile_test = (root / 'Telegram/build/test_mac_profile_guard.sh').read_text(encoding='utf-8')
 workflow = (root / '.github/workflows/mac.yml').read_text(encoding='utf-8')
-case_runner = (root / 'Telegram/build/run_mac_lifecycle_cases.sh').read_text(encoding='utf-8')
 diagnose = (root / 'Telegram/build/diagnose_mac_seatbelt.py').read_text(encoding='utf-8')
 policy = (root / 'Telegram/SourceFiles/core/mac_protected_path_policy.cpp').read_text(encoding='utf-8')
 root_cmake = (root / 'CMakeLists.txt').read_text(encoding='utf-8')
@@ -112,10 +111,12 @@ profile_timeout = re.search(
     r'^\s*timeout-minutes:\s*([0-9]+)\s*$', profile_step, re.MULTILINE
 )
 case_timeout = re.search(
-    r'CASE_TIMEOUT_SECONDS="\$\{TDESKTOP_MAC_LIFECYCLE_CASE_TIMEOUT_SECONDS:-([0-9]+)\}"',
-    case_runner,
+    r'^\s*TDESKTOP_MAC_LIFECYCLE_CASE_TIMEOUT_SECONDS:\s*"?([0-9]+)"?\s*$',
+    profile_step,
+    re.MULTILINE,
 )
 assert profile_timeout and case_timeout
+assert int(profile_timeout.group(1)) == 15
 assert int(profile_timeout.group(1)) * 60 >= int(case_timeout.group(1)) + 120
 assert '(allow default)' in policy
 assert '(deny file*' in policy
