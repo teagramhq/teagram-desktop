@@ -1027,22 +1027,26 @@ class DesktopScaleCheckTests(unittest.TestCase):
         history = [make_sample() for _ in range(scale_check.MIN_DEV_RUNS)]
         base = [make_sample() for _ in range(3)]
         head = [make_sample() for _ in range(3)]
-        head[0]["scenarios"][scenario].update(
-            {"one_ms": 2.11, "hundred_ms": 3.19}
-        )
+        for sample, one_ms, hundred_ms in zip(
+            head, (2.0, 4.0, 30.0), (2.8, 12.0, 12.0)
+        ):
+            sample["scenarios"][scenario].update(
+                {"one_ms": one_ms, "hundred_ms": hundred_ms}
+            )
 
         result = scale_check.evaluate(history, base, head)
         row = result["rows"][scenario]
         summary = scale_check.format_summary(result, head[-1])
 
         self.assertFalse(result["failures"])
-        self.assertEqual(row["ratio"], 1.2)
+        self.assertEqual(row["ratio"], 1.4)
         self.assertEqual(row["ratio_sample_count"], 3)
-        self.assertEqual(row["ratio_min"], 1.2)
-        self.assertAlmostEqual(row["ratio_max"], 3.19 / 2.11)
+        self.assertEqual(row["ratio_min"], 0.4)
+        self.assertEqual(row["ratio_max"], 3.0)
+        self.assertEqual(row["head_hundred_ms"] / row["head_one_ms"], 3.0)
         self.assertIn(
-            "| contact change + name lookup | 10.00 ms → 10.00 ms | "
-            "12.00 ms → 12.00 ms | 1.20x (n=3; range 1.20–1.51x) |",
+            "| contact change + name lookup | 10.00 ms → 4.00 ms | "
+            "12.00 ms → 12.00 ms | 1.40x (n=3; range 0.40–3.00x) |",
             summary,
         )
 
@@ -1128,7 +1132,7 @@ class DesktopScaleCheckTests(unittest.TestCase):
         self.require_implementation()
         records = [make_sample() for _ in range(19)]
         base = [make_sample()]
-        head = [make_sample(one_ms=20.0, hundred_ms=40.0, stalls=1)]
+        head = [make_sample(one_ms=20.0, hundred_ms=24.0, stalls=1)]
 
         result = scale_check.evaluate(records, base, head)
         summary = scale_check.format_summary(result, head[-1])
@@ -1136,6 +1140,35 @@ class DesktopScaleCheckTests(unittest.TestCase):
         self.assertEqual(result["calibrating"], 19)
         self.assertFalse(result["failures"])
         self.assertIn("calibrating: 19/20", summary)
+
+    def test_calibrating_ratio_gate_covers_required_scenarios(self):
+        self.require_implementation()
+        scenarios = (
+            "messages.getDialogs page (100 dialogs)",
+            "contact change + name lookup",
+            "updates.getDifference (1,000 messages; 50 / 5,000 dialogs)",
+        )
+        history = [make_sample() for _ in range(scale_check.MIN_DEV_RUNS - 1)]
+
+        for scenario in scenarios:
+            with self.subTest(scenario=scenario):
+                head = [make_sample()]
+                head[0]["scenarios"][scenario].update(
+                    {"one_ms": 10.0, "hundred_ms": 16.0}
+                )
+
+                result = scale_check.evaluate(
+                    history, [make_sample()], head, report_only=True
+                )
+
+                self.assertTrue(result["report_only"])
+                self.assertEqual(result["calibrating"], 19)
+                self.assertTrue(
+                    any(
+                        scenario in failure and "1.5x" in failure
+                        for failure in result["failures"]
+                    )
+                )
 
     def test_contact_load_ceiling_applies_during_and_after_calibration(self):
         self.require_implementation()

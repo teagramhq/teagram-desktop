@@ -37,6 +37,11 @@ NO_BASELINE_EXEMPTION_SCENARIOS = {
     "updates.getDifference (1,000 messages; 50 / 5,000 dialogs)",
 }
 RATIO_EXEMPT_SCENARIOS = {CONTACT_LOAD_SCENARIO}
+CALIBRATION_RATIO_SCENARIOS = (
+    "messages.getDialogs page (100 dialogs)",
+    "contact change + name lookup",
+    "updates.getDifference (1,000 messages; 50 / 5,000 dialogs)",
+)
 ADDITIONAL_SCENARIOS = {
     "private history page (1M messages; 20 / 2,000 loaded)": "private history",
     "jump to date in 1M-message history": "jump to date",
@@ -360,6 +365,20 @@ def evaluate(
         for scenario in SCENARIOS
     }
     if count < MIN_DEV_RUNS:
+        failures = list(contact_load_failures)
+        for scenario in CALIBRATION_RATIO_SCENARIOS:
+            ratios = [
+                sample["scenarios"][scenario]["hundred_ms"]
+                / sample["scenarios"][scenario]["one_ms"]
+                for sample in head_runs
+                if scenario in sample["scenarios"]
+            ]
+            ratio = statistics.median(ratios) if ratios else None
+            if ratio is not None and ratio > MAX_SCALE_RATIO:
+                failures.append(
+                    f"{scenario}: median 100x/1x ratio is "
+                    f"{ratio:.2f}x (limit {MAX_SCALE_RATIO:.1f}x)"
+                )
         return {
             "record_count": count,
             "calibrating": count,
@@ -367,7 +386,7 @@ def evaluate(
             "exceptions": dict(STATIC_EXCEPTIONS),
             "additional_exceptions": {},
             "rows": {},
-            "failures": contact_load_failures,
+            "failures": failures,
             "report_only": True,
             "history_truncated": history_truncated,
             "history_unavailable": history_unavailable,
