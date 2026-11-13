@@ -484,6 +484,12 @@ UiStallWatchdog::RecentPingAcknowledgementsForTesting() {
 	return PingAcknowledgementHistory;
 }
 
+bool UiStallWatchdog::ShouldStopBeforeTraceAttachment(
+	bool stopping, std::uint64_t acknowledgedSequence,
+	std::uint64_t currentSequence) {
+	return stopping && (acknowledgedSequence < currentSequence);
+}
+
 bool UiStallWatchdog::SchedulerTraceCoversDuration(
 	const QString &trace, const std::vector<qint64> &sampleOffsetsNanoseconds,
 	qint64 durationNanoseconds) {
@@ -794,7 +800,8 @@ void UiStallWatchdog::run() {
 		};
 		if (_condition.wait_until(lock, postedAt + _countThreshold,
 								  acknowledged)) {
-			if (_stopping && (_acknowledgedSequence < current)) {
+			if (ShouldStopBeforeTraceAttachment(
+					_stopping, _acknowledgedSequence, current)) {
 				return;
 			}
 			const auto duration = _acknowledgedAt - postedAt;
@@ -810,7 +817,8 @@ void UiStallWatchdog::run() {
 			TotalStallCount.fetch_add(1, std::memory_order_relaxed);
 			if (!waitUntil(postedAt + _logThreshold)) {
 				detectedAt = Clock::now();
-			} else if (_stopping && (_acknowledgedSequence < current)) {
+			} else if (ShouldStopBeforeTraceAttachment(
+						   _stopping, _acknowledgedSequence, current)) {
 				return;
 			} else if (_acknowledgedAt - postedAt >= _logThreshold) {
 				detectedAt = _acknowledgedAt;
@@ -835,7 +843,8 @@ void UiStallWatchdog::run() {
 					detectedAt = Clock::now();
 					writeLog = true;
 					replaceLog = detectedAt < rateLimitedUntil;
-				} else if (_stopping) {
+				} else if (ShouldStopBeforeTraceAttachment(
+							   _stopping, _acknowledgedSequence, current)) {
 					return;
 				} else if (_acknowledgedAt >= rateLimitedUntil) {
 					detectedAt = _acknowledgedAt;

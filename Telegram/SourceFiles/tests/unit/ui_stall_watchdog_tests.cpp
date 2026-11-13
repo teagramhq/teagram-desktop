@@ -41,6 +41,16 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <time.h>
 #endif // Q_OS_LINUX
 
+TEST_CASE(UiStallWatchdogDoesNotSkipTraceAfterAcknowledgedShutdown) {
+	const auto current = std::uint64_t(42);
+	CHECK(!Core::UiStallWatchdog::ShouldStopBeforeTraceAttachment(true, current,
+																  current));
+	CHECK(Core::UiStallWatchdog::ShouldStopBeforeTraceAttachment(
+		true, current - 1, current));
+	CHECK(!Core::UiStallWatchdog::ShouldStopBeforeTraceAttachment(
+		false, current - 1, current));
+}
+
 #if defined(Q_OS_MAC)
 class UiStallWatchdogTestMainThreadPriority final {
   public:
