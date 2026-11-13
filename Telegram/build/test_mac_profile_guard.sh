@@ -1621,6 +1621,55 @@ if ! main_thread_cpu_work_within_budget \
 	echo "uncached attach-menu callback main-thread CPU exceeded 50 ms." >&2
 	exit 1
 fi
+local attach_menu_callback_work
+attach_menu_callback_work="$(grep -E \
+	'^Attach-menu callback work: cached_hover_wall_ns=[0-9]+ cached_hover_estimated_work_ns=[0-9]+ first_hover_estimated_work_ns=[0-9]+ invalidation_estimated_work_ns=[0-9]+ uncached_peer_estimated_work_ns=[0-9]+ budget_ns=50000000\.$' \
+	"$AUTH_LOG" || true)"
+if [[ -z "$attach_menu_callback_work" ]]; then
+	cat "$AUTH_LOG" >&2
+	echo "attach-menu callback estimated-work evidence missing." >&2
+	exit 1
+fi
+local attach_menu_cached_hover_estimated_work_ns
+attach_menu_cached_hover_estimated_work_ns="$(sed -E \
+	's/.*cached_hover_estimated_work_ns=([0-9]+).*/\1/' \
+	<<<"$attach_menu_callback_work")"
+if ! work_value_within_budget \
+	"$attach_menu_cached_hover_estimated_work_ns" 50000000; then
+	cat "$AUTH_LOG" >&2
+	echo "cached attach-menu hover estimated work exceeded 50 ms." >&2
+	exit 1
+fi
+local attach_menu_first_hover_estimated_work_ns
+attach_menu_first_hover_estimated_work_ns="$(sed -E \
+	's/.*first_hover_estimated_work_ns=([0-9]+).*/\1/' \
+	<<<"$attach_menu_callback_work")"
+if ! work_value_within_budget \
+	"$attach_menu_first_hover_estimated_work_ns" 50000000; then
+	cat "$AUTH_LOG" >&2
+	echo "first-hover attach-menu estimated work exceeded 50 ms." >&2
+	exit 1
+fi
+local attach_menu_invalidation_estimated_work_ns
+attach_menu_invalidation_estimated_work_ns="$(sed -E \
+	's/.*invalidation_estimated_work_ns=([0-9]+).*/\1/' \
+	<<<"$attach_menu_callback_work")"
+if ! work_value_within_budget \
+	"$attach_menu_invalidation_estimated_work_ns" 50000000; then
+	cat "$AUTH_LOG" >&2
+	echo "attach-menu invalidation estimated work exceeded 50 ms." >&2
+	exit 1
+fi
+local attach_menu_uncached_peer_estimated_work_ns
+attach_menu_uncached_peer_estimated_work_ns="$(sed -E \
+	's/.*uncached_peer_estimated_work_ns=([0-9]+).*/\1/' \
+	<<<"$attach_menu_callback_work")"
+if ! work_value_within_budget \
+	"$attach_menu_uncached_peer_estimated_work_ns" 50000000; then
+	cat "$AUTH_LOG" >&2
+	echo "uncached attach-menu estimated work exceeded 50 ms." >&2
+	exit 1
+fi
 if ! grep -F -q \
 	"Authenticated refused download history regression passed: entry without a live message remained unpublished." \
 	"$AUTH_LOG"; then

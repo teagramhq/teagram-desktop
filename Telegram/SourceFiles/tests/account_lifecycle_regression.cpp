@@ -10997,6 +10997,22 @@ EstimateMainThreadWork(qint64 mainThreadCpuNanoseconds, qint64 wallNanoseconds,
 		   && (estimate.estimatedWorkNanoseconds < budgetNanoseconds);
 }
 
+[[nodiscard]] bool
+MainThreadEstimatedWorkWithinBudget(qint64 workNanoseconds,
+									qint64 budgetNanoseconds) {
+	return (workNanoseconds >= 0) && (workNanoseconds < budgetNanoseconds);
+}
+
+void AccumulateMainThreadWorkEstimate(qint64 &aggregateNanoseconds,
+									  qint64 estimateNanoseconds) {
+	if ((aggregateNanoseconds < 0) || (estimateNanoseconds < 0)) {
+		aggregateNanoseconds = -1;
+	} else {
+		aggregateNanoseconds
+			= std::max(aggregateNanoseconds, estimateNanoseconds);
+	}
+}
+
 [[nodiscard]] bool MainThreadBlockedWorkBudgetRegressionPasses() {
 	const auto startupOffsets = SchedulerSampleOffsetsForDuration(101'000'000);
 	const auto switchOffsets = SchedulerSampleOffsetsForDuration(225'000'000);
@@ -11017,6 +11033,16 @@ EstimateMainThreadWork(qint64 mainThreadCpuNanoseconds, qint64 wallNanoseconds,
 												  {0, 1'000'000, 2'000'000});
 	const auto noSamples
 		= EstimateMainThreadWork(0, 101'000'000, u"none"_q, {});
+	const auto callbackOffsets = SchedulerSampleOffsetsForDuration(200'000'000);
+	const auto blockedAttachMenuCallback = EstimateMainThreadWork(
+		12'000'000, 200'000'000,
+		QString(int(callbackOffsets.size()), QChar(u'W')), callbackOffsets);
+	const auto unmeasuredAttachMenuCallback
+		= EstimateMainThreadWork(12'000'000, 200'000'000, u"none"_q, {});
+	auto callbackEstimate = qint64(0);
+	AccumulateMainThreadWorkEstimate(callbackEstimate, 20'000'000);
+	AccumulateMainThreadWorkEstimate(callbackEstimate, -1);
+	AccumulateMainThreadWorkEstimate(callbackEstimate, 12'000'000);
 	return (blocked.blockedNanoseconds == 101'000'000)
 		   && (blocked.estimatedWorkNanoseconds == 101'000'000)
 		   && !MainThreadWorkEstimateWithinBudget(
@@ -11044,7 +11070,20 @@ EstimateMainThreadWork(qint64 mainThreadCpuNanoseconds, qint64 wallNanoseconds,
 		   && (noSamples.blockedNanoseconds == -1)
 		   && (noSamples.estimatedWorkNanoseconds == 101'000'000)
 		   && !MainThreadWorkEstimateWithinBudget(0, 101'000'000, u"none"_q, {},
-												  100'000'000);
+												  100'000'000)
+		   && (blockedAttachMenuCallback.estimatedWorkNanoseconds > 50'000'000)
+		   && !MainThreadWorkEstimateWithinBudget(
+			   12'000'000, 200'000'000,
+			   QString(int(callbackOffsets.size()), QChar(u'W')),
+			   callbackOffsets, 50'000'000)
+		   && (unmeasuredAttachMenuCallback.estimatedWorkNanoseconds
+			   == 200'000'000)
+		   && !MainThreadEstimatedWorkWithinBudget(
+			   unmeasuredAttachMenuCallback.estimatedWorkNanoseconds,
+			   50'000'000)
+		   && (callbackEstimate == -1)
+		   && !MainThreadEstimatedWorkWithinBudget(callbackEstimate,
+												   50'000'000);
 }
 
 [[maybe_unused, nodiscard]] bool
@@ -11131,6 +11170,7 @@ struct CacheChatSwitchRegressionResult final {
 	qint64 initialHistorySelectionPeerId = -1;
 	qint64 attachMenuFirstHoverNanoseconds = -1;
 	qint64 attachMenuHoverNanoseconds = -1;
+	qint64 attachMenuHoverCallbackWallNanoseconds = -1;
 	qint64 attachMenuInvalidationHoverNanoseconds = -1;
 	qint64 attachMenuUncachedPeerNanoseconds = -1;
 	qint64 attachMenuFirstHoverCallbackCpuNanoseconds = -1;
@@ -11139,6 +11179,10 @@ struct CacheChatSwitchRegressionResult final {
 	qint64 attachMenuFirstHoverCallbackWallNanoseconds = -1;
 	qint64 attachMenuInvalidationCallbackWallNanoseconds = -1;
 	qint64 attachMenuUncachedPeerCallbackWallNanoseconds = -1;
+	qint64 attachMenuFirstHoverEstimatedWorkNanoseconds = -1;
+	qint64 attachMenuHoverEstimatedWorkNanoseconds = -1;
+	qint64 attachMenuInvalidationEstimatedWorkNanoseconds = -1;
+	qint64 attachMenuUncachedPeerEstimatedWorkNanoseconds = -1;
 	qint64 maxStallNanoseconds = -1;
 	int schedulerEvidenceSkippedRecords = 0;
 	int schedulerEvidenceUnmatchedCallbacks = 0;
@@ -11305,19 +11349,22 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 					  not_null<HistoryItem *>(revealItem));
 	}
 	auto slowAttachMenuCallbacks = std::vector<MainThreadWorkInterval>();
+	auto attachMenuCallbacks = std::vector<MainThreadWorkInterval>();
 	const auto collectSlowAttachMenuCallbacks = [&](const QString &label) {
 		for (const auto &measurement :
 			 historyWidget
 				 ->attachMenuBuildCallbackMeasurementsForRegressionTest()) {
+			const auto interval = MainThreadWorkInterval{
+				measurement.startedAt,
+				measurement.wallNanoseconds,
+				measurement.mainThreadCpuNanoseconds,
+				measurement.processCpuNanoseconds,
+				label,
+				measurement.startedAtSteadyNanoseconds,
+			};
+			attachMenuCallbacks.push_back(interval);
 			if (measurement.wallNanoseconds >= kMaxChatSwitchNanoseconds) {
-				slowAttachMenuCallbacks.push_back({
-					measurement.startedAt,
-					measurement.wallNanoseconds,
-					measurement.mainThreadCpuNanoseconds,
-					measurement.processCpuNanoseconds,
-					label,
-					measurement.startedAtSteadyNanoseconds,
-				});
+				slowAttachMenuCallbacks.push_back(interval);
 			}
 		}
 	};
@@ -11391,18 +11438,50 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 	QCoreApplication::processEvents();
 	const auto buildsBeforeCachedHover
 		= historyWidget->attachMenuBuildCountForRegressionTest();
+	const auto attachMenuHoverStartedAtTimestamp = QDateTime::currentDateTime();
 	const auto attachMenuHoverStartedAt
 		= ThreadCpuTimeNanosecondsForRegressionTest();
+	const auto attachMenuHoverProcessStartedAt = ProcessCpuTimeNanoseconds();
+	auto attachMenuHoverTimer = QElapsedTimer();
+	attachMenuHoverTimer.start();
+	const auto attachMenuHoverStartedAtSteadyNanoseconds
+		= std::chrono::duration_cast<std::chrono::nanoseconds>(
+			  std::chrono::steady_clock::now().time_since_epoch())
+			  .count();
 	auto cachedEnter = QEvent(QEvent::Enter);
 	QCoreApplication::sendEvent(historyWidget->attachToggleForRegressionTest(),
 								&cachedEnter);
+	const auto attachMenuHoverWallNanoseconds
+		= attachMenuHoverTimer.nsecsElapsed();
 	const auto attachMenuHoverFinishedAt
 		= ThreadCpuTimeNanosecondsForRegressionTest();
+	const auto attachMenuHoverProcessFinishedAt = ProcessCpuTimeNanoseconds();
 	result.attachMenuHoverNanoseconds
 		= (attachMenuHoverStartedAt && attachMenuHoverFinishedAt
 		   && (*attachMenuHoverFinishedAt >= *attachMenuHoverStartedAt))
 			  ? (*attachMenuHoverFinishedAt - *attachMenuHoverStartedAt)
 			  : qint64(-1);
+	result.attachMenuHoverCallbackWallNanoseconds
+		= attachMenuHoverWallNanoseconds;
+	const auto attachMenuHoverProcessNanoseconds
+		= (attachMenuHoverProcessStartedAt && attachMenuHoverProcessFinishedAt
+		   && (*attachMenuHoverProcessFinishedAt
+			   >= *attachMenuHoverProcessStartedAt))
+			  ? (*attachMenuHoverProcessFinishedAt
+				 - *attachMenuHoverProcessStartedAt)
+			  : qint64(-1);
+	const auto attachMenuHoverInterval = MainThreadWorkInterval{
+		attachMenuHoverStartedAtTimestamp,
+		attachMenuHoverWallNanoseconds,
+		result.attachMenuHoverNanoseconds,
+		attachMenuHoverProcessNanoseconds,
+		u"cached hover callback"_q,
+		attachMenuHoverStartedAtSteadyNanoseconds,
+	};
+	attachMenuCallbacks.push_back(attachMenuHoverInterval);
+	if (attachMenuHoverWallNanoseconds >= kMaxChatSwitchNanoseconds) {
+		slowAttachMenuCallbacks.push_back(attachMenuHoverInterval);
+	}
 	result.attachMenuCacheReused
 		= attachMenuPrimed && historyWidget->attachMenuExistsForRegressionTest()
 		  && (historyWidget->attachMenuBuildCountForRegressionTest()
@@ -11457,6 +11536,7 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		  && !historyWidget->attachMenuExistsForRegressionTest()
 		  && (historyWidget->attachMenuBuildCountForRegressionTest()
 			  == buildsBeforePremiumToggle);
+	historyWidget->resetAttachMenuBuildCallbackMeasurementsForRegressionTest();
 	auto premiumEnter = QEvent(QEvent::Enter);
 	QCoreApplication::sendEvent(historyWidget->attachToggleForRegressionTest(),
 								&premiumEnter);
@@ -11466,6 +11546,29 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 				replacementBotId);
 		},
 		1000);
+	const auto premiumBuildCallbackCpuNanoseconds
+		= historyWidget
+			  ->attachMenuBuildMaxCallbackCpuNanosecondsForRegressionTest();
+	if ((result.attachMenuInvalidationCallbackCpuNanoseconds < 0)
+		|| (premiumBuildCallbackCpuNanoseconds < 0)) {
+		result.attachMenuInvalidationCallbackCpuNanoseconds = -1;
+	} else {
+		result.attachMenuInvalidationCallbackCpuNanoseconds
+			= std::max(result.attachMenuInvalidationCallbackCpuNanoseconds,
+					   premiumBuildCallbackCpuNanoseconds);
+	}
+	const auto premiumBuildCallbackWallNanoseconds
+		= historyWidget
+			  ->attachMenuBuildMaxCallbackWallNanosecondsForRegressionTest();
+	if ((result.attachMenuInvalidationCallbackWallNanoseconds < 0)
+		|| (premiumBuildCallbackWallNanoseconds < 0)) {
+		result.attachMenuInvalidationCallbackWallNanoseconds = -1;
+	} else {
+		result.attachMenuInvalidationCallbackWallNanoseconds
+			= std::max(result.attachMenuInvalidationCallbackWallNanoseconds,
+					   premiumBuildCallbackWallNanoseconds);
+	}
+	collectSlowAttachMenuCallbacks(u"invalidation hover callback"_q);
 	const auto premiumMenuRebuilt
 		= premiumMenuInvalidated && premiumMenuAppeared
 		  && (historyWidget->attachMenuBuildCountForRegressionTest()
@@ -11910,6 +12013,43 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 			  kMaxSchedulerProofOtherThreadWorkNanoseconds);
 	const auto schedulerEvidenceRecords
 		= Core::UiStallWatchdog::RecentStallEvidenceForTesting();
+	auto attachMenuWorkSeen = std::array<bool, 4>();
+	for (const auto &callback : attachMenuCallbacks) {
+		const auto matchingEvidence = FindMatchingMainThreadWorkEvidence(
+			callback, schedulerEvidenceRecords, 1, 10);
+		const auto sampleOffsets
+			= SchedulerSampleOffsetsForInterval(callback, matchingEvidence);
+		const auto estimate = EstimateMainThreadWork(
+			callback.mainThreadWorkNanoseconds, callback.durationNanoseconds,
+			matchingEvidence ? matchingEvidence->schedulerTrace : QString(),
+			sampleOffsets.value_or(std::vector<qint64>()));
+		qint64 *destination = nullptr;
+		bool *seen = nullptr;
+		if (callback.label == u"first hover callback"_q) {
+			destination = &result.attachMenuFirstHoverEstimatedWorkNanoseconds;
+			seen = &attachMenuWorkSeen[0];
+		} else if (callback.label == u"cached hover callback"_q) {
+			destination = &result.attachMenuHoverEstimatedWorkNanoseconds;
+			seen = &attachMenuWorkSeen[1];
+		} else if (callback.label == u"invalidation hover callback"_q) {
+			destination
+				= &result.attachMenuInvalidationEstimatedWorkNanoseconds;
+			seen = &attachMenuWorkSeen[2];
+		} else if (callback.label.startsWith(u"uncached peer "_q)) {
+			destination
+				= &result.attachMenuUncachedPeerEstimatedWorkNanoseconds;
+			seen = &attachMenuWorkSeen[3];
+		}
+		if (destination && seen) {
+			if (!*seen) {
+				*destination = estimate.estimatedWorkNanoseconds;
+				*seen = true;
+			} else {
+				AccumulateMainThreadWorkEstimate(
+					*destination, estimate.estimatedWorkNanoseconds);
+			}
+		}
+	}
 	result.schedulerEvidenceSkippedRecords
 		= CountMalformedStallEvidenceRecords(schedulerEvidenceRecords);
 	const auto chatSwitchEvidenceDiagnostics
@@ -11982,6 +12122,18 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		  && result.attachMenuUncachedPeersReady
 		  && MainThreadCpuWorkWithinBudget(
 			  result.attachMenuUncachedPeerCallbackCpuNanoseconds,
+			  kMaxChatSwitchNanoseconds)
+		  && MainThreadEstimatedWorkWithinBudget(
+			  result.attachMenuFirstHoverEstimatedWorkNanoseconds,
+			  kMaxChatSwitchNanoseconds)
+		  && MainThreadEstimatedWorkWithinBudget(
+			  result.attachMenuHoverEstimatedWorkNanoseconds,
+			  kMaxChatSwitchNanoseconds)
+		  && MainThreadEstimatedWorkWithinBudget(
+			  result.attachMenuInvalidationEstimatedWorkNanoseconds,
+			  kMaxChatSwitchNanoseconds)
+		  && MainThreadEstimatedWorkWithinBudget(
+			  result.attachMenuUncachedPeerEstimatedWorkNanoseconds,
 			  kMaxChatSwitchNanoseconds)
 		  && result.attachMenuCacheBounded
 		  && result.pendingRevealStartedAfterControlsGeometry
@@ -12934,6 +13086,29 @@ void RunAuthenticatedCacheSymlinkCases(
 					chatSwitch.syntheticHistoriesReady,
 					static_cast<long long>(chatSwitch.maxStallNanoseconds),
 					chatSwitch.passed);
+				std::fprintf(
+					stderr,
+					"Attach-menu callback work: "
+					"cached_hover_wall_ns=%lld "
+					"cached_hover_estimated_work_ns=%lld "
+					"first_hover_estimated_work_ns=%lld "
+					"invalidation_estimated_work_ns=%lld "
+					"uncached_peer_estimated_work_ns=%lld "
+					"budget_ns=%lld.\n",
+					static_cast<long long>(
+						chatSwitch.attachMenuHoverCallbackWallNanoseconds),
+					static_cast<long long>(
+						chatSwitch.attachMenuHoverEstimatedWorkNanoseconds),
+					static_cast<long long>(
+						chatSwitch
+							.attachMenuFirstHoverEstimatedWorkNanoseconds),
+					static_cast<long long>(
+						chatSwitch
+							.attachMenuInvalidationEstimatedWorkNanoseconds),
+					static_cast<long long>(
+						chatSwitch
+							.attachMenuUncachedPeerEstimatedWorkNanoseconds),
+					static_cast<long long>(kMaxChatSwitchNanoseconds));
 				if (!chatSwitch.chatSwitchSchedulerPreemptionProven
 					|| !chatSwitch.hydrationSchedulerPreemptionProven
 					|| !chatSwitch.attachMenuSchedulerPreemptionProven) {
