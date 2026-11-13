@@ -2099,7 +2099,7 @@ MtpRequestCompletesAfterEndpointRefresh(not_null<Main::Account *> account,
 
 	auto callbackCount = 0;
 	auto failureCount = 0;
-	auto callbackRequestId = MTP::mtpRequestId(0);
+	auto callbackRequestId = mtpRequestId(0);
 	const auto requestId = mtp.send(
 		MTPupdates_GetState(),
 		[&](const MTP::Response &response) {
@@ -2162,7 +2162,7 @@ MtpRequestCompletesAfterEndpointRefresh(not_null<Main::Account *> account,
 	}
 
 	mtp.processCallback(MTP::Response{
-		.reply = MTP::mtpBuffer{1},
+		.reply = mtpBuffer{1},
 		.requestId = requestId,
 	});
 	return callbackCount == 1 && failureCount == 0
