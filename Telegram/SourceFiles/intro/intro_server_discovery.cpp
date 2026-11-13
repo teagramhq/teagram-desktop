@@ -957,26 +957,26 @@ void ServerEndpointRefreshDiscovery::beginLocalDiscovery() {
 
 void ServerEndpointRefreshDiscovery::startLocalDiscovery(
 	const QList<QHostAddress> &addresses) {
-	_localDiscovery->start(_selection, _localNonce, addresses,
-						   {
-							   .finished =
-								   [=](MTP::ServerDiscoveryResult result) {
-									   if (_running) {
-										   finish(std::move(result));
-									   }
-								   },
-							   .failed =
-								   [=](bool connectionFailure) {
-									   if (_running) {
-										   fail(
-											   connectionFailure
-												   ? ServerEndpointRefreshFailureStatus::
-														 NetworkFailure
-												   : ServerEndpointRefreshFailureStatus::
-														 InvalidResponse);
-									   }
-								   },
-						   });
+	_localDiscovery->start(
+		_selection, _localNonce, addresses,
+		{
+			.finished =
+				[=](MTP::ServerDiscoveryResult result) {
+					if (_running) {
+						finish(std::move(result));
+					}
+				},
+			.failed =
+				[=](bool connectionFailure) {
+					if (_running) {
+						fail(connectionFailure
+								 ? ServerEndpointRefreshFailureStatus::
+									   NetworkFailure
+								 : ServerEndpointRefreshFailureStatus::
+									   InvalidResponse);
+					}
+				},
+		});
 }
 
 void ServerEndpointRefreshDiscovery::publicDiscoveryFinished() {
