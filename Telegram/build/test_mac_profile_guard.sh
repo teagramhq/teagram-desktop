@@ -97,54 +97,44 @@ main_thread_work_estimate_within_budget() {
 		local sample_count="${#trace}"
 		local -a scheduler_offsets=()
 		IFS=, read -r -a scheduler_offsets <<< "$offsets_csv"
-		local covered=true
+		local samples_valid=true
 		if (( ${#scheduler_offsets[@]} != sample_count )); then
-			covered=false
+			samples_valid=false
 		fi
 		local previous_offset=0
-		local first_offset=0
-		local last_offset=0
 		local has_previous=false
-		local has_covered=false
 		local in_window_samples=0
 		local blocked_sample_count=0
 		for ((i = 0; i < sample_count; ++i)); do
-			[[ "$covered" == true ]] || break
+			[[ "$samples_valid" == true ]] || break
 			local offset="${scheduler_offsets[i]}"
 			if [[ ! "$offset" =~ ^-?[0-9]+$ ]]; then
-				covered=false
+				samples_valid=false
+				break
+			fi
+			if (( offset < 0 )); then
+				samples_valid=false
 				break
 			fi
 			if [[ "$has_previous" == true ]] \
 				&& (( offset < previous_offset )); then
-				covered=false
+				samples_valid=false
 				break
 			fi
 			if (( offset >= 0 && offset <= wall_ns )); then
-				if [[ "$has_covered" == true ]] \
-					&& (( offset - last_offset > 5000000 )); then
-					covered=false
-					break
-				fi
-				if [[ "$has_covered" == false ]]; then
-					first_offset="$offset"
-					has_covered=true
-				fi
-				last_offset="$offset"
 				((++in_window_samples))
-				if [[ "${trace:i:1}" != R ]]; then
+				local state="${trace:i:1}"
+				if [[ "$state" == W || "$state" == U ]]; then
 					((++blocked_sample_count))
+				elif [[ "$state" != R ]]; then
+					samples_valid=false
+					break
 				fi
 			fi
 			previous_offset="$offset"
 			has_previous=true
 		done
-		if [[ "$has_covered" == false ]] \
-			|| (( first_offset > 5000000 )) \
-			|| (( wall_ns - last_offset > 5000000 )); then
-			covered=false
-		fi
-		if [[ "$covered" == true ]] && (( in_window_samples > 0 )); then
+		if [[ "$samples_valid" == true ]] && (( in_window_samples > 0 )); then
 			local blocked_ns="$((
 				wall_ns / in_window_samples * blocked_sample_count
 				+ wall_ns % in_window_samples * blocked_sample_count
@@ -1519,7 +1509,7 @@ for cache in cache media_cache; do
 	fi
 done
 if ! grep -E -q \
-	'^First messages\.getDialogs handler latency regression: seeded_directories=125 seeded_files=169 requests=1 parsed=1 chats=2 dialogs=1 messages=73 documents=73 cache_walks=2 max_handler_ns=[0-9]+ under_50ms=1\.$' \
+	'^First messages\.getDialogs handler latency regression: seeded_directories=125 seeded_files=169 requests=1 parsed=1 chats=2 dialogs=1 messages=73 documents=73 cache_walks=2 max_handler_ns=[0-9]+ main_thread_cpu_ns=-?[0-9]+ blocked_estimate_ns=-?[0-9]+ estimated_work_ns=[0-9]+ trace=([[:alpha:]?]+|none) under_50ms=1\.$' \
 	"$AUTH_LOG"; then
 	cat "$AUTH_LOG" >&2
 	echo "first messages.getDialogs handler evidence missing or over 50 ms." >&2

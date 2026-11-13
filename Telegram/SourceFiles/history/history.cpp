@@ -3798,11 +3798,7 @@ void History::resizeToWidth(int newWidth, bool chatWide) {
 	const auto layoutScale = style::Scale();
 	const auto layoutDevicePixelRatio = style::DevicePixelRatio();
 	const auto layoutPaletteVersion = style::PaletteVersion();
-	const auto layoutKeyChanged
-		= (_layoutScale != layoutScale)
-		  || (_layoutDevicePixelRatio != layoutDevicePixelRatio)
-		  || (_layoutPaletteVersion != layoutPaletteVersion)
-		  || (_layoutChatWide != chatWide);
+	const auto layoutKeyChanged = needsResizeFor(newWidth, chatWide);
 	const auto request
 		= (_flags & Flag::PendingAllItemsResize)	   ? Request::ReinitAll
 		  : ((_width != newWidth) || layoutKeyChanged) ? Request::ResizeAll
@@ -3826,6 +3822,15 @@ void History::resizeToWidth(int newWidth, bool chatWide) {
 		y += block->resizeGetHeight(newWidth, request);
 	}
 	_height = y;
+}
+
+bool History::needsResizeFor(int newWidth, bool chatWide) const {
+	return (_width != newWidth)
+		|| (_layoutScale != style::Scale())
+		|| (_layoutDevicePixelRatio != style::DevicePixelRatio())
+		|| (_layoutPaletteVersion != style::PaletteVersion())
+		|| (_layoutChatWide != chatWide)
+		|| (_flags & Flag::PendingAllItemsResize);
 }
 
 void History::forceFullResize() {

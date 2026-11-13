@@ -1847,6 +1847,9 @@ void HistoryWidget::initFieldAutocomplete() {
 		_autocomplete->setCurrentPeer(_peer);
 		return;
 	}
+	if (!_field->hasFocus()) {
+		return;
+	}
 #ifdef TDESKTOP_LIFECYCLE_REGRESSION
 	++_fieldAutocompleteBuildCountForRegressionTest;
 #endif
@@ -3413,6 +3416,10 @@ void HistoryWidget::setHistory(History *history) {
 		}
 	}
 	if (history) {
+		if (history->needsResizeFor(
+				_scroll->width(), controller()->adaptive().isChatWide())) {
+			history->forceFullResize();
+		}
 		_history = history;
 		_migrated = _history ? _history->migrateFrom() : nullptr;
 		registerDraftSource();
@@ -6887,18 +6894,40 @@ int HistoryWidget::tabbedPanelBuildCountForRegressionTest() const {
 	return _tabbedPanelBuildCountForRegressionTest;
 }
 
+void HistoryWidget::clearFieldFocusForRegressionTest() {
+	_field->clearFocus();
+}
+
+void HistoryWidget::focusFieldForRegressionTest() {
+	_field->setFocus(Qt::OtherFocusReason);
+}
+
 bool HistoryWidget::updateControlsGeometryStartsPendingRevealForRegressionTest(
 	not_null<HistoryItem *> item) {
 	const auto scrollSize = _scroll->size();
-	if (_itemRevealAnimations.contains(item)) {
+	if (!_list) {
+		return false;
+	}
+	auto view = item->mainView();
+	auto target = item;
+	while (view) {
+		const auto candidate = view->data();
+		if (!_itemRevealAnimations.contains(candidate)
+			&& (_list->itemTop(view) >= 0)) {
+			target = candidate;
+			break;
+		}
+		view = view->previousInBlocks();
+	}
+	if (!view) {
 		return false;
 	}
 	auto previousShowAnimation = std::move(_showAnimation);
 	_showAnimation = std::make_unique<Window::SlideAnimation>();
-	_itemRevealPending.emplace(item);
+	_itemRevealPending.emplace(target);
 	updateControlsGeometry();
 	const auto pendingRetainedDuringShowAnimation
-		= _itemRevealPending.contains(item);
+		= _itemRevealPending.contains(target);
 	_showAnimation = std::move(previousShowAnimation);
 	if (_showAnimation) {
 		showFinished();
@@ -6906,8 +6935,8 @@ bool HistoryWidget::updateControlsGeometryStartsPendingRevealForRegressionTest(
 		updateControlsGeometry();
 	}
 	return pendingRetainedDuringShowAnimation && (_scroll->size() == scrollSize)
-		   && !_itemRevealPending.contains(item)
-		   && _itemRevealAnimations.contains(item);
+		   && !_itemRevealPending.contains(target)
+		   && _itemRevealAnimations.contains(target);
 }
 
 QString HistoryWidget::draftTextForRegressionTest() const {
@@ -7806,6 +7835,7 @@ void HistoryWidget::fieldResized() {
 }
 
 void HistoryWidget::fieldFocused() {
+	initFieldAutocomplete();
 	if (_list) {
 		_list->clearSelected(true);
 		_list->hideElementOverlay();

@@ -330,6 +330,8 @@ public:
 	[[nodiscard]] int fieldAutocompleteBuildCountForRegressionTest() const;
 	[[nodiscard]] PeerData *fieldAutocompletePeerForRegressionTest() const;
 	[[nodiscard]] int tabbedPanelBuildCountForRegressionTest() const;
+	void clearFieldFocusForRegressionTest();
+	void focusFieldForRegressionTest();
 	[[nodiscard]] bool
 	updateControlsGeometryStartsPendingRevealForRegressionTest(
 		not_null<HistoryItem *> item);

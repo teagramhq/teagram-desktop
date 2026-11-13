@@ -286,6 +286,7 @@ public:
 	HistoryItem *lastEditableMessage() const;
 
 	void resizeToWidth(int newWidth, bool chatWide);
+	[[nodiscard]] bool needsResizeFor(int newWidth, bool chatWide) const;
 	void forceFullResize();
 	int height() const;
 	[[nodiscard]] int layoutScaleForRegressionTest() const {
