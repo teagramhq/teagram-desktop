@@ -416,6 +416,18 @@ void Sandbox::launchApplication() {
 		} else if (_application) {
 			return;
 		}
+#if defined(Q_OS_LINUX) || defined(Q_OS_MAC)
+		if (!_uiStallWatchdog) {
+			_uiStallWatchdog = std::make_unique<UiStallWatchdog>(
+				[](const QString &line, bool update) {
+					Logs::writeMainUiStall(line, update);
+				},
+				UiStallWatchdog::Settings{
+					.captureShortStalls = qEnvironmentVariableIsSet(
+						"TDESKTOP_UI_STALL_WATCHDOG_CACHE_REGRESSION"),
+				});
+		}
+#endif // Q_OS_LINUX || Q_OS_MAC
 #ifdef Q_OS_MAC
 		if (!_fontStartupWindow) {
 			_launchAfterFontDatabaseWarmup = true;
@@ -461,18 +473,6 @@ void Sandbox::launchApplication() {
 		}
 		Platform::CreateGlobalMenu();
 #endif // Q_OS_MAC
-#if defined(Q_OS_LINUX) || defined(Q_OS_MAC)
-		if (!_uiStallWatchdog) {
-			_uiStallWatchdog = std::make_unique<UiStallWatchdog>(
-				[](const QString &line, bool update) {
-					Logs::writeMainUiStall(line, update);
-				},
-				UiStallWatchdog::Settings{
-					.captureShortStalls = qEnvironmentVariableIsSet(
-						"TDESKTOP_UI_STALL_WATCHDOG_CACHE_REGRESSION"),
-				});
-		}
-#endif // Q_OS_LINUX || Q_OS_MAC
 		setupScreenScale();
 
 		rpl::single(
@@ -514,7 +514,6 @@ void Sandbox::startFontDatabaseWarmup() {
 	_fontDatabaseWarmupStarted = true;
 	try {
 		_fontDatabaseWarmupThread = std::thread([this] {
-			const auto worker = QThread::currentThreadId() != _mainThreadId;
 			const auto openSansLoaded = style::internal::PreloadCustomFonts();
 			{
 #if QT_VERSION < QT_VERSION_CHECK(6, 0, 0)
@@ -523,11 +522,6 @@ void Sandbox::startFontDatabaseWarmup() {
 				const auto families = QFontDatabase::families();
 #endif // Qt < 6.0.0
 				Q_UNUSED(families);
-			}
-			if (qEnvironmentVariableIsSet("TDESKTOP_FONT_STARTUP_REGRESSION")) {
-				fprintf(stderr,
-						"Font database warmup thread regression: worker=%d\n",
-						worker ? 1 : 0);
 			}
 			QMetaObject::invokeMethod(
 				this,

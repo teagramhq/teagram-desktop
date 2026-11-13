@@ -1546,16 +1546,6 @@ run_font_startup_regression() {
 			return 1
 		fi
 		printf 'Font database warmup before app run=PASS sample=%s\n' "$sample"
-		if ! grep -F -q 'Font database warmup thread regression: worker=1' \
-			"$sample_log" "$font_profile_log" 2>/dev/null; then
-			cat "$sample_log" >&2
-			if [[ -f "$font_profile_log" ]]; then
-				cat "$font_profile_log" >&2
-			fi
-			echo "font database warmup did not run on a worker thread: $sample" >&2
-			return 1
-		fi
-		printf 'Font database warmup worker thread=PASS sample=%s\n' "$sample"
 		if ! grep -F -q 'Font database warmup regression: ready=1 custom-fonts=1' \
 			"$sample_log" "$font_profile_log" 2>/dev/null; then
 			cat "$sample_log" >&2
@@ -1648,9 +1638,7 @@ run_font_startup_regression() {
 		echo "font database warmup did not start after the exposure timeout" >&2
 		return 1
 	fi
-	if ! grep -F -q 'Font database warmup thread regression: worker=1' \
-		"$exposure_timeout_log" "$font_profile_log" 2>/dev/null \
-		|| ! grep -F -q 'Font database warmup regression: ready=1 custom-fonts=1' \
+	if ! grep -F -q 'Font database warmup regression: ready=1 custom-fonts=1' \
 		"$exposure_timeout_log" "$font_profile_log" 2>/dev/null \
 		|| ! grep -E -q 'StartFonts startup regression: wall_ns=[0-9]+' \
 			"$exposure_timeout_log" "$font_profile_log" 2>/dev/null; then

@@ -1137,6 +1137,15 @@ if ! awk '
 ' "$profile_harness"; then
   contract_fail "$profile_harness authenticated-cache case must run font-startup before its app launch."
 fi
+if ! awk '
+  /^void Sandbox::launchApplication\(\) \{/ { in_launch = 1 }
+  in_launch && /std::make_unique<UiStallWatchdog>/ { watchdog = NR }
+  in_launch && /if \(!_fontStartupWindow\)/ { splash = NR }
+  in_launch && /^void Sandbox::startFontDatabaseWarmup/ { in_launch = 0 }
+  END { exit !(watchdog && splash && watchdog < splash) }
+' Telegram/SourceFiles/core/sandbox.cpp; then
+  contract_fail 'The UI stall watchdog must start before the font splash.'
+fi
 grep -Fq 'bash "$PROFILE_GUARD" "$FAKE_APP"' \
   Telegram/build/test_mac_lifecycle_case_runner.sh \
   || contract_fail 'The lifecycle runner self-test must invoke the profile harness without a case argument.'

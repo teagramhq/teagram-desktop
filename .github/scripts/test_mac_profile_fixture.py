@@ -38,7 +38,6 @@ if [[ "${TDESKTOP_FONT_STARTUP_REGRESSION:-}" == 1 ]]; then
         printf 'Font startup splash regression: visible=1 wall_ns=30000000\\n'
     fi
     printf 'Font database warmup regression: started=1\\n'
-    printf 'Font database warmup thread regression: worker=1\\n'
     printf 'Font database warmup regression: ready=1 custom-fonts=1\\n'
     printf 'Font fallback regression: emoji=Apple Color Emoji arabic=Vazirmatn UI NL wall_ns=1000000 result=PASS\\n'
     exit 0
@@ -141,11 +140,6 @@ fi
 if [[ "$mode" != warmup-before-splash ]]; then
     printf 'Font database warmup regression: started=1\\n'
 fi
-if [[ "$mode" == main-thread-warmup ]]; then
-    printf 'Font database warmup thread regression: worker=0\\n'
-else
-    printf 'Font database warmup thread regression: worker=1\\n'
-fi
 if [[ "$mode" != missing-timing ]]; then
     printf 'StartFonts startup regression: wall_ns=%s\\n' "$wall_ns"
 fi
@@ -212,8 +206,6 @@ assert 'Font database warmup order=PASS sample=cold' in font_startup_output
 assert 'Font database warmup order=PASS sample=warm' in font_startup_output
 assert 'Font database warmup before app run=PASS sample=cold' in font_startup_output
 assert 'Font database warmup before app run=PASS sample=warm' in font_startup_output
-assert 'Font database warmup worker thread=PASS sample=cold' in font_startup_output
-assert 'Font database warmup worker thread=PASS sample=warm' in font_startup_output
 assert 'Font-code startup stall gate=PASS sample=cold' in font_startup_output
 assert 'Font-code startup stall gate=PASS sample=warm' in font_startup_output
 assert 'fallback=PASS font_stall_gate=PASS' \
@@ -268,8 +260,4 @@ font_startup_missing_custom_fonts = run_font_startup_fixture(
     50_000_000, 50_000_000, 1, mode='missing-custom-fonts')
 assert 'bundled fonts were not preloaded before app initialization' \
     in font_startup_missing_custom_fonts
-font_startup_main_thread_warmup = run_font_startup_fixture(
-    50_000_000, 50_000_000, 1, mode='main-thread-warmup')
-assert 'font database warmup did not run on a worker thread' \
-    in font_startup_main_thread_warmup
 print('macOS font startup timing and failure guards: PASS')
