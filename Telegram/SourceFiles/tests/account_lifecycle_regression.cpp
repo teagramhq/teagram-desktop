@@ -14879,22 +14879,20 @@ template <typename Request, typename Action>
 	});
 }
 
-[[nodiscard]] bool
-DesktopScaleDialogsWithinAbsoluteBudget(const DesktopScaleActionSample &one,
-										   const DesktopScaleActionSample &hundred) {
+[[nodiscard]] bool DesktopScaleDialogsWithinAbsoluteBudget(
+	const DesktopScaleActionSample &one,
+	const DesktopScaleActionSample &hundred) {
 	return one.nanoseconds && (*one.nanoseconds > 0) && hundred.nanoseconds
 		   && (*hundred.nanoseconds <= 50'000'000)
 		   && hundred.mainThreadStepsOverBudget
 		   && (*hundred.mainThreadStepsOverBudget == 0);
 }
 
-[[nodiscard]] bool
-DesktopScaleUpdateBurstMeasurementsValid(
+[[nodiscard]] bool DesktopScaleUpdateBurstMeasurementsValid(
 	const DesktopScaleActionSample &one,
 	const DesktopScaleActionSample &hundred) {
 	return one.nanoseconds && (*one.nanoseconds > 0) && hundred.nanoseconds
-		   && (*hundred.nanoseconds > 0)
-		   && one.mainThreadStepsOverBudget
+		   && (*hundred.nanoseconds > 0) && one.mainThreadStepsOverBudget
 		   && (*one.mainThreadStepsOverBudget == 0)
 		   && hundred.mainThreadStepsOverBudget
 		   && (*hundred.mainThreadStepsOverBudget == 0);
@@ -17857,8 +17855,7 @@ int RunDesktopScaleCheck() {
 	const auto passed
 		= dialogsOneCreated && dialogsOne.passed && dialogsHundredCreated
 		  && dialogsHundred.passed
-		  && DesktopScaleDialogsWithinAbsoluteBudget(
-			dialogsOne, dialogsHundred)
+		  && DesktopScaleDialogsWithinAbsoluteBudget(dialogsOne, dialogsHundred)
 		  && dialogsState && contactsOne.loaded.passed
 		  && contactsHundred.loaded.passed && contactsOne.changedAndFound.passed
 		  && contactsHundred.changedAndFound.passed
@@ -17869,8 +17866,8 @@ int RunDesktopScaleCheck() {
 		  && groupHundred.passed && searchOne.search.passed && groupCreated
 		  && searchHundred.search.passed && searchOne.updateBurst.passed
 		  && searchHundred.updateBurst.passed
-		  && DesktopScaleUpdateBurstMeasurementsValid(
-			searchOne.updateBurst, searchHundred.updateBurst)
+		  && DesktopScaleUpdateBurstMeasurementsValid(searchOne.updateBurst,
+													  searchHundred.updateBurst)
 		  && blockingStalls && (*blockingStalls == 0)
 		  && contactResponseWithinBudget
 		  && (cacheOne.directoryEnumerations == 0)
