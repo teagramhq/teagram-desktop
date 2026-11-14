@@ -841,21 +841,20 @@ TEST_CASE(ConnectDeadlineCoversWebSocketFallbackOnTheFirstPass) {
 	CHECK_EQ(int(withFallback), 30000);
 }
 
-TEST_CASE(ServerErrorFromPacketMapsOnlyBrowserOnlyCode) {
+TEST_CASE(ServerErrorFromPacketDistinguishesBrowserOnlyResponse) {
 	const auto browserOnlyPacket = mtpBuffer(1, -498);
 	const auto browserOnlyError = ServerErrorFromPacket(browserOnlyPacket);
-	CHECK_EQ(browserOnlyError, AbstractConnection::kErrorCodeOther);
+	CHECK_EQ(browserOnlyError, kErrorCodeBrowserOnlyResponse);
 	const auto serverErrorPacket = mtpBuffer(1, -404);
 	const auto serverError = ServerErrorFromPacket(serverErrorPacket);
 	CHECK_EQ(serverError, -404);
 }
 
-TEST_CASE(HttpConnectionMapsBrowserOnlyStatusToOther) {
+TEST_CASE(HttpConnectionMapsBrowserOnlyStatusToResponseCode) {
 	auto reply = HttpStatusReply(498);
 	auto connection
 		= MTP::details::HttpConnection(QThread::currentThread(), ProxyData());
-	CHECK_EQ(connection.handleError(&reply),
-			 MTP::details::AbstractConnection::kErrorCodeOther);
+	CHECK_EQ(connection.handleError(&reply), kErrorCodeBrowserOnlyResponse);
 	auto serverReply = HttpStatusReply(404);
 	CHECK_EQ(connection.handleError(&serverReply), -404);
 }
