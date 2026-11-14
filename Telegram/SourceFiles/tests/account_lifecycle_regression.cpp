@@ -11646,56 +11646,62 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 			{commandBotId, commandBot->botInfo->commands},
 		});
 		const auto commandBotHistory = data.history(commandBot);
-		const auto startedBotMessage = data.addNewMessage(
-			RegressionPlainTextMessage(1, session.userPeerId(),
+		commandBotHistory->getReadyFor(ShowAtTheEndMsgId);
+		commandBotHistory->addOlderSlice(QVector<MTPMessage>({
+			RegressionPlainTextMessage(10'810'001, session.userPeerId(),
 									   peerFromUser(commandBotId), u"/start"_q),
-			MessageFlags(), NewMessageType::Existing);
+		}));
 		const auto startedBotHistory
-			= startedBotMessage && !commandBotHistory->isEmpty();
-		historyWidget->clearFieldFocusForRegressionTest();
-		historyWidget->resetFieldAutocompleteForRegressionTest();
-		showPeerHistoryMeasured(commandBotHistory);
-		QCoreApplication::processEvents();
-		historyWidget->clearFieldFocusForRegressionTest();
-		const auto menuAutocompleteWasDeferred
-			= (historyWidget->fieldAutocompletePeerForRegressionTest()
-			   == nullptr)
-			  && (historyWidget->fieldAutocompleteBuildCountForRegressionTest()
-				  == 0);
-		const auto menuClickedUnfocused
-			= historyWidget->clickBotMenuForRegressionTest();
-		QCoreApplication::processEvents();
-		const auto menuCommandsShown
-			= menuClickedUnfocused
-			  && historyWidget
-					 ->fieldAutocompleteSuggestionsReadyForRegressionTest();
-		historyWidget->hideFieldAutocompleteForRegressionTest();
-		historyWidget->setDraftTextForRegressionTest(QString());
-		historyWidget->resetFieldAutocompleteForRegressionTest();
-		showPeerHistoryMeasured(emptyFirstHistory);
-		QCoreApplication::processEvents();
-		historyWidget->clearFieldFocusForRegressionTest();
-		const auto commandAutocompleteWasDeferred
-			= (historyWidget->fieldAutocompletePeerForRegressionTest()
-			   == nullptr)
-			  && (historyWidget->fieldAutocompleteBuildCountForRegressionTest()
-				  == 0);
-		const auto startClickedUnfocused
-			= historyWidget->clickBotCommandStartForRegressionTest();
-		QCoreApplication::processEvents();
-		const auto startCommandsShown
-			= startClickedUnfocused
-			  && historyWidget
-					 ->fieldAutocompleteSuggestionsReadyForRegressionTest();
-		result.botCommandsShownWhileFieldUnfocused
-			= startedBotHistory && menuAutocompleteWasDeferred
-			  && menuCommandsShown && commandAutocompleteWasDeferred
-			  && startCommandsShown;
-		historyWidget->hideFieldAutocompleteForRegressionTest();
-		historyWidget->setDraftTextForRegressionTest(QString());
-		historyWidget->resetFieldAutocompleteForRegressionTest();
-		showPeerHistoryMeasured(firstHistory);
-		QCoreApplication::processEvents();
+			= !commandBotHistory->isEmpty()
+			  && (commandBotHistory->lastMessage() != nullptr)
+			  && commandBotHistory->isReadyFor(ShowAtTheEndMsgId);
+		if (startedBotHistory) {
+			historyWidget->clearFieldFocusForRegressionTest();
+			historyWidget->resetFieldAutocompleteForRegressionTest();
+			showPeerHistoryMeasured(commandBotHistory);
+			QCoreApplication::processEvents();
+			historyWidget->clearFieldFocusForRegressionTest();
+			const auto menuAutocompleteWasDeferred
+				= (historyWidget->fieldAutocompletePeerForRegressionTest()
+				   == nullptr)
+				  && (historyWidget
+						  ->fieldAutocompleteBuildCountForRegressionTest()
+					  == 0);
+			const auto menuClickedUnfocused
+				= historyWidget->clickBotMenuForRegressionTest();
+			QCoreApplication::processEvents();
+			const auto menuCommandsShown
+				= menuClickedUnfocused
+				  && historyWidget
+						 ->fieldAutocompleteSuggestionsReadyForRegressionTest();
+			historyWidget->hideFieldAutocompleteForRegressionTest();
+			historyWidget->setDraftTextForRegressionTest(QString());
+			historyWidget->resetFieldAutocompleteForRegressionTest();
+			showPeerHistoryMeasured(emptyFirstHistory);
+			QCoreApplication::processEvents();
+			historyWidget->clearFieldFocusForRegressionTest();
+			const auto commandAutocompleteWasDeferred
+				= (historyWidget->fieldAutocompletePeerForRegressionTest()
+				   == nullptr)
+				  && (historyWidget
+						  ->fieldAutocompleteBuildCountForRegressionTest()
+					  == 0);
+			const auto startClickedUnfocused
+				= historyWidget->clickBotCommandStartForRegressionTest();
+			QCoreApplication::processEvents();
+			const auto startCommandsShown
+				= startClickedUnfocused
+				  && historyWidget
+						 ->fieldAutocompleteSuggestionsReadyForRegressionTest();
+			result.botCommandsShownWhileFieldUnfocused
+				= menuAutocompleteWasDeferred && menuCommandsShown
+				  && commandAutocompleteWasDeferred && startCommandsShown;
+			historyWidget->hideFieldAutocompleteForRegressionTest();
+			historyWidget->setDraftTextForRegressionTest(QString());
+			historyWidget->resetFieldAutocompleteForRegressionTest();
+			showPeerHistoryMeasured(firstHistory);
+			QCoreApplication::processEvents();
+		}
 	}
 	historyWidget->focusFieldForRegressionTest();
 	QCoreApplication::processEvents();
