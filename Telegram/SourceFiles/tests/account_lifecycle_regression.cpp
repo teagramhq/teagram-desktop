@@ -11405,8 +11405,9 @@ void AccumulateMainThreadWorkEstimate(qint64 &aggregateNanoseconds,
 		18'000'000, sparseStartupWindow.durationNanoseconds,
 		sparseStartupCapture.trace,
 		sparseStartupCapture.sampleOffsetsNanoseconds);
-	const auto uncapturedWindow
-		= SchedulerTraceForInterval(acknowledgementWindow, {});
+	const auto uncapturedWindow = SchedulerTraceForInterval(
+		acknowledgementWindow,
+		std::vector<Core::UiStallWatchdog::PingAcknowledgementEvidence>());
 	const auto incompleteWindow = SchedulerTraceForInterval(
 		acknowledgementWindow,
 		{
