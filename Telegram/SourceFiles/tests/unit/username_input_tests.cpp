@@ -34,11 +34,10 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 namespace style::internal::testing {
 
-[[nodiscard]] bool ResolveDeferredShapedMetricsWithTestHooks(
-	int workerStartFailures,
-	bool cancel,
-	int retryDelay,
-	int *workerStartAttempts);
+[[nodiscard]] bool
+ResolveDeferredShapedMetricsWithTestHooks(int workerStartFailures, bool cancel,
+										  int retryDelay,
+										  int *workerStartAttempts);
 
 } // namespace style::internal::testing
 
@@ -173,10 +172,7 @@ TEST_CASE(CustomGposWidthsStayShapedAfterWorkerRetries) {
 	CHECK_EQ(owned->elidew, 0);
 	QTimer::singleShot(1, [&] { eventProcessed = true; });
 	CHECK(style::internal::testing::ResolveDeferredShapedMetricsWithTestHooks(
-		2,
-		false,
-		1,
-		&workerStartAttempts));
+		2, false, 1, &workerStartAttempts));
 	style::internal::SetShapedMetricsDeferred(false);
 
 	CHECK(eventProcessed);
@@ -202,10 +198,7 @@ TEST_CASE(DeferredMetricsWorkerStartRetriesAreBounded) {
 	CHECK_EQ(owned->spacew, 0);
 	CHECK_EQ(owned->elidew, 0);
 	CHECK(style::internal::testing::ResolveDeferredShapedMetricsWithTestHooks(
-		100,
-		false,
-		1,
-		&workerStartAttempts));
+		100, false, 1, &workerStartAttempts));
 	style::internal::SetShapedMetricsDeferred(false);
 
 	CHECK_EQ(workerStartAttempts, 20);
@@ -230,10 +223,7 @@ TEST_CASE(DeferredMetricsCancellationWithoutWorkerReturnsCleanly) {
 	CHECK_EQ(owned->spacew, 0);
 	const auto resolved
 		= style::internal::testing::ResolveDeferredShapedMetricsWithTestHooks(
-			100,
-			true,
-			100,
-			&workerStartAttempts);
+			100, true, 100, &workerStartAttempts);
 	style::internal::SetShapedMetricsDeferred(false);
 
 	CHECK(!resolved);
