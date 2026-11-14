@@ -188,6 +188,9 @@ elif [[ "$mode" == apple-emoji-ui ]]; then
 fi
 printf 'Font fallback regression: emoji=%s arabic=%s wall_ns=%s result=PASS\\n' \\
     "$emoji_family" "$arabic_family" "$FONT_FALLBACK_WALL_NS"
+if [[ "$mode" == launch-exit-failure ]]; then
+    exit 139
+fi
 ''')
         executable.chmod(0o755)
         binaries = root / 'bin'
@@ -293,6 +296,10 @@ font_startup_fallback_mismatch = run_font_startup_fixture(
     50_000_000, 50_000_000, 1, mode='fallback-mismatch')
 assert 'font fallback regression evidence missing or changed.' \
     in font_startup_fallback_mismatch
+font_startup_launch_failure = run_font_startup_fixture(
+    50_000_000, 50_000_000, 1, mode='launch-exit-failure')
+assert 'font startup regression launch failed: sample=cold exit_status=139' \
+    in font_startup_launch_failure
 font_startup_apple_emoji_ui = run_font_startup_fixture(
     50_000_000, 50_000_000, 0, mode='apple-emoji-ui')
 assert 'StartFonts cold=PASS wall_ns=50000000 under_100ms=1' \

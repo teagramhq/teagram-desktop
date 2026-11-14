@@ -1011,11 +1011,14 @@ minidump_symbolizer='.github/scripts/symbolicate_macos_minidump.py'
 python3 "$minidump_symbolizer" --self-test
 for symbolizer_contract in \
 	symbolicate_font_startup_crash \
-	dsymutil \
-	"$minidump_symbolizer"; do
+	"$minidump_symbolizer" \
+	'"$dump" "$APP"'; do
 	grep -Fq "$symbolizer_contract" "$profile_harness" \
 		|| contract_fail "$profile_harness must symbolicate font startup minidumps."
 done
+if grep -Fq 'dsymutil "$APP"' "$profile_harness"; then
+	contract_fail "$profile_harness must not generate a dSYM in the timed startup fixture."
+fi
 settings_link_evidence='Settings deep link regression passed: paid and story routes'
 grep -Fq "$settings_link_evidence" \
   Telegram/SourceFiles/tests/account_lifecycle_regression.cpp \

@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 import argparse
+import contextlib
+import io
 import json
 import struct
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 
@@ -125,10 +128,10 @@ def parse_minidump(data):
     }
 
 
-def symbolicate(report, symbol_file):
-    symbols = Path(symbol_file)
-    if not symbols.is_file():
-        raise ValueError(f"Teagram dSYM is missing: {symbol_file}")
+def symbolicate(report, executable):
+    image = Path(executable)
+    if not image.is_file():
+        raise ValueError(f"Teagram executable is missing: {executable}")
 
     print(
         "Exception: thread=%d code=%#x address=%#x"
@@ -143,22 +146,57 @@ def symbolicate(report, symbol_file):
         owner = frame["module"]
         address = frame["address"]
         if owner and owner["base"] == module["base"]:
-            result = subprocess.run(
-                [
-                    "atos", "-o", str(symbols), "-arch", "arm64",
-                    "-l", hex(module["base"]), hex(address),
-                ],
-                check=True,
-                capture_output=True,
-                text=True,
-            )
-            description = result.stdout.strip()
+            try:
+                result = subprocess.run(
+                    [
+                        "atos", "-o", str(image), "-arch", "arm64",
+                        "-l", hex(module["base"]), hex(address),
+                    ],
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                )
+                description = result.stdout.strip()
+            except (OSError, subprocess.CalledProcessError,
+                    subprocess.TimeoutExpired) as error:
+                description = "%s+%#x (atos unavailable: %s)" % (
+                    owner["name"], address - owner["base"], error)
         elif owner:
             description = "%s+%#x" % (owner["name"], address - owner["base"])
         else:
             description = "<unknown module>"
         label = "faulting frame" if index == 0 else f"frame {index}"
         print("%s: %#x %s" % (label, address, description))
+
+
+def test_symbolicate_uses_executable(report):
+    with tempfile.TemporaryDirectory() as directory:
+        executable = Path(directory) / "Teagram"
+        executable.write_text("fixture")
+        calls = []
+        original_run = subprocess.run
+
+        def fake_run(args, **kwargs):
+            calls.append((args, kwargs))
+            return subprocess.CompletedProcess(
+                args, 0, stdout="Teagram::test_frame()\n", stderr="")
+
+        output = io.StringIO()
+        subprocess.run = fake_run
+        try:
+            with contextlib.redirect_stdout(output):
+                symbolicate(report, executable)
+        finally:
+            subprocess.run = original_run
+
+        assert len(calls) == 2
+        for args, kwargs in calls:
+            assert args[0] == "atos"
+            assert args[1] == "-o"
+            assert args[2] == str(executable)
+            assert kwargs["timeout"] == 10
+        assert output.getvalue().count("Teagram::test_frame()") == 2
 
 
 def build_fixture():
@@ -225,6 +263,7 @@ def self_test():
         0x100001234,
         0x100002341,
     ]
+    test_symbolicate_uses_executable(report)
 
 
 def main():
@@ -232,7 +271,7 @@ def main():
     parser.add_argument("--self-test", action="store_true")
     parser.add_argument("--json", action="store_true")
     parser.add_argument("dump", nargs="?")
-    parser.add_argument("symbols", nargs="?")
+    parser.add_argument("executable", nargs="?")
     args = parser.parse_args()
     try:
         if args.self_test:
@@ -244,10 +283,10 @@ def main():
         report = parse_minidump(Path(args.dump).read_bytes())
         if args.json:
             print(json.dumps(report, indent=2))
-        elif args.symbols:
-            symbolicate(report, args.symbols)
+        elif args.executable:
+            symbolicate(report, args.executable)
         else:
-            parser.error("dSYM path is required unless --json is set")
+            parser.error("Teagram executable path is required unless --json is set")
     except (OSError, ValueError, subprocess.CalledProcessError) as error:
         print(error, file=sys.stderr)
         return 1
