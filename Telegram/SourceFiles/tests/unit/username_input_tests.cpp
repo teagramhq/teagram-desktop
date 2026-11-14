@@ -162,7 +162,7 @@ TEST_CASE(CustomGposWidthsStayShapedAfterWorkerRetries) {
 	CHECK_EQ(owned->spacew, 0);
 	CHECK_EQ(owned->elidew, 0);
 	QTimer::singleShot(1, [&] { eventProcessed = true; });
-	style::internal::ResolveDeferredShapedMetrics();
+	CHECK(style::internal::ResolveDeferredShapedMetrics());
 	style::internal::SetShapedMetricsDeferred(false);
 
 	CHECK(eventProcessed);
@@ -170,6 +170,28 @@ TEST_CASE(CustomGposWidthsStayShapedAfterWorkerRetries) {
 	CHECK_EQ(owned->spacew, int(std::ceil(metrics.horizontalAdvance(u" "_q))));
 	CHECK_EQ(owned->elidew,
 			 int(std::ceil(metrics.horizontalAdvance(u"..."_q))));
+}
+
+TEST_CASE(DeferredMetricsCancellationWithoutWorkerReturnsCleanly) {
+	const auto application
+		= qobject_cast<QApplication *>(QCoreApplication::instance());
+	CHECK(application != nullptr);
+	if (!application) {
+		return;
+	}
+
+	auto fixture = UsernameInputFixture();
+	style::internal::SetMetricsWorkerStartFailuresForTests(100);
+	style::internal::SetMetricsResolutionCancelledForTests(true);
+	style::internal::SetShapedMetricsDeferred(true);
+	auto owned = style::internal::OwnedFont(u"Vazirmatn UI NL"_q, 0, 16);
+	CHECK_EQ(owned->spacew, 0);
+	const auto resolved = style::internal::ResolveDeferredShapedMetrics();
+	style::internal::SetMetricsResolutionCancelledForTests(false);
+	style::internal::SetMetricsWorkerStartFailuresForTests(0);
+	style::internal::SetShapedMetricsDeferred(false);
+
+	CHECK(!resolved);
 }
 
 TEST_CASE(UsernameInputStandaloneEventDispatch) {

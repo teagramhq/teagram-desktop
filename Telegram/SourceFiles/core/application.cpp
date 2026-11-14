@@ -368,7 +368,9 @@ void Application::run() {
 #endif // Q_OS_MAC
 	style::StartManager(cScale());
 #if defined(Q_OS_MAC)
-	style::internal::ResolveDeferredShapedMetrics();
+	if (!style::internal::ResolveDeferredShapedMetrics()) {
+		return;
+	}
 #endif // Q_OS_MAC
 	Ui::Accessible::Init();
 	Ui::InitUsernameInputAccessibility();
