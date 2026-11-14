@@ -2646,6 +2646,15 @@ class LocalEndpointRefreshDiscoveryStub final {
 		return configured && account->local().writeMtpConfig(true);
 	}
 
+	[[nodiscard]] bool restoreOriginalPin(
+		not_null<Main::Account *> account,
+		const MTP::CustomServer &moved,
+		const MTP::CustomServer &stale) const {
+		return account->mtp().dcOptions().refreshCustomServerEndpoint(
+				moved, stale)
+			&& account->local().writeMtpConfig(true);
+	}
+
 	void close() {
 		_server.close();
 		for (const auto &connection : _connections) {
@@ -3117,7 +3126,7 @@ class LocalEndpointRefreshDiscoveryStub final {
 		return fail("the accepted request callback did not complete");
 	}
 	discovery.deferVerifierReply();
-	if (!discovery.configureOriginalPin(account, original.key)) {
+	if (!discovery.restoreOriginalPin(account, moved, original)) {
 		return fail("could not restore the stale pin for the mismatch case");
 	}
 	mtp.restart();
