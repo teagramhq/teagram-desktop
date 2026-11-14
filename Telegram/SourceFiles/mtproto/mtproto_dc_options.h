@@ -47,15 +47,36 @@ struct CustomServer {
 	}
 };
 
+enum class CustomServerEndpointRefreshIdentityFailure {
+	None,
+	DcIdMismatch,
+	SelectionMismatch,
+	KeyMismatch,
+};
+
+[[nodiscard]] CustomServerEndpointRefreshIdentityFailure
+ClassifyCustomServerEndpointRefreshIdentityFailure(
+	const CustomServer &original, const CustomServer &candidate);
+
+[[nodiscard]] bool
+SameCustomServerEndpointRefreshIdentity(const CustomServer &left,
+										const CustomServer &right);
+
 [[nodiscard]] std::optional<CustomServer> BuildCustomServerFromDiscovery(
 	const ServerSelectionCheck &selection,
 	const ServerDiscoveryResult &result);
+[[nodiscard]] std::optional<CustomServer>
+BuildCustomServerFromDiscovery(const ServerSelectionCheck &selection,
+							   const ServerDiscoveryResult &result,
+							   const QString &expectedOrigin);
 
 // Authorization state is scoped to the complete verified pin, not merely to
 // an address or a DC id. Callers use this before reusing deferred key state.
 [[nodiscard]] bool SameCustomServerPin(
 	const CustomServer &left,
 	const CustomServer &right);
+[[nodiscard]] bool SameCustomServerEndpoint(const CustomServer &left,
+											const CustomServer &right);
 
 enum class DcType {
 	Regular,
@@ -174,6 +195,9 @@ public:
 	// same address. Re-applying the identical pin succeeds in both
 	// states, so startup and config rewrites go through.
 	[[nodiscard]] bool setCustomServer(const CustomServer &server);
+	[[nodiscard]] bool
+	refreshCustomServerEndpoint(const CustomServer &original,
+								const CustomServer &candidate);
 	[[nodiscard]] bool markAuthorized(DcId dcId);
 	[[nodiscard]] bool isAuthorized(DcId dcId) const;
 	[[nodiscard]] bool clearAuthorized();

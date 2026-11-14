@@ -251,18 +251,18 @@ void SessionPrivate::appendTestConnection(
 	const auto weak = _testConnections.back().data.get();
 	const auto context = ConnectionErrorInfo{
 		.generation = _instance->serverEnrollmentStopToken(),
-		.endpoint = ip.isEmpty() && pin.key
-			? QString::fromStdString(pin.ip)
-			: ip,
+		.endpoint
+		= ip.isEmpty() && pin.key ? QString::fromStdString(pin.ip) : ip,
 		.port = (protocol == DcOptions::Variants::Http)
-			? 80
-			: (port ? port : pin.port),
+					? 80
+					: (port ? port : pin.port),
 		.protocol = protocol,
 		.pin = pin,
 		.proxied = (_options->proxy.type != ProxyData::Type::None),
 		.proxyEndpoint = _options->proxy.host,
 		.proxyPort = int(_options->proxy.port),
 		.pinnedHostname = QString::fromStdString(pin.hostname),
+		.unprovenEndpoint = _instance->isEndpointVerifier(),
 	};
 	connect(weak, &AbstractConnection::error, [=](int errorCode) {
 		auto errorContext = context;
@@ -1410,6 +1410,10 @@ void SessionPrivate::waitConnectedFailed() {
 	connectingTimedOut();
 
 	DEBUG_LOG(("MTP Info: immediate restart!"));
+	const auto instance = _instance;
+	const auto shiftedDcId = _shiftedDcId;
+	InvokeQueued(instance,
+				 [=] { instance->requestServerEndpointRefresh(shiftedDcId); });
 	InvokeQueued(this, [=] { connectToServer(); });
 }
 
@@ -2758,6 +2762,9 @@ bool SessionPrivate::destroyOldEnoughPersistentKey() {
 }
 
 DcType SessionPrivate::tryAcquireKeyCreation() {
+	if (_instance->isEndpointVerifier()) {
+		return DcType::Regular;
+	}
 	if (_keyCreator) {
 		return _currentDcType;
 	} else if (_instance->isKeysDestroyer()) {
@@ -2950,11 +2957,16 @@ void SessionPrivate::onError(
 	}
 }
 
-void SessionPrivate::handleError(
-		int errorCode,
-		ConnectionErrorInfo context) {
+void SessionPrivate::handleError(int errorCode, ConnectionErrorInfo context) {
 	destroyAllConnections();
 	_waitForConnectedTimer.cancel();
+	if (errorCode == AbstractConnection::kErrorCodeOther) {
+		const auto instance = _instance;
+		const auto shiftedDcId = _shiftedDcId;
+		InvokeQueued(instance, [=] {
+			instance->requestServerEndpointRefresh(shiftedDcId);
+		});
+	}
 
 	if (errorCode == -404) {
 		if (usesPermanentAuthKey()) {

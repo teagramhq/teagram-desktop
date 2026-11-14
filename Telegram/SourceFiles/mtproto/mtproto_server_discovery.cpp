@@ -951,6 +951,17 @@ QString PublicDiscoveryUrl(const ServerSelectionCheck &selection) {
 	return u"https://"_q + selection.host + u"/.well-known/teagramd/client"_q;
 }
 
+bool IsPublicDiscoveryOrigin(const ServerSelectionCheck &selection,
+							 const QString &origin) {
+	if (!selection.valid()
+		|| selection.policy != ServerDiscoveryPolicy::PublicHttps) {
+		return false;
+	}
+	const auto legacy
+		= u"https://"_q + selection.host + u"/.well-known/telegramd/client"_q;
+	return origin == PublicDiscoveryUrl(selection) || origin == legacy;
+}
+
 void ConfigurePublicDiscoveryRequest(QNetworkRequest &request) {
 	request.setRawHeader("User-Agent", QByteArrayLiteral("-"));
 	request.setRawHeader("Accept-Encoding", QByteArrayLiteral("identity"));
@@ -975,8 +986,16 @@ void ConfigurePublicDiscoveryRequest(QNetworkRequest &request) {
 ServerDiscoveryResult ParsePublicDiscoveryResponse(
 		const ServerSelectionCheck &selection,
 		const QByteArray &body) {
+	return ParsePublicDiscoveryResponse(selection,
+										PublicDiscoveryUrl(selection), body);
+}
+
+ServerDiscoveryResult
+ParsePublicDiscoveryResponse(const ServerSelectionCheck &selection,
+							 const QString &origin, const QByteArray &body) {
 	if (!selection.valid()
-		|| selection.policy != ServerDiscoveryPolicy::PublicHttps) {
+		|| selection.policy != ServerDiscoveryPolicy::PublicHttps
+		|| !IsPublicDiscoveryOrigin(selection, origin)) {
 		return Invalid(ServerDiscoveryResponseStatus::UnsafeEndpoint);
 	}
 	if (body.isEmpty() || body.size() > kMaxResponseBytes) {
@@ -1078,7 +1097,7 @@ ServerDiscoveryResult ParsePublicDiscoveryResponse(
 		.dcId = int(dcIdValue),
 		.key = *key,
 		.policy = selection.policy,
-		.origin = PublicDiscoveryUrl(selection),
+		.origin = origin,
 	};
 }
 

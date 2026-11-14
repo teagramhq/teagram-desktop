@@ -19,6 +19,10 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <optional>
 
 class QSocketNotifier;
+class QHostInfo;
+class QNetworkAccessManager;
+class QNetworkReply;
+class QTimer;
 
 namespace Intro {
 namespace details {
@@ -46,6 +50,29 @@ enum class PublicDiscoveryAddressResolution {
 	NeedsWebSocket,
 	Resolved,
 };
+
+enum class ServerEndpointRefreshFailureStatus {
+	InvalidSelection,
+	InvalidOrigin,
+	DiscoveryBusy,
+	ResponseTooLarge,
+	TlsFailure,
+	Redirect,
+	NetworkFailure,
+	HttpFailure,
+	InvalidResponse,
+	UnsafeEndpoint,
+	DnsFailure,
+	Timeout,
+};
+
+struct ServerEndpointRefreshFailure {
+	ServerEndpointRefreshFailureStatus status;
+	int httpStatusCode = 0;
+};
+
+[[nodiscard]] const char *
+ServerEndpointRefreshFailureName(ServerEndpointRefreshFailureStatus status);
 
 [[nodiscard]] PublicDiscoveryAddressResolution
 ResolvePublicDiscoveryAddresses(const MTP::ServerSelectionCheck &selection,
@@ -151,6 +178,53 @@ private:
 	bool _connecting = false;
 	QSocketNotifier *_nativeReadNotifier = nullptr;
 	QSocketNotifier *_nativeWriteNotifier = nullptr;
+	Callbacks _callbacks;
+	bool _running = false;
+};
+
+class ServerEndpointRefreshDiscovery final : public QObject {
+  public:
+	struct Callbacks {
+		std::function<void(MTP::ServerDiscoveryResult)> finished;
+		std::function<void(ServerEndpointRefreshFailure)> failed;
+	};
+
+	explicit ServerEndpointRefreshDiscovery(QObject *parent = nullptr);
+	~ServerEndpointRefreshDiscovery() override;
+
+	[[nodiscard]] bool start(const MTP::ServerSelectionCheck &selection,
+							 const QString &origin, Callbacks callbacks);
+	[[nodiscard]] bool running() const { return _running; }
+	void cancel();
+
+  private:
+	void beginPublicDiscovery();
+	void beginLocalDiscovery();
+	void startLocalDiscovery(const QList<QHostAddress> &addresses);
+	void publicDiscoveryFinished();
+	void resolvePublicEndpoint(MTP::ServerDiscoveryResult result);
+	void publicEndpointResolved(MTP::ServerDiscoveryResult result,
+								const QHostInfo &info);
+	void resolvePublicWebSocketEndpoint(MTP::ServerDiscoveryResult result);
+	void publicWebSocketEndpointResolved(MTP::ServerDiscoveryResult result,
+										 const QHostInfo &info);
+	void discoveryTimeout();
+	void fail(ServerEndpointRefreshFailureStatus status,
+			  int httpStatusCode = 0);
+	void finish(MTP::ServerDiscoveryResult result);
+	void stop();
+
+	MTP::ServerSelectionCheck _selection;
+	QString _origin;
+	std::optional<MTP::ServerDiscoveryAttempt> _attemptToken;
+	QNetworkAccessManager *_network = nullptr;
+	QNetworkReply *_reply = nullptr;
+	ServerWidgetDiscovery *_localDiscovery = nullptr;
+	QTimer *_deadline = nullptr;
+	QByteArray _publicResponse;
+	QByteArray _localNonce;
+	int _hostLookupId = -1;
+	quint64 _attempt = 0;
 	Callbacks _callbacks;
 	bool _running = false;
 };

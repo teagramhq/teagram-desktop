@@ -8,6 +8,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "tests/unit/unit_test.h"
 
 #include "config.h"
+#include "intro/intro_server_discovery.h"
 #include "main/main_account.h"
 #include "main/main_account_persistence.h"
 #include "main/main_domain.h"
@@ -16,24 +17,33 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "mtproto/mtproto_config.h"
 #include "mtproto/details/mtproto_rsa_public_key.h"
 #include "mtproto/mtproto_server_enrollment.h"
+#include "mtproto/mtproto_server_discovery.h"
 #include "mtproto/session.h"
 #include "storage/details/storage_file_utilities.h"
 #include "storage/storage_account.h"
 #include "storage/storage_domain.h"
 #include "storage/storage_server_forget_startup.h"
+#include "tests/unit/server_endpoint_refresh_test_support.h"
 
 #include <QtCore/QCoreApplication>
+#include <QtCore/QDataStream>
 #include <QtCore/QDir>
 #include <QtCore/QDirIterator>
+#include <QtCore/QEventLoop>
 #include <QtCore/QFile>
 #include <QtCore/QFileInfo>
 #include <QtCore/QMetaObject>
 #include <QtCore/QSemaphore>
 #include <QtCore/QTemporaryDir>
+#include <QtCore/QTimer>
 #include <QtCore/QThread>
 #include <QtCore/Qt>
 #include <QtGui/QKeyEvent>
+#include <QtNetwork/QHostAddress>
+#include <QtNetwork/QTcpServer>
+#include <QtNetwork/QTcpSocket>
 
+#include <algorithm>
 #include <atomic>
 #include <memory>
 #include <optional>
@@ -81,6 +91,15 @@ t6N/byY9Nw9p21Og3AoXSL2q/2IJ1WRUhebgAdGVMlV1fkuOQoEzR7EdpqtQD9Cs\n\
 5+bfo3Nhmcyvk5ftB0WkJ9z6bNZ7yxrP8wIDAQAB\n\
 -----END RSA PUBLIC KEY-----";
 
+const char kDifferentEnrollmentServerKey[] = R"(-----BEGIN RSA PUBLIC KEY-----
+MIIBCgKCAQEAyMEdY1aR+sCR3ZSJrtztKTKqigvO/vBfqACJLZtS7QMgCGXJ6XIR
+yy7mx66W0/sOFa7/1mAZtEoIokDP3ShoqF4fVNb6XeqgQfaUHd8wJpDWHcR2OFwv
+plUUI1PLTktZ9uW2WE23b+ixNwJjJGwBDJPQEQFBE+vfmH0JP503wr5INS1poWg/
+j25sIWeYPHYeOrFp/eXaqhISP6G+q2IeTaWTXpwZj4LzXq5YOpk4bYEQ6mvRq7D1
+aHWfYmlEGepfaYR8Q0YqvvhYtMte3ITnuSJs171+GDqpdKcSwHnd6FudwGO4pcCO
+j4WcDuXc2CTHgH8gFTNhp/Y8/SpDOhvn9QIDAQAB
+-----END RSA PUBLIC KEY-----)";
+
 [[nodiscard]] std::shared_ptr<details::RSAPublicKey>
 MakeEnrollmentServerKey() {
 	return std::make_shared<details::RSAPublicKey>(bytes::make_span(
@@ -99,9 +118,53 @@ MakeEnrollmentServerKey() {
 	return result;
 }
 
+[[nodiscard]] CustomServer MakeEndpointRefreshPin(const char *ip) {
+	return CustomServer{
+		.dcId = 2,
+		.ip = ip,
+		.port = 2443,
+		.key = MakeEnrollmentServerKey(),
+		.serverSelection = "teagram.tailaa4918.ts.net",
+		.discoveryPolicy = ServerDiscoveryPolicy::PublicHttps,
+		.discoveryOrigin = "https://teagram.tailaa4918.ts.net/"
+						   ".well-known/teagramd/client",
+	};
+}
+
 [[nodiscard]] MTP::AuthKeyPtr MakeEnrollmentStorageKey() {
 	return std::make_shared<MTP::AuthKey>(
 		MTP::AuthKey::Data{ { gsl::byte{} } });
+}
+
+[[nodiscard]] MTP::AuthKeyPtr MakeEndpointRefreshAuthKey(int value) {
+	auto data = MTP::AuthKey::Data();
+	std::fill(data.begin(), data.end(), static_cast<gsl::byte>(value));
+	return std::make_shared<MTP::AuthKey>(MTP::AuthKey::Type::ReadFromFile,
+										  MTP::DcId(2), data);
+}
+
+[[nodiscard]] QByteArray
+SerializeEndpointRefreshAuthKey(const MTP::AuthKeyPtr &key) {
+	auto result = QByteArray();
+	auto stream = QDataStream(&result, QIODevice::WriteOnly);
+	key->write(stream);
+	return result;
+}
+
+[[nodiscard]] MTP::AuthKeyPtr
+RestoreEndpointRefreshAuthKey(const QByteArray &serialized) {
+	if (serialized.size() != MTP::AuthKey::kSize) {
+		return nullptr;
+	}
+	auto data = MTP::AuthKey::Data();
+	auto stream = QDataStream(serialized);
+	if (stream.readRawData(reinterpret_cast<char *>(data.data()),
+						   int(data.size()))
+		!= int(data.size())) {
+		return nullptr;
+	}
+	return std::make_shared<MTP::AuthKey>(MTP::AuthKey::Type::ReadFromFile,
+										  MTP::DcId(2), data);
 }
 
 [[nodiscard]] bool WriteEnrollmentAccountList(
@@ -224,6 +287,126 @@ MakeEnrollmentServerKey() {
 	return restored != nullptr && restored->hasCustomServer();
 }
 
+void AppendBigEndian(QByteArray &target, quint32 value) {
+	target.append(char(value >> 24));
+	target.append(char(value >> 16));
+	target.append(char(value >> 8));
+	target.append(char(value));
+}
+
+void AppendBigEndian(QByteArray &target, quint16 value) {
+	target.append(char(value >> 8));
+	target.append(char(value));
+}
+
+[[nodiscard]] QByteArray LocalEndpointRefreshResponse(const QByteArray &nonce) {
+	const auto der = MakeEnrollmentServerKey()->getSubjectPublicKeyInfo();
+	auto result = QByteArray("telegramd-key-r1", 16) + nonce;
+	AppendBigEndian(result, quint32(6 + der.size()));
+	AppendBigEndian(result, quint32(2));
+	AppendBigEndian(result, quint16(der.size()));
+	result += QByteArray(reinterpret_cast<const char *>(der.data()),
+						 int(der.size()));
+	return result;
+}
+
+struct EndpointRefreshDiscoveryFixture {
+	MTP::ServerSelectionCheck selection;
+	QString origin;
+	MTP::ServerDiscoveryResult result;
+	bool oldEndpointUnreachable = false;
+};
+
+[[nodiscard]] std::optional<EndpointRefreshDiscoveryFixture>
+DiscoverMovedEndpoint() {
+	QTcpServer listener;
+	if (!listener.listen(QHostAddress::LocalHost)) {
+		return std::nullopt;
+	}
+	QTcpServer staleEndpoint;
+	if (!staleEndpoint.listen(QHostAddress::LocalHost)) {
+		return std::nullopt;
+	}
+	const auto stalePort = staleEndpoint.serverPort();
+	staleEndpoint.close();
+	const auto selection = MTP::CheckServerSelection(
+		u"127.0.0.1:"_q + QString::number(listener.serverPort()));
+	if (!selection.valid()) {
+		return std::nullopt;
+	}
+	const auto origin = u"local:"_q + selection.normalizedSelection;
+	Intro::details::ServerEndpointRefreshDiscovery discovery;
+	auto loop = QEventLoop();
+	auto timeout = QTimer();
+	timeout.setSingleShot(true);
+	QObject::connect(&timeout, &QTimer::timeout, &loop, &QEventLoop::quit);
+	auto completed = false;
+	auto failed = false;
+	auto result = std::optional<MTP::ServerDiscoveryResult>();
+	QObject::connect(&listener, &QTcpServer::newConnection, &listener, [&] {
+		while (listener.hasPendingConnections()) {
+			auto socket = listener.nextPendingConnection();
+			auto request = std::make_shared<QByteArray>();
+			auto responded = std::make_shared<bool>(false);
+			const auto respond = [=] {
+				*request += socket->readAll();
+				if (*responded || request->size() < 48) {
+					return;
+				}
+				*responded = true;
+				if (request->left(16) != QByteArray("telegramd-key-v1", 16)) {
+					socket->abort();
+					return;
+				}
+				socket->write(
+					LocalEndpointRefreshResponse(request->mid(16, 32)));
+				socket->disconnectFromHost();
+			};
+			QObject::connect(socket, &QTcpSocket::readyRead, socket, respond);
+			QObject::connect(socket, &QTcpSocket::disconnected, socket,
+							 &QObject::deleteLater);
+			if (socket->bytesAvailable()) {
+				respond();
+			}
+		}
+	});
+	const auto started = discovery.start(
+		selection, origin,
+		{
+			.finished =
+				[&](MTP::ServerDiscoveryResult value) {
+					result = std::move(value);
+					completed = true;
+					loop.quit();
+				},
+			.failed =
+				[&](Intro::details::ServerEndpointRefreshFailure) {
+					failed = true;
+					loop.quit();
+				},
+		});
+	if (!started) {
+		return std::nullopt;
+	}
+	QTcpSocket oldEndpoint;
+	oldEndpoint.connectToHost(QHostAddress::LocalHost, stalePort);
+	const auto oldEndpointUnreachable = !oldEndpoint.waitForConnected(100);
+	if (!completed && !failed) {
+		timeout.start(5000);
+		loop.exec();
+	}
+	discovery.cancel();
+	if (!completed || failed || !result || !oldEndpointUnreachable) {
+		return std::nullopt;
+	}
+	return EndpointRefreshDiscoveryFixture{
+		.selection = selection,
+		.origin = origin,
+		.result = std::move(*result),
+		.oldEndpointUnreachable = oldEndpointUnreachable,
+	};
+}
+
 TEST_CASE(ServerForgetStartupLoadsPinnedStateWithoutForgetMarker) {
 	auto events = std::vector<int>();
 	auto skippedMtpData = true;
@@ -248,6 +431,31 @@ TEST_CASE(ServerForgetStartupLoadsPinnedStateWithoutForgetMarker) {
 	CHECK_EQ(events[1], 2);
 	CHECK_EQ(events[2], 4);
 	CHECK_EQ(events[3], 5);
+}
+
+TEST_CASE(EndpointRefreshDiscoveryReportsNamedRefusal) {
+	Intro::details::ServerEndpointRefreshDiscovery discovery;
+	auto failure
+		= std::optional<Intro::details::ServerEndpointRefreshFailure>();
+	const auto started = discovery.start(
+		MTP::CheckServerSelection(QString()), QString(),
+		{
+			.failed =
+				[&](Intro::details::ServerEndpointRefreshFailure value) {
+					failure = value;
+				},
+		});
+	CHECK(!started);
+	CHECK(failure.has_value());
+	if (failure) {
+		CHECK(failure->status
+			  == Intro::details::ServerEndpointRefreshFailureStatus::
+				  InvalidSelection);
+		CHECK_EQ(QString::fromLatin1(
+					 Intro::details::ServerEndpointRefreshFailureName(
+						 failure->status)),
+				 u"invalid selection"_q);
+	}
 }
 
 TEST_CASE(ServerForgetStartupCompletesTombstoneBeforeLoadingConfig) {
@@ -439,6 +647,475 @@ TEST_CASE(PinPersistencePrecedesTheFirstConnection) {
 	CHECK_EQ(events[0], 1);
 	CHECK_EQ(events[1], 2);
 	CHECK_EQ(events[2], 3);
+}
+
+TEST_CASE(EndpointRefreshNeedsProofAndPersistsBeforeReleasingRequests) {
+	const auto original = MakeEndpointRefreshPin("100.124.236.66");
+	const auto candidate = MakeEndpointRefreshPin("100.112.103.90");
+	auto staged = false;
+	auto persisted = false;
+	auto requestsReleased = false;
+	const auto attempt = [&](bool authenticated) {
+		return CommitServerEndpointRefresh(
+			original, candidate, authenticated,
+			[&] {
+				staged = true;
+				return true;
+			},
+			[&] {
+				CHECK(staged);
+				CHECK(!requestsReleased);
+				persisted = true;
+				return true;
+			},
+			[&] {
+				CHECK(persisted);
+				requestsReleased = true;
+			},
+			[&] { staged = false; });
+	};
+
+	CHECK(!attempt(false));
+	CHECK(!staged);
+	CHECK(!persisted);
+	CHECK(!requestsReleased);
+
+	CHECK(attempt(true));
+	CHECK(staged);
+	CHECK(persisted);
+	CHECK(requestsReleased);
+}
+
+TEST_CASE(EndpointRefreshRollsBackWhenPersistenceFails) {
+	const auto original = MakeEndpointRefreshPin("100.124.236.66");
+	const auto candidate = MakeEndpointRefreshPin("100.112.103.90");
+	auto staged = false;
+	auto rolledBack = false;
+	auto requestsReleased = false;
+	const auto committed = CommitServerEndpointRefresh(
+		original, candidate, true,
+		[&] {
+			staged = true;
+			return true;
+		},
+		[] { return false; }, [&] { requestsReleased = true; },
+		[&] {
+			staged = false;
+			rolledBack = true;
+		});
+
+	CHECK(!committed);
+	CHECK(rolledBack);
+	CHECK(!staged);
+	CHECK(!requestsReleased);
+}
+
+TEST_CASE(EndpointRefreshRejectsAChangedServerIdentity) {
+	const auto original = MakeEndpointRefreshPin("100.124.236.66");
+	auto candidate = MakeEndpointRefreshPin("100.112.103.90");
+	candidate.dcId = 3;
+	auto options = DcOptions(Environment::Production);
+	CHECK(options.setCustomServer(original));
+	CHECK(options.markAuthorized(original.dcId));
+	CHECK(
+		ClassifyCustomServerEndpointRefreshIdentityFailure(original, candidate)
+		== CustomServerEndpointRefreshIdentityFailure::DcIdMismatch);
+	auto changed = false;
+	const auto committed = CommitServerEndpointRefresh(
+		original, candidate, true,
+		[&] {
+			changed = true;
+			return true;
+		},
+		[] { return true; }, [] {}, [] {});
+
+	CHECK(!committed);
+	CHECK(!changed);
+	CHECK(SameCustomServerPin(options.customServer(), original));
+	auto eligibility = ServerEndpointRefreshEligibility{
+		.restoredSession = true,
+		.pinAuthorized = true,
+		.canResume = true,
+		.hasStoredAuthKey = true,
+	};
+	auto transaction = ServerEndpointRefreshTransaction();
+	CHECK(transaction.begin(eligibility, original));
+	CHECK(transaction.setCandidate(candidate)
+		  == CustomServerEndpointRefreshIdentityFailure::DcIdMismatch);
+	CHECK(!transaction.hasCandidate());
+	eligibility.identityFailure = true;
+	CHECK(!CanRefreshServerEndpoint(eligibility, original));
+	CHECK(!ShouldScheduleServerEndpointRefreshRetry(
+		CanRefreshServerEndpoint(eligibility, original), false));
+}
+
+TEST_CASE(EndpointRefreshRejectsKeyMismatchBeforeStaging) {
+	const auto original = MakeEndpointRefreshPin("100.124.236.66");
+	auto candidate = MakeEndpointRefreshPin("100.112.103.90");
+	candidate.key = std::make_shared<details::RSAPublicKey>(
+		bytes::make_span(kDifferentEnrollmentServerKey,
+						 sizeof(kDifferentEnrollmentServerKey) - 1));
+	auto staged = false;
+	const auto committed = CommitServerEndpointRefresh(
+		original, candidate, true,
+		[&] {
+			staged = true;
+			return true;
+		},
+		[] { return true; }, [] {}, [] {});
+
+	CHECK(!committed);
+	CHECK(!staged);
+	CHECK(
+		ClassifyCustomServerEndpointRefreshIdentityFailure(original, candidate)
+		== CustomServerEndpointRefreshIdentityFailure::KeyMismatch);
+}
+
+TEST_CASE(EndpointRefreshIdentityAllowsEndpointChangesOnly) {
+	const auto original = MakeEndpointRefreshPin("100.124.236.66");
+	auto candidate = MakeEndpointRefreshPin("100.112.103.90");
+	CHECK(SameCustomServerEndpointRefreshIdentity(original, candidate));
+	CHECK(!SameCustomServerPin(original, candidate));
+	candidate.port += 1;
+	CHECK(SameCustomServerEndpointRefreshIdentity(original, candidate));
+
+	candidate.dcId = original.dcId + 1;
+	CHECK(!SameCustomServerEndpointRefreshIdentity(original, candidate));
+	candidate = MakeEndpointRefreshPin("100.112.103.90");
+	candidate.serverSelection += "/different";
+	CHECK(!SameCustomServerEndpointRefreshIdentity(original, candidate));
+	candidate = MakeEndpointRefreshPin("100.112.103.90");
+	candidate.discoveryOrigin += "/different";
+	CHECK(!SameCustomServerEndpointRefreshIdentity(original, candidate));
+	candidate = MakeEndpointRefreshPin("100.112.103.90");
+	candidate.discoveryPolicy = ServerDiscoveryPolicy::LocalDirect;
+	CHECK(!SameCustomServerEndpointRefreshIdentity(original, candidate));
+	candidate = MakeEndpointRefreshPin("100.112.103.90");
+	candidate.key = std::make_shared<details::RSAPublicKey>(
+		bytes::make_span(kDifferentEnrollmentServerKey,
+						 sizeof(kDifferentEnrollmentServerKey) - 1));
+	CHECK(!SameCustomServerEndpointRefreshIdentity(original, candidate));
+}
+
+TEST_CASE(EndpointRefreshDetectsAnUnchangedEndpoint) {
+	const auto original = MakeEndpointRefreshPin("100.124.236.66");
+	auto candidate = original;
+	candidate.serverSelection += "/other-selection";
+	CHECK(SameCustomServerEndpoint(original, candidate));
+
+	candidate = original;
+	candidate.port += 1;
+	CHECK(!SameCustomServerEndpoint(original, candidate));
+	candidate = original;
+	candidate.webSocketEndpoint = "wss://transport.example.com/apiws";
+	CHECK(!SameCustomServerEndpoint(original, candidate));
+	candidate = original;
+	candidate.webSocketOnly = true;
+	CHECK(!SameCustomServerEndpoint(original, candidate));
+}
+
+TEST_CASE(EndpointRefreshPreservesAuthorizationForSameServerIdentity) {
+	auto options = DcOptions(Environment::Production);
+	const auto original = MakeEndpointRefreshPin("100.124.236.66");
+	const auto candidate = MakeEndpointRefreshPin("100.112.103.90");
+	CHECK(options.setCustomServer(original));
+	CHECK(options.markAuthorized(original.dcId));
+	CHECK(!options.setCustomServer(candidate));
+
+	CHECK(options.refreshCustomServerEndpoint(original, candidate));
+	CHECK(SameCustomServerEndpointRefreshIdentity(options.customServer(),
+												  candidate));
+	CHECK(options.isAuthorized(original.dcId));
+	CHECK(!SameCustomServerPin(options.customServer(), original));
+	CHECK_EQ(options.customServer().serverSelection, original.serverSelection);
+	CHECK_EQ(options.customServer().discoveryOrigin, original.discoveryOrigin);
+	CHECK(options.customServer().discoveryPolicy == original.discoveryPolicy);
+}
+
+TEST_CASE(RestoredSessionRefreshesMovedEndpointAfterAuthenticatedProof) {
+	auto options = DcOptions(Environment::Production);
+	const auto original = MakeEndpointRefreshPin("100.124.236.66");
+	const auto candidate = MakeEndpointRefreshPin("100.112.103.90");
+	CHECK(options.setCustomServer(original));
+	CHECK(options.markAuthorized(original.dcId));
+	CHECK(CanRefreshServerEndpoint(
+		{
+			.restoredSession = true,
+			.pinAuthorized = true,
+			.canResume = true,
+			.hasStoredAuthKey = true,
+		},
+		original));
+	auto requestsPaused = true;
+	const auto committed = CommitServerEndpointRefresh(
+		original, candidate, true,
+		[&] {
+			return options.refreshCustomServerEndpoint(original, candidate);
+		},
+		[] { return true; }, [&] { requestsPaused = false; });
+
+	CHECK(committed);
+	CHECK_EQ(options.customServer().ip, std::string("100.112.103.90"));
+	CHECK(options.isAuthorized(original.dcId));
+	CHECK(SameCustomServerEndpointRefreshIdentity(options.customServer(),
+												  original));
+	CHECK(!requestsPaused);
+}
+
+TEST_CASE(RestoredSessionRefreshDiscoversEndpointAndWaitsForStoredKeyProof) {
+	QTemporaryDir directory;
+	CHECK(directory.isValid());
+	if (!directory.isValid()) {
+		return;
+	}
+	const auto discovery = DiscoverMovedEndpoint();
+	CHECK(discovery.has_value());
+	if (!discovery) {
+		return;
+	}
+	CHECK(discovery->oldEndpointUnreachable);
+
+	const auto basePath = directory.path() + QDir::separator();
+	const auto localKey = MakeEnrollmentStorageKey();
+	const auto storedAuthKey = MakeEndpointRefreshAuthKey(0x3A);
+	const auto differentAuthKey = MakeEndpointRefreshAuthKey(0x4B);
+	const auto serializedAuthKey
+		= SerializeEndpointRefreshAuthKey(storedAuthKey);
+	auto config = std::make_shared<MTP::Config>(MTP::Environment::Production);
+	const auto original = MTP::CustomServer{
+		.dcId = 2,
+		.ip = "127.0.0.2",
+		.port = discovery->selection.operationalPort,
+		.key = MakeEnrollmentServerKey(),
+		.serverSelection
+		= discovery->selection.normalizedSelection.toStdString(),
+		.discoveryPolicy = discovery->selection.policy,
+		.discoveryOrigin = discovery->origin.toStdString(),
+	};
+	CHECK(config->dcOptions().setCustomServer(original));
+	CHECK(config->dcOptions().markAuthorized(original.dcId));
+	{
+		auto initial = Storage::Account(basePath, localKey, config, true,
+										[&] { return serializedAuthKey; });
+		CHECK(initial.writeMtpConfig(true));
+		CHECK(initial.writeMtpData(true));
+	}
+
+	auto restoredConfig = ReadEnrollmentConfig(basePath, localKey);
+	CHECK(restoredConfig != nullptr);
+	if (!restoredConfig) {
+		return;
+	}
+	const auto restoredPin = restoredConfig->dcOptions().customServer();
+	CHECK_EQ(restoredPin.ip, "127.0.0.2");
+	CHECK(restoredConfig->dcOptions().isAuthorized(restoredPin.dcId));
+	auto restoredConfigShared
+		= std::shared_ptr<MTP::Config>(restoredConfig.release());
+	auto restoredAuthData = QByteArray();
+	auto restored = Storage::Account(
+		basePath, localKey, restoredConfigShared, true,
+		[&] { return serializedAuthKey; },
+		[&](const QByteArray &value) { restoredAuthData = value; });
+	restored.readMtpDataForTest();
+	CHECK_EQ(restoredAuthData, serializedAuthKey);
+	const auto restoredAuthKey
+		= RestoreEndpointRefreshAuthKey(restoredAuthData);
+	CHECK(restoredAuthKey != nullptr);
+	if (!restoredAuthKey) {
+		return;
+	}
+	CHECK(restoredAuthKey->equals(storedAuthKey));
+
+	const auto selection = MTP::CheckServerSelection(
+		QString::fromStdString(restoredPin.serverSelection));
+	const auto eligibility = MTP::ServerEndpointRefreshEligibility{
+		.restoredSession
+		= Main::details::ShouldRestoreStoredSession(true, true),
+		.pinAuthorized
+		= restoredConfigShared->dcOptions().isAuthorized(restoredPin.dcId),
+		.canResume
+		= MTP::CanResumeServerEnrollment(restoredConfigShared->dcOptions()),
+		.hasStoredAuthKey
+		= restoredAuthKey->type() == MTP::AuthKey::Type::ReadFromFile
+		  && restoredAuthKey->dcId() == restoredPin.dcId,
+	};
+	auto transaction = MTP::ServerEndpointRefreshTransaction();
+	CHECK(transaction.begin(eligibility, restoredPin));
+
+	const auto candidate = MTP::BuildCustomServerFromDiscovery(
+		discovery->selection, discovery->result, discovery->origin);
+	CHECK(candidate.has_value());
+	if (!candidate) {
+		return;
+	}
+	CHECK(transaction.setCandidate(*candidate)
+		  == MTP::CustomServerEndpointRefreshIdentityFailure::None);
+	CHECK_EQ(candidate->ip, "127.0.0.1");
+	CHECK(
+		MTP::SameCustomServerEndpointRefreshIdentity(restoredPin, *candidate));
+
+	auto gate = MTP::ServerEnrollmentGate();
+	CHECK(gate.start());
+	CHECK(gate.pause());
+	CHECK(!gate.networkAllowed());
+	auto pinChanged = false;
+	auto configPersisted = false;
+	auto requestsResumed = false;
+	const auto verifyAndCommit = [&](const MTP::AuthKeyPtr &responseKey) {
+		return MTP::UnitVerifyEndpointAndResumeRequestsForTest(
+			restoredAuthKey, responseKey,
+			[&](bool authenticatedProof,
+				const std::function<void()> &resumeQueuedRequests) {
+				return transaction.commit(
+					authenticatedProof,
+					[&] {
+						pinChanged = restoredConfigShared->dcOptions()
+										 .refreshCustomServerEndpoint(
+											 transaction.original(),
+											 transaction.candidate());
+						return pinChanged;
+					},
+					[&] {
+						configPersisted = restored.writeMtpConfig(true);
+						return configPersisted;
+					},
+					[&] {
+						CHECK(!gate.networkAllowed());
+						CHECK(configPersisted);
+						requestsResumed = gate.resume().resumed;
+						resumeQueuedRequests();
+					},
+					[&] {
+						static_cast<void>(restoredConfigShared->dcOptions()
+											  .refreshCustomServerEndpoint(
+												  transaction.candidate(),
+												  transaction.original()));
+					});
+			});
+	};
+	const auto rejected = verifyAndCommit(differentAuthKey);
+	CHECK(rejected.requestWasPausedBeforeProof);
+	CHECK(!rejected.proofAccepted);
+	CHECK(!rejected.requestResumed);
+	CHECK(!rejected.refreshCommitted);
+	CHECK(!pinChanged);
+	CHECK(!configPersisted);
+	CHECK(!requestsResumed);
+	CHECK(!gate.networkAllowed());
+	CHECK(MTP::SameCustomServerPin(
+		restoredConfigShared->dcOptions().customServer(), restoredPin));
+
+	const auto committed = verifyAndCommit(restoredAuthKey);
+	CHECK(committed.requestWasPausedBeforeProof);
+	CHECK(committed.proofAccepted);
+	CHECK(committed.requestResumed);
+	CHECK(committed.requestCompleted);
+	CHECK(committed.refreshCommitted);
+	CHECK(pinChanged);
+	CHECK(configPersisted);
+	CHECK(requestsResumed);
+	CHECK(gate.networkAllowed());
+	CHECK(restoredConfigShared->dcOptions().isAuthorized(restoredPin.dcId));
+
+	const auto persisted = ReadEnrollmentConfig(basePath, localKey);
+	CHECK(persisted != nullptr);
+	if (persisted) {
+		CHECK_EQ(persisted->dcOptions().customServer().ip, "127.0.0.1");
+		CHECK(persisted->dcOptions().isAuthorized(restoredPin.dcId));
+	}
+}
+
+TEST_CASE(EndpointWithoutAuthKeyProofKeepsOriginalPin) {
+	auto options = DcOptions(Environment::Production);
+	const auto original = MakeEndpointRefreshPin("100.124.236.66");
+	const auto candidate = MakeEndpointRefreshPin("100.112.103.90");
+	CHECK(options.setCustomServer(original));
+	CHECK(options.markAuthorized(original.dcId));
+	auto staged = false;
+	auto persisted = false;
+	const auto committed = CommitServerEndpointRefresh(
+		original, candidate, false,
+		[&] {
+			staged = true;
+			return options.refreshCustomServerEndpoint(original, candidate);
+		},
+		[&] {
+			persisted = true;
+			return true;
+		},
+		[] {});
+
+	CHECK(!committed);
+	CHECK(!staged);
+	CHECK(!persisted);
+	CHECK(SameCustomServerPin(options.customServer(), original));
+	CHECK(options.isAuthorized(original.dcId));
+}
+
+TEST_CASE(EndpointRefreshRequiresRestoredAuthorizedBoundSession) {
+	const auto ready = ServerEndpointRefreshEligibility{
+		.restoredSession = true,
+		.pinAuthorized = true,
+		.canResume = true,
+		.hasStoredAuthKey = true,
+	};
+	auto pin = MakeEndpointRefreshPin("100.124.236.66");
+	CHECK(CanRefreshServerEndpoint(ready, pin));
+
+	auto state = ready;
+	state.restoredSession = false;
+	CHECK(!CanRefreshServerEndpoint(state, pin));
+	state = ready;
+	const auto unpinned = CustomServer{};
+	CHECK(!CanRefreshServerEndpoint(state, unpinned));
+	state = ready;
+	state.pinAuthorized = false;
+	CHECK(!CanRefreshServerEndpoint(state, pin));
+	state = ready;
+	state.canResume = false;
+	CHECK(!CanRefreshServerEndpoint(state, pin));
+	state = ready;
+	state.cacheBindingMismatch = true;
+	CHECK(!CanRefreshServerEndpoint(state, pin));
+	state = ready;
+	auto badOrigin = pin;
+	badOrigin.discoveryOrigin
+		= "https://attacker.example/.well-known/teagramd/client";
+	CHECK(!CanRefreshServerEndpoint(state, badOrigin));
+	state = ready;
+	state.hasStoredAuthKey = false;
+	CHECK(!CanRefreshServerEndpoint(state, pin));
+}
+
+TEST_CASE(EndpointRefreshRetryUsesBoundedBackoff) {
+	CHECK_EQ(ServerEndpointRefreshRetryDelayMs(0), 1000);
+	CHECK_EQ(ServerEndpointRefreshRetryDelayMs(1), 2000);
+	CHECK_EQ(ServerEndpointRefreshRetryDelayMs(2), 4000);
+	CHECK_EQ(ServerEndpointRefreshRetryDelayMs(8), 256000);
+	CHECK_EQ(ServerEndpointRefreshRetryDelayMs(12), 256000);
+	CHECK(ShouldScheduleServerEndpointRefreshRetry(true, false));
+	CHECK(!ShouldScheduleServerEndpointRefreshRetry(true, true));
+	CHECK(!ShouldScheduleServerEndpointRefreshRetry(false, false));
+}
+
+TEST_CASE(EndpointVerifierRefusesConfigThatDoesNotConfirmPinnedDc) {
+	auto options = DcOptions(Environment::Production);
+	const auto pin = MakeEndpointRefreshPin("100.124.236.66");
+	CHECK(options.setCustomServer(pin));
+	const auto changedDc = CheckEndpointVerificationConfig(
+		false, false, true, pin.dcId + 1, {pin.dcId + 1}, pin);
+	CHECK(!changedDc.authenticated);
+	CHECK(changedDc.failure
+		  && *changedDc.failure == PinnedServerFailure::DcIdMismatch);
+	CHECK(SameCustomServerPin(options.customServer(), pin));
+
+	const auto missingAdvertisement = CheckEndpointVerificationConfig(
+		false, false, true, pin.dcId, {pin.dcId + 1}, pin);
+	CHECK(!missingAdvertisement.authenticated);
+	CHECK(missingAdvertisement.failure
+		  && *missingAdvertisement.failure
+				 == PinnedServerFailure::DcIdMismatch);
+	CHECK(SameCustomServerPin(options.customServer(), pin));
 }
 
 TEST_CASE(RefusedServerReplacementPersistsAdvertisedDcBeforeResume) {
