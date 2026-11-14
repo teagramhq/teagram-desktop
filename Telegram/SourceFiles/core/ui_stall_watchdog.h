@@ -51,6 +51,11 @@ class UiStallWatchdog final : public QObject {
 		bool schedulerTraceComplete = false;
 	};
 
+	struct SchedulerSampleEvidence {
+		qint64 sampledAtSteadyNanoseconds = 0;
+		char state = '?';
+	};
+
 	explicit UiStallWatchdog(
 		std::function<void(const QString &, bool update)> log);
 	UiStallWatchdog(std::function<void(const QString &, bool update)> log,
@@ -67,6 +72,8 @@ class UiStallWatchdog final : public QObject {
 	RecentStallEvidenceForTesting();
 	[[nodiscard]] static std::vector<PingAcknowledgementEvidence>
 	RecentPingAcknowledgementsForTesting();
+	[[nodiscard]] static std::vector<SchedulerSampleEvidence>
+	RecentSchedulerSamplesForTesting();
 	[[nodiscard]] static bool
 	ShouldStopBeforeTraceAttachment(bool stopping,
 									std::uint64_t acknowledgedSequence,
@@ -102,7 +109,6 @@ class UiStallWatchdog final : public QObject {
 	std::mutex _reportMutex;
 	std::condition_variable _reportCondition;
 	std::uint64_t _acknowledgedSequence = 0;
-	std::atomic<std::uint64_t> _schedulerSamplingStopSequence = 0;
 	std::chrono::steady_clock::time_point _acknowledgedAt;
 	bool _stopAfterNextAcknowledgementForTesting = false;
 	bool _started = false;

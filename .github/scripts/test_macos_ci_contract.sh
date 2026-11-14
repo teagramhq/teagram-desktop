@@ -1310,7 +1310,7 @@ grep -Fq 'attachMenuHoverNanoseconds' "$temp_dir/cache-chat-switch-regression.cp
   && grep -Fq 'showPeerHistoryMeasured(attachHistory)' "$temp_dir/cache-chat-switch-regression.cpp" \
   && grep -Fq 'maxChatSwitchIndex' "$temp_dir/cache-chat-switch-regression.cpp" \
   && grep -Fq 'maxChatSwitchPeerId' "$temp_dir/cache-chat-switch-regression.cpp" \
-  && grep -Fq 'RecentPingAcknowledgementsForTesting' "$temp_dir/cache-chat-switch-regression.cpp" \
+  && grep -Fq 'RecentSchedulerSamplesForTesting' "$temp_dir/cache-chat-switch-regression.cpp" \
   && grep -Fq 'SchedulerTraceForInterval' "$temp_dir/cache-chat-switch-regression.cpp" \
   || contract_fail 'The cache regression must measure attach-menu hover and identify the slowest peer switch.'
 grep -Fq 'schedulerTraceComplete = true' Telegram/SourceFiles/core/ui_stall_watchdog.cpp \

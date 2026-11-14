@@ -1275,13 +1275,22 @@ void HistoryWidget::refreshTopBarActiveChat() {
 }
 
 void HistoryWidget::refreshTabbedPanel() {
-	if (_peer && _tabbedPanel && !_tabbedPanel->isSelectorStolen()) {
+	if (!_peer) {
+		if (_tabbedPanel) {
+			setTabbedPanel(nullptr);
+		}
+		return;
+	} else if (_tabbedPanel && !_tabbedPanel->isSelectorStolen()) {
 		return;
 	}
 	if (_tabbedPanel) {
+		if (controller()->hasTabbedSelectorOwnership()) {
+			controller()->tabbedSelector()->setParent(_tabbedPanel.get());
+			return;
+		}
 		setTabbedPanel(nullptr);
 	}
-	if (_peer && controller()->hasTabbedSelectorOwnership()) {
+	if (controller()->hasTabbedSelectorOwnership()) {
 		createTabbedPanel();
 	}
 }
@@ -1536,7 +1545,9 @@ void HistoryWidget::initTabbedSelector() {
 	const auto selector = controller()->tabbedSelector();
 
 	base::install_event_filter(this, selector, [=](not_null<QEvent*> e) {
-		if (_tabbedPanel && e->type() == QEvent::ParentChange) {
+		if (_tabbedPanel && e->type() == QEvent::ParentChange
+			&& _tabbedPanel->isSelectorStolen()
+			&& !controller()->hasTabbedSelectorOwnership()) {
 			setTabbedPanel(nullptr);
 		}
 		return base::EventFilterResult::Continue;
@@ -3288,6 +3299,9 @@ void HistoryWidget::showHistory(
 		session().local().readDraftsWithCursors(_history);
 		if (!applyDraft()) {
 			clearFieldText();
+		}
+		if (_autocomplete) {
+			_autocomplete->setCurrentPeer(_peer);
 		}
 		checkCharsCount();
 		_send->finishAnimating();
@@ -7465,7 +7479,11 @@ bool HistoryWidget::pushTabbedSelectorToThirdSection(
 }
 
 bool HistoryWidget::returnTabbedSelector() {
-	createTabbedPanel();
+	if (_tabbedPanel && _tabbedPanel->isSelectorStolen()) {
+		controller()->tabbedSelector()->setParent(_tabbedPanel.get());
+	} else {
+		createTabbedPanel();
+	}
 	moveFieldControls();
 	return true;
 }
