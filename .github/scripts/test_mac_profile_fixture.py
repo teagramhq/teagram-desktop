@@ -44,7 +44,7 @@ if [[ "${TDESKTOP_FONT_STARTUP_REGRESSION:-}" == 1 ]]; then
     exit 0
 fi
 if [[ "${TDESKTOP_FONT_STARTUP_QUIT_REGRESSION:-}" == 1 ]]; then
-    printf 'Font shutdown regression: quit_observed=1 enumeration=in_flight\\n'
+    printf 'Font shutdown regression: quit_observed=1 font_work=active enumeration_overlapped=1\\n'
     printf 'Font shutdown regression: worker_joined=1 application_created=0 teardown=complete\\n'
     exit 0
 fi
@@ -112,21 +112,21 @@ count_file="$HOME/font-startup-count"
 mode="$FONT_TEST_MODE"
 if [[ "${TDESKTOP_FONT_STARTUP_QUIT_REGRESSION:-}" == 1 ]]; then
     if [[ "$FONT_SHUTDOWN_TEST_MODE" == shutdown-not-in-flight ]]; then
-        printf 'Font shutdown regression: quit_observed=0 enumeration=in_flight\\n'
+        printf 'Font shutdown regression: quit_observed=0 font_work=active enumeration_overlapped=0\\n'
         printf 'Font shutdown regression: worker_joined=1 application_created=0 teardown=complete\\n'
     elif [[ "$FONT_SHUTDOWN_TEST_MODE" == shutdown-order ]]; then
         printf 'Font shutdown regression: worker_joined=1 application_created=0 teardown=complete\\n'
-        printf 'Font shutdown regression: quit_observed=1 enumeration=in_flight\\n'
+        printf 'Font shutdown regression: quit_observed=1 font_work=active enumeration_overlapped=1\\n'
     elif [[ "$FONT_SHUTDOWN_TEST_MODE" == shutdown-application-created ]]; then
-        printf 'Font shutdown regression: quit_observed=1 enumeration=in_flight\\n'
+        printf 'Font shutdown regression: quit_observed=1 font_work=active enumeration_overlapped=1\\n'
         printf 'Font shutdown regression: worker_joined=1 application_created=1 teardown=complete\\n'
     elif [[ "$FONT_SHUTDOWN_TEST_MODE" == shutdown-missing-teardown ]]; then
-        printf 'Font shutdown regression: quit_observed=1 enumeration=in_flight\\n'
+        printf 'Font shutdown regression: quit_observed=1 font_work=active enumeration_overlapped=1\\n'
     elif [[ "$FONT_SHUTDOWN_TEST_MODE" == shutdown-crash ]]; then
-        printf 'Font shutdown regression: quit_observed=1 enumeration=in_flight\\n'
+        printf 'Font shutdown regression: quit_observed=1 font_work=active enumeration_overlapped=1\\n'
         exit 139
     else
-        printf 'Font shutdown regression: quit_observed=1 enumeration=in_flight\\n'
+        printf 'Font shutdown regression: quit_observed=1 font_work=active enumeration_overlapped=1\\n'
         printf 'Font shutdown regression: worker_joined=1 application_created=0 teardown=complete\\n'
     fi
     exit 0
@@ -252,7 +252,7 @@ assert 'Font-code startup stall gate=PASS sample=cold' in font_startup_output
 assert 'Font-code startup stall gate=PASS sample=warm' in font_startup_output
 assert 'fallback=PASS font_stall_gate=PASS' \
     in font_startup_output
-assert 'Font shutdown teardown=PASS enumeration_in_flight=1 application_created=0' \
+assert 'Font shutdown teardown=PASS font_work_active=1 application_created=0' \
     in font_startup_output
 font_startup_failure = run_font_startup_fixture(50_000_000, 100_000_000, 1)
 assert 'StartFonts warm exceeded the 100ms budget' in font_startup_failure
@@ -333,7 +333,7 @@ assert 'bundled fonts were not preloaded before app initialization' \
     in font_startup_missing_custom_fonts
 font_startup_shutdown_not_in_flight = run_font_startup_fixture(
     50_000_000, 50_000_000, 1, mode='shutdown-not-in-flight')
-assert 'font shutdown regression did not quit with the enumeration in flight' \
+assert 'font shutdown regression did not quit while the font worker was active' \
     in font_startup_shutdown_not_in_flight
 font_startup_shutdown_order = run_font_startup_fixture(
     50_000_000, 50_000_000, 1, mode='shutdown-order')

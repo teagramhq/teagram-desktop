@@ -1491,10 +1491,10 @@ run_font_shutdown_regression() {
 			"$launch_status" >&2
 		return 1
 	fi
-	if ! grep -F -q 'Font shutdown regression: quit_observed=1 enumeration=in_flight' \
+	if ! grep -F -q 'Font shutdown regression: quit_observed=1 font_work=active' \
 		"$shutdown_log"; then
 		cat "$shutdown_log" >&2
-		echo "font shutdown regression did not quit with the enumeration in flight" >&2
+		echo "font shutdown regression did not quit while the font worker was active" >&2
 		return 1
 	fi
 	local in_flight_position
@@ -1510,7 +1510,7 @@ run_font_shutdown_regression() {
 		echo "font shutdown did not join the worker and tear down without starting the application" >&2
 		return 1
 	fi
-	printf 'Font shutdown teardown=PASS enumeration_in_flight=1 application_created=0\n'
+	printf 'Font shutdown teardown=PASS font_work_active=1 application_created=0\n'
 }
 
 symbolicate_font_startup_crash() {
