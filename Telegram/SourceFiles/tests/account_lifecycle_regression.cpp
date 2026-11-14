@@ -103,6 +103,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "info/info_section_widget.h"
 #include "info/info_wrap_widget.h"
 #include "inline_bots/bot_attach_web_view.h"
+#include "intro/intro_server_discovery.h"
 #include "iv/iv_rich_page.h"
 #include "lang/lang_keys.h"
 #include "lang/translate_provider.h"
