@@ -11757,7 +11757,7 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 			  == nullptr)
 		  && !historyWidget->fieldFocusedForRegressionTest();
 	historyWidget->focusFieldForRegressionTest();
-	WaitForRegressionCondition(
+	const auto autocompleteBuiltOnFocus = WaitForRegressionCondition(
 		[&] {
 			return (historyWidget
 						->fieldAutocompleteBuildCountForRegressionTest()
@@ -11789,7 +11789,7 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 	settleHistoryUnfocused();
 	showPeerHistoryMeasured(firstHistory);
 	settleHistoryUnfocused();
-	WaitForRegressionCondition(
+	const auto autocompleteRestoredAfterSwitch = WaitForRegressionCondition(
 		[&] {
 			return historyWidget->fieldAutocompletePeerForRegressionTest()
 				   == firstHistory->peer.get();
@@ -11803,10 +11803,12 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 	const auto tabbedPanelBuildsAfterSwitch
 		= historyWidget->tabbedPanelBuildCountForRegressionTest();
 	result.chatSwitchComposeUiReused
-		= autocompleteDeferredUntilFocus && (autocompleteBuildsAfterFocus == 1)
+		= autocompleteDeferredUntilFocus && autocompleteBuiltOnFocus
+		  && (autocompleteBuildsAfterFocus == 1)
 		  && autocompletePeerMatchesAfterFocus && autocompleteFocusedAfterFocus
 		  && (autocompleteBuildsAfterSwitch == autocompleteBuildsAfterFocus)
-		  && autocompletePeerMatches && result.chatSwitchTransitionsSettled;
+		  && autocompleteRestoredAfterSwitch && autocompletePeerMatches
+		  && result.chatSwitchTransitionsSettled;
 	std::fprintf(
 		stderr,
 		"Chat switch compose UI reuse: autocomplete_builds_before_focus=%d "
@@ -11832,10 +11834,10 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		menuClickedUnfocused, menuCommandsShown, commandStartVisible,
 		commandAutocompleteWasDeferred, startClickedUnfocused,
 		startCommandsShown);
-	const auto revealProbeItem
-		= firstHistory->firstUnreadMessage()
-			  ? firstHistory->firstUnreadMessage()->data()
-			  : firstHistory->lastMessage();
+	const auto unreadProbeElement = firstHistory->firstUnreadMessage();
+	const auto revealProbeItem = unreadProbeElement
+									 ? unreadProbeElement->data().get()
+									 : firstHistory->lastMessage();
 	const auto revealProbeHasView
 		= revealProbeItem && revealProbeItem->mainView();
 	if (revealProbeHasView) {
