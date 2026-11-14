@@ -11807,6 +11807,7 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		  && (autocompleteBuildsAfterFocus == 1)
 		  && autocompletePeerMatchesAfterFocus && autocompleteFocusedAfterFocus
 		  && (autocompleteBuildsAfterSwitch == autocompleteBuildsAfterFocus)
+		  && (tabbedPanelBuildsAfterSwitch == tabbedPanelBuildsBeforeSwitch)
 		  && autocompleteRestoredAfterSwitch && autocompletePeerMatches
 		  && result.chatSwitchTransitionsSettled;
 	std::fprintf(
