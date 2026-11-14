@@ -61,8 +61,15 @@ namespace MTP {
 namespace {
 
 const Instance *UnitBlockedServerEnrollmentInstance = nullptr;
+std::vector<ShiftedDcId> UnitServerEndpointRefreshRequests;
 
 } // namespace
+
+class Instance::Private final {};
+
+Instance::Instance(Mode, Fields &&) : QObject(), _private(nullptr) {}
+
+Instance::~Instance() = default;
 
 bool Instance::isTestMode() const { return false; }
 
@@ -96,7 +103,9 @@ void Instance::syncHttpUnixtime() {}
 
 void Instance::restartedByTimeout(ShiftedDcId) {}
 
-void Instance::requestServerEndpointRefresh(ShiftedDcId) {}
+void Instance::requestServerEndpointRefresh(ShiftedDcId shiftedDcId) {
+	UnitServerEndpointRefreshRequests.push_back(shiftedDcId);
+}
 
 void Instance::keyDestroyedOnServer(ShiftedDcId, uint64) {}
 
@@ -277,6 +286,13 @@ class SessionPrivateTestAccess final {
 		const auto target = not_null<AbstractConnection *>(connection);
 		const auto mapped = ServerErrorFromPacket(packet);
 		session.onError(target, mapped, {});
+	}
+
+	static void ConnectionError(SessionPrivate &session,
+								AbstractConnection *connection,
+								qint32 errorCode) {
+		session.onError(not_null<AbstractConnection *>(connection), errorCode,
+						{});
 	}
 
 	static bool GaveUpOnBrowserOnlyServer(const SessionPrivate &session) {
@@ -857,6 +873,44 @@ TEST_CASE(HttpConnectionMapsBrowserOnlyStatusToResponseCode) {
 	CHECK_EQ(connection.handleError(&reply), kErrorCodeBrowserOnlyResponse);
 	auto serverReply = HttpStatusReply(404);
 	CHECK_EQ(connection.handleError(&serverReply), -404);
+}
+
+TEST_CASE(SessionRequestsEndpointRefreshOnlyForTransportFailure) {
+	auto instance
+		= MTP::Instance(MTP::Instance::Mode::Normal, MTP::Instance::Fields());
+	const auto makeSession = [&] {
+		auto data = std::make_shared<MTP::details::SessionData>(
+			not_null<MTP::Session *>(
+				reinterpret_cast<MTP::Session *>(quintptr(1))));
+		return MTP::details::SessionPrivateTestAccess::Create(data, &instance);
+	};
+	const auto makeConnection = [] {
+		return MTP::details::ConnectionPointer::New<FakeTransport>(
+			QThread::currentThread(), ProxyData(),
+			std::make_shared<TransportLog>());
+	};
+	MTP::UnitServerEndpointRefreshRequests.clear();
+	auto transportSession = makeSession();
+	auto transportConnection = makeConnection();
+	MTP::details::SessionPrivateTestAccess::ConnectionError(
+		*transportSession, transportConnection.get(),
+		MTP::details::AbstractConnection::kErrorCodeOther);
+	QCoreApplication::processEvents();
+	CHECK_EQ(int(MTP::UnitServerEndpointRefreshRequests.size()), 1);
+	if (!MTP::UnitServerEndpointRefreshRequests.empty()) {
+		CHECK_EQ(int(MTP::UnitServerEndpointRefreshRequests.front()), 2);
+	}
+	MTP::details::SessionPrivateTestAccess::Disconnect(*transportSession);
+
+	MTP::UnitServerEndpointRefreshRequests.clear();
+	auto responseSession = makeSession();
+	auto responseConnection = makeConnection();
+	MTP::details::SessionPrivateTestAccess::ConnectionError(
+		*responseSession, responseConnection.get(),
+		MTP::details::kErrorCodeBrowserOnlyResponse);
+	QCoreApplication::processEvents();
+	CHECK(MTP::UnitServerEndpointRefreshRequests.empty());
+	MTP::details::SessionPrivateTestAccess::Disconnect(*responseSession);
 }
 
 TEST_CASE(ServerErrorFromPacketDoesNotRecordBrowserOnlyRefusal) {

@@ -246,6 +246,14 @@ class AccountLifecycleRegressionAccess {
 		return account._mtpForEndpointVerification != nullptr;
 	}
 	[[nodiscard]] static bool
+	endpointRefreshIdentityFailure(const Main::Account &account) {
+		return account._serverEndpointRefreshIdentityFailure;
+	}
+	[[nodiscard]] static bool
+	endpointRefreshRetryScheduled(const Main::Account &account) {
+		return account._serverEndpointRefreshRetryTimer->isActive();
+	}
+	[[nodiscard]] static bool
 	verifierUsesStoredFileKey(const Main::Account &account,
 							  const MTP::AuthKeyPtr &expected) {
 		if (!account._mtpForEndpointVerification || !expected) {
@@ -2586,6 +2594,8 @@ class LocalEndpointRefreshDiscoveryStub final {
 		}
 	}
 
+	void deferVerifierReply() { _autoReply = false; }
+
 	void reportConnectionState() const {
 		for (auto i = 0; i != int(_connections.size()); ++i) {
 			const auto &connection = _connections[i];
@@ -3070,21 +3080,6 @@ class LocalEndpointRefreshDiscoveryStub final {
 	if (!retryRefresh()) {
 		return fail("the retry did not wait for a second proof");
 	}
-	discovery.replyToPendingVerifierConfigWithWrongDc();
-	if (!WaitForRegressionCondition([&] {
-			return !AccountLifecycleRegressionAccess::
-				endpointVerificationPending(*account);
-		})
-		|| mtp.isServerEnrollmentNetworkAllowed()
-		|| !mtp.hasCallback(acceptedRequestId) || callbackCount != 0
-		|| !MTP::SameCustomServerPin(original, mtp.dcOptions().customServer())
-		|| !storedKeyIsRetained() || !pausedRequestIsRefused()) {
-		return fail(
-			"a config naming another dc changed the pin or resumed requests");
-	}
-	if (!retryRefresh()) {
-		return fail("the account did not retry after refusing the other dc");
-	}
 	discovery.replyToPendingVerifierConfig(true);
 	if (!WaitForRegressionCondition([&] {
 			const auto moved = mtp.dcOptions().customServer();
@@ -3118,7 +3113,48 @@ class LocalEndpointRefreshDiscoveryStub final {
 		= resumed && remainsPending && !failures
 		  && WaitForRegressionCondition([&] { return callbackCount == 1; })
 		  && !failureCount && !mtp.hasCallback(acceptedRequestId);
-	return completed || fail("the accepted request callback did not complete");
+	if (!completed) {
+		return fail("the accepted request callback did not complete");
+	}
+	discovery.deferVerifierReply();
+	if (!discovery.configureOriginalPin(account, original.key)) {
+		return fail("could not restore the stale pin for the mismatch case");
+	}
+	mtp.restart();
+	auto mismatchCallbackCount = 0;
+	const auto mismatchRequestId = mtp.send(
+		MTPhelp_GetConfig(),
+		[&](const MTP::Response &) {
+			++mismatchCallbackCount;
+			return true;
+		},
+		[&](const MTP::Error &, const MTP::Response &) {
+			++failureCount;
+			return true;
+		});
+	if (!mtp.hasCallback(mismatchRequestId) || !requestRefresh()
+		|| mtp.isServerEnrollmentNetworkAllowed()
+		|| !mtp.hasCallback(mismatchRequestId) || mismatchCallbackCount != 0
+		|| !pausedRequestIsRefused()) {
+		return fail("the mismatched-dc proof case did not pause requests");
+	}
+	discovery.replyToPendingVerifierConfigWithWrongDc();
+	if (!WaitForRegressionCondition([&] {
+			return !AccountLifecycleRegressionAccess::
+				endpointVerificationPending(*account);
+		})
+		|| mtp.isServerEnrollmentNetworkAllowed()
+		|| !mtp.hasCallback(mismatchRequestId) || mismatchCallbackCount != 0
+		|| !MTP::SameCustomServerPin(original, mtp.dcOptions().customServer())
+		|| !storedKeyIsRetained() || !pausedRequestIsRefused()
+		|| discovery.hasPendingVerifierConfig()
+		|| !AccountLifecycleRegressionAccess::endpointRefreshIdentityFailure(
+			*account)
+		|| AccountLifecycleRegressionAccess::endpointRefreshRetryScheduled(
+			*account)) {
+		return fail("a config naming another dc resumed or retried requests");
+	}
+	return true;
 }
 
 [[nodiscard]] bool
