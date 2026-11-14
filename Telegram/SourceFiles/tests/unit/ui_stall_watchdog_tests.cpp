@@ -107,9 +107,15 @@ TEST_CASE(UiStallWatchdogAttachesTraceWhenStoppedAfterAcknowledgement) {
 		if (attached != after.end()) {
 			CHECK(attached->schedulerTraceComplete);
 			CHECK(!attached->schedulerTrace.isEmpty());
-			CHECK_EQ(
-				attached->schedulerTrace.size(),
-				qsizetype(attached->schedulerSampleOffsetsNanoseconds.size()));
+			// An acknowledgement faster than the 1 ms sampler interval
+			// covers no samples and carries the "none" marker instead.
+			if (attached->schedulerSampleOffsetsNanoseconds.empty()) {
+				CHECK(attached->schedulerTrace == u"none"_q);
+			} else {
+				CHECK_EQ(attached->schedulerTrace.size(),
+						 qsizetype(attached->schedulerSampleOffsetsNanoseconds
+									   .size()));
+			}
 		}
 	}
 }
