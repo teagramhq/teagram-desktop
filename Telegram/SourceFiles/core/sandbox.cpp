@@ -25,7 +25,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/ui_stall_watchdog.h"
 #include "logs.h"
 #ifdef Q_OS_MAC
+#include "window/main_window.h"
 #include "core/mac_protected_path_runtime.h"
+#include "ui/style/style_core_font.h"
 #endif // Q_OS_MAC
 #include "base/timer.h"
 #include "base/concurrent_timer.h"
@@ -42,12 +44,31 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include <QtCore/QLockFile>
 #include <QtCore/QFileInfo>
+#include <QtCore/QMetaObject>
 #include <QtGui/QSessionManager>
 #include <QtGui/QScreen>
+#ifdef Q_OS_MAC
+#include <QtCore/QPoint>
+#include <QtCore/QRect>
+#include <QtCore/QTimer>
+#include <QtGui/QBackingStore>
+#include <QtGui/QExposeEvent>
+#include <QtGui/QFont>
+#include <QtGui/QFontDatabase>
+#include <QtGui/QFontMetrics>
+#include <QtGui/QImage>
+#include <QtGui/QPalette>
+#include <QtGui/QPainter>
+#include <QtGui/QRegion>
+#include <QtGui/QResizeEvent>
+#include <QtGui/QWindow>
+#endif // Q_OS_MAC
 #include <QtGui/qpa/qplatformscreen.h>
 
 #ifdef Q_OS_MAC
 #include <cstdio>
+#include <functional>
+#include <system_error>
 #include <sys/un.h>
 #endif // Q_OS_MAC
 
@@ -62,6 +83,71 @@ base::options::toggle OptionDeadlockDetector({
 
 constexpr auto kCleanupIpcTimeout = 10 * crl::time(1000);
 constexpr auto kCleanupQuitTimeout = 30 * crl::time(1000);
+#ifdef Q_OS_MAC
+constexpr auto kFontStartupSplashExposureTimeout = 1000;
+#endif // Q_OS_MAC
+
+#ifdef Q_OS_MAC
+class FontStartupSplash final : public QWindow {
+  public:
+	explicit FontStartupSplash(std::function<void()> onShown)
+		: _backingStore(this), _onShown(std::move(onShown)),
+		  _logo(Window::Logo()) {
+		setFlags(Qt::SplashScreen | Qt::FramelessWindowHint);
+		resize(_logo.size());
+		if (const auto screen = QGuiApplication::primaryScreen()) {
+			const auto geometry = screen->availableGeometry();
+			setPosition(geometry.center() - QPoint(width() / 2, height() / 2));
+		}
+	}
+
+  protected:
+	void exposeEvent(QExposeEvent *event) override {
+		QWindow::exposeEvent(event);
+		if (!isExposed()) {
+			return;
+		}
+		paint();
+		if (qEnvironmentVariableIsSet(
+				"TDESKTOP_FONT_STARTUP_REGRESSION_SKIP_EXPOSE_CALLBACK")) {
+			return;
+		}
+		if (_onShown) {
+			auto onShown = std::move(_onShown);
+			_onShown = nullptr;
+			onShown();
+		}
+	}
+
+	void resizeEvent(QResizeEvent *event) override {
+		QWindow::resizeEvent(event);
+		paint();
+	}
+
+  private:
+	void paint() {
+		if (!isExposed()) {
+			return;
+		}
+		const auto bounds = QRect(QPoint(), size());
+		const auto region = QRegion(bounds);
+		_backingStore.resize(size());
+		_backingStore.beginPaint(region);
+		{
+			auto painter = QPainter(_backingStore.paintDevice());
+			painter.fillRect(
+				bounds, QGuiApplication::palette().color(QPalette::Window));
+			painter.drawImage(bounds, _logo);
+		}
+		_backingStore.endPaint();
+		_backingStore.flush(region, this);
+	}
+
+	QBackingStore _backingStore;
+	std::function<void()> _onShown;
+	const QImage &_logo;
+};
+#endif // Q_OS_MAC
 
 } // namespace
 
@@ -74,7 +160,7 @@ Sandbox::Sandbox(int &argc, char **argv)
 : QApplication(argc, argv)
 , _mainThreadId(QThread::currentThreadId()) {
 #ifdef Q_OS_MAC
-	Platform::CreateGlobalMenu();
+	_fontStartupTimer.start();
 #endif // Q_OS_MAC
 }
 
@@ -249,7 +335,17 @@ int Sandbox::start() {
 		return 0;
 	}
 	_started = true;
-	return exec();
+	const auto result = exec();
+#ifdef Q_OS_MAC
+	if (_closeApplicationPending) {
+		closeApplication();
+		if (qEnvironmentVariableIsSet(
+				"TDESKTOP_FONT_STARTUP_QUIT_REGRESSION")) {
+			fprintf(stderr, "Font shutdown regression: teardown=complete\n");
+		}
+	}
+#endif // Q_OS_MAC
+	return result;
 }
 
 int Sandbox::stopRunningInstance() {
@@ -341,9 +437,56 @@ void Sandbox::launchApplication() {
 				UiStallWatchdog::Settings{
 					.captureShortStalls = qEnvironmentVariableIsSet(
 						"TDESKTOP_UI_STALL_WATCHDOG_CACHE_REGRESSION"),
+					.disableRateLimit = qEnvironmentVariableIsSet(
+						"TDESKTOP_FONT_STARTUP_REGRESSION"),
 				});
 		}
 #endif // Q_OS_LINUX || Q_OS_MAC
+#ifdef Q_OS_MAC
+		if (!_fontStartupWindow) {
+			_launchAfterFontDatabaseWarmup = true;
+			_fontStartupWindow = std::make_unique<FontStartupSplash>([this] {
+				if (qEnvironmentVariableIsSet(
+						"TDESKTOP_FONT_STARTUP_REGRESSION")) {
+					const auto visible = _fontStartupWindow->isVisible()
+										 && _fontStartupWindow->isExposed();
+					fprintf(stderr,
+							"Font startup splash "
+							"regression: visible=%d "
+							"wall_ns=%lld\n",
+							visible ? 1 : 0,
+							static_cast<long long>(
+								_fontStartupTimer.nsecsElapsed()));
+				}
+				startFontDatabaseWarmup();
+			});
+			_fontStartupWindow->show();
+			QTimer::singleShot(kFontStartupSplashExposureTimeout, this, [this] {
+				if (_fontDatabaseWarmupStarted || Quitting()) {
+					return;
+				}
+				if (qEnvironmentVariableIsSet(
+						"TDESKTOP_FONT_STARTUP_REGRESSION")) {
+					fprintf(stderr,
+							"Font startup exposure timeout regression: "
+							"wall_ns=%lld\n",
+							static_cast<long long>(
+								_fontStartupTimer.nsecsElapsed()));
+				}
+				startFontDatabaseWarmup();
+			});
+			return;
+		}
+		if (!_fontDatabaseWarmupDone) {
+			_launchAfterFontDatabaseWarmup = true;
+			return;
+		}
+		if (qEnvironmentVariableIsSet("TDESKTOP_FONT_STARTUP_REGRESSION")) {
+			fprintf(stderr, "Font database warmup regression: ready=%d\n",
+					_fontDatabaseWarmupSucceeded ? 1 : 0);
+		}
+		Platform::CreateGlobalMenu();
+#endif // Q_OS_MAC
 		setupScreenScale();
 
 		rpl::single(
@@ -359,6 +502,9 @@ void Sandbox::launchApplication() {
 				: nullptr;
 		}, _lifetime);
 
+#ifdef Q_OS_MAC
+		_applicationRunActive = true;
+#endif // Q_OS_MAC
 		_application = std::make_unique<Application>();
 
 		// Ideally this should go to constructor.
@@ -368,8 +514,84 @@ void Sandbox::launchApplication() {
 		installNativeEventFilter(this);
 
 		_application->run();
+#ifdef Q_OS_MAC
+		_applicationRunActive = false;
+		if (_fontStartupWindow) {
+			_fontStartupWindow->close();
+			_fontStartupWindow.reset();
+		}
+#endif // Q_OS_MAC
 	});
 }
+
+#ifdef Q_OS_MAC
+void Sandbox::startFontDatabaseWarmup() {
+	if (_fontDatabaseWarmupStarted) {
+		return;
+	}
+	_fontDatabaseWarmupStarted = true;
+	try {
+		_fontDatabaseWarmupThread = std::thread([this] {
+			const auto openSansLoaded = style::internal::PreloadCustomFonts();
+			{
+#if QT_VERSION < QT_VERSION_CHECK(6, 0, 0)
+				const auto families = QFontDatabase().families();
+#else  // Qt < 6.0.0
+				const auto families = QFontDatabase::families();
+#endif // Qt < 6.0.0
+				Q_UNUSED(families);
+			}
+			const auto prewarmFontMetrics = [](QString family) {
+				auto font = QFont(std::move(family));
+				font.setPixelSize(16);
+				const auto metrics = QFontMetricsF(font);
+				static_cast<void>(metrics.ascent());
+				static_cast<void>(metrics.height());
+				static_cast<void>(metrics.tightBoundingRect(
+					u"bdfghijklpqtyBDFGHIJKLPQTY1234567890[]{}()"_q));
+			};
+			prewarmFontMetrics(QFont().family());
+			prewarmFontMetrics(u"Open Sans"_q);
+			if (qEnvironmentVariableIsSet("TDESKTOP_FONT_STARTUP_REGRESSION")) {
+				fprintf(stderr,
+						"Font database metrics warmup regression: ready=1\n");
+			}
+			QMetaObject::invokeMethod(
+				this,
+				[this, openSansLoaded] {
+					style::internal::SetPreloadedCustomFonts(openSansLoaded);
+					_fontDatabaseWarmupDone = true;
+					_fontDatabaseWarmupSucceeded = true;
+					if (qEnvironmentVariableIsSet(
+							"TDESKTOP_FONT_STARTUP_REGRESSION")) {
+						fprintf(stderr,
+								"Font database warmup regression: ready=1 "
+								"custom-fonts=1\n");
+					}
+					if (_launchAfterFontDatabaseWarmup && !Quitting()) {
+						_launchAfterFontDatabaseWarmup = false;
+						launchApplication();
+					}
+				},
+				Qt::QueuedConnection);
+		});
+		if (qEnvironmentVariableIsSet("TDESKTOP_FONT_STARTUP_REGRESSION")) {
+			fprintf(stderr, "Font database warmup regression: started=1\n");
+		}
+	} catch (const std::system_error &error) {
+		_fontDatabaseWarmupDone = true;
+		if (qEnvironmentVariableIsSet("TDESKTOP_FONT_STARTUP_REGRESSION")) {
+			fprintf(stderr, "Font database warmup regression: started=0\n");
+		}
+		LOG(("Font database warmup could not start: %1")
+				.arg(QString::fromLocal8Bit(error.what())));
+		if (_launchAfterFontDatabaseWarmup && !Quitting()) {
+			_launchAfterFontDatabaseWarmup = false;
+			launchApplication();
+		}
+	}
+}
+#endif // Q_OS_MAC
 
 void Sandbox::setupScreenScale() {
 	const auto ratio = devicePixelRatio();
@@ -416,6 +638,9 @@ void Sandbox::setupScreenScale() {
 
 Sandbox::~Sandbox() {
 #ifdef Q_OS_MAC
+	if (_fontDatabaseWarmupThread.joinable()) {
+		_fontDatabaseWarmupThread.join();
+	}
 	Platform::DestroyGlobalMenu();
 #endif // Q_OS_MAC
 }
@@ -874,9 +1099,27 @@ MTP::ProxyData Sandbox::sandboxProxy() const {
 }
 
 void Sandbox::closeApplication() {
-	if (CurrentLaunchState() == LaunchState::QuitProcessed) {
+#ifdef Q_OS_MAC
+	if (_applicationRunActive) {
+		_closeApplicationPending = true;
+		SetLaunchState(LaunchState::QuitProcessed);
+		if (qEnvironmentVariableIsSet(
+				"TDESKTOP_FONT_STARTUP_QUIT_REGRESSION")) {
+			fprintf(stderr, "Font shutdown regression: teardown=deferred\n");
+		}
 		return;
 	}
+#endif // Q_OS_MAC
+	if (CurrentLaunchState() == LaunchState::QuitProcessed
+#ifdef Q_OS_MAC
+		&& !_closeApplicationPending
+#endif // Q_OS_MAC
+	) {
+		return;
+	}
+#ifdef Q_OS_MAC
+	_closeApplicationPending = false;
+#endif // Q_OS_MAC
 	SetLaunchState(LaunchState::QuitProcessed);
 
 	_application = nullptr;

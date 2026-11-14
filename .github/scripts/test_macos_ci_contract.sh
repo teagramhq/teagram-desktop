@@ -22,7 +22,8 @@ for trigger in push pull_request; do
   paths="$(workflow_field .github/workflows/workflow_lint.yml ".on.$trigger.paths[]")"
   for script_path in \
     .github/scripts/test_macos_launch_smoke.py \
-    .github/scripts/extract_dwarf_subprogram_address.py; do
+    .github/scripts/extract_dwarf_subprogram_address.py \
+    .github/scripts/symbolicate_macos_minidump.py; do
     grep -Fxq -- "$script_path" <<< "$paths" \
       || contract_fail "Workflow lint must run when $script_path changes ($trigger)."
   done
@@ -520,6 +521,16 @@ fi
 if [[ "$dispatch_profile" != $'name=pr-compatible\nprotected_path_integration=ON' ]]; then
   contract_fail 'Protected-path dispatches must share the cache profile while keeping the ON integration define.'
 fi
+font_startup_profile_enabled() {
+  [[ "$1" == *'protected_path_integration=ON'* ]]
+}
+if ! font_startup_profile_enabled "$approved_pull_request_profile" \
+  || ! font_startup_profile_enabled "$dispatch_profile" \
+  || font_startup_profile_enabled "$pull_request_profile" \
+  || font_startup_profile_enabled "$push_profile" \
+  || font_startup_profile_enabled "$scheduled_profile"; then
+  contract_fail 'Font startup must run only when the build enables protected-path integration (approved PR and workflow_dispatch).'
+fi
 require_step_script "$mac_workflow" build-macos 'First set up.' \
   "TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST=OFF"
 if awk '
@@ -685,11 +696,37 @@ require_step_script "$mac_workflow" build-macos "$observer_self_tests_step" \
   'macos-regression-diagnostics/observer-self-tests' \
   'exec > >(tee "$diagnostics/harness.log") 2>&1'
 
+font_startup_step='Verify font startup regression.'
+require_step_field "$mac_workflow" build-macos "$font_startup_step" '.id' 'font-startup'
+require_step_field "$mac_workflow" build-macos "$font_startup_step" '.timeout-minutes' '5'
+require_step_field "$mac_workflow" build-macos "$font_startup_step" '.if' \
+  "\${{ !cancelled() && steps.ccache-profile.outputs.protected_path_integration == 'ON' && steps.build.outcome == 'success' }}"
+require_step_script "$mac_workflow" build-macos "$font_startup_step" \
+  'macos-regression-diagnostics/font-startup' \
+  'bash "$REPO_NAME/Telegram/build/test_mac_profile_guard.sh"' \
+  '"$executable" font-startup' \
+  'TDESKTOP_MAC_FONT_STARTUP_ALREADY_RUN=1' \
+  'tee "$evidence/font-startup-regression.log" "$diagnostics/harness.log"'
+
+font_startup_step_index="$(job_field "$mac_workflow" build-macos \
+  '.steps | to_entries[] | select(.value.id == "font-startup") | .key')"
+build_step_index="$(job_field "$mac_workflow" build-macos \
+  '.steps | to_entries[] | select(.value.id == "build") | .key')"
+cache_watchdog_step_index="$(job_field "$mac_workflow" build-macos \
+  '.steps | to_entries[] | select(.value.id == "cache-watchdog") | .key')"
+launch_smoke_step_index="$(job_field "$mac_workflow" build-macos \
+  '.steps | to_entries[] | select(.value.id == "launch-smoke") | .key')"
+if ((font_startup_step_index <= build_step_index \
+    || font_startup_step_index >= cache_watchdog_step_index \
+    || font_startup_step_index >= launch_smoke_step_index)); then
+  contract_fail "$font_startup_step must run after build and before the cache watchdog or first app launch."
+fi
+
 cache_watchdog_step='Verify cache path watchdog regression.'
 require_step_field "$mac_workflow" build-macos "$cache_watchdog_step" '.id' 'cache-watchdog'
 require_step_field "$mac_workflow" build-macos "$cache_watchdog_step" '.timeout-minutes' '5'
 require_step_field "$mac_workflow" build-macos "$cache_watchdog_step" '.if' \
-  "\${{ !cancelled() && github.event_name == 'pull_request' && steps.build.outcome == 'success' }}"
+  "\${{ !cancelled() && github.event_name == 'pull_request' && steps.build.outcome == 'success' && steps.font-startup.outcome == 'success' }}"
 require_step_script "$mac_workflow" build-macos "$cache_watchdog_step" \
   'rm -rf "$diagnostics"' \
   'state="$diagnostics/state"' \
@@ -838,6 +875,7 @@ grep -Fq 'always()' <<< "$regression_artifact_condition_compact" \
 for regression_step_id in \
   ui-stall-watchdog \
   observer-self-tests \
+  font-startup \
   cache-watchdog \
   launch-smoke \
   profile-ipc \
@@ -1050,6 +1088,18 @@ require_step_field "$mac_workflow" build-macos "$profile_step" '.if' \
 require_step_script "$mac_workflow" build-macos "$profile_step" \
   'test_mac_profile_guard.sh'
 profile_harness='Telegram/build/test_mac_profile_guard.sh'
+minidump_symbolizer='.github/scripts/symbolicate_macos_minidump.py'
+python3 "$minidump_symbolizer" --self-test
+for symbolizer_contract in \
+	symbolicate_font_startup_crash \
+	"$minidump_symbolizer" \
+	'"$dump" "$APP"'; do
+	grep -Fq "$symbolizer_contract" "$profile_harness" \
+		|| contract_fail "$profile_harness must symbolicate font startup minidumps."
+done
+if grep -Fq 'dsymutil "$APP"' "$profile_harness"; then
+	contract_fail "$profile_harness must not generate a dSYM in the timed startup fixture."
+fi
 settings_link_evidence='Settings deep link regression passed: paid and story routes'
 grep -Fq "$settings_link_evidence" \
   Telegram/SourceFiles/tests/account_lifecycle_regression.cpp \
@@ -1146,6 +1196,7 @@ done
 grep -Fq 'run_mac_lifecycle_cases.sh' "$profile_harness" \
   || contract_fail "$profile_harness must use the case runner."
 for case_name in \
+  font-startup \
   profile-ipc \
   spoiler-cache-emoji \
   spoiler-cache-spoiler \
@@ -1159,6 +1210,56 @@ for case_name in \
   grep -Fq "$case_name" "$profile_harness" \
     || contract_fail "$profile_harness must include lifecycle case $case_name."
 done
+all_first_command="$(awk '
+  /^all\)$/ { in_all = 1; next }
+  in_all {
+    line = $0
+    sub(/^[[:space:]]+/, "", line)
+    if (line == "" || line ~ /^#/) next
+    print line
+    exit
+  }
+' "$profile_harness")"
+[[ "$all_first_command" == 'run_font_startup_regression' ]] \
+  || contract_fail "$profile_harness must run the font-startup regression before any all-case app launches."
+application_source='Telegram/SourceFiles/core/application.cpp'
+emoji_init_line="$(grep -n -F 'Ui::Emoji::Init();' "$application_source" | head -n 1 | cut -d: -f1)"
+font_fallback_exit_line="$(grep -n -F \
+	'QCoreApplication::exit(RunFontFallbackRegression());' "$application_source" \
+	| head -n 1 | cut -d: -f1)"
+[[ "$emoji_init_line" =~ ^[0-9]+$ \
+	&& "$font_fallback_exit_line" =~ ^[0-9]+$ \
+	&& "$emoji_init_line" -lt "$font_fallback_exit_line" ]] \
+	|| contract_fail 'The font fallback exit must remain after Emoji initialization.'
+if ! awk '
+  /^authenticated-cache\)$/ { in_case = 1; next }
+  /^authenticated-lifecycle\)$/ { in_case = 0 }
+  in_case && /run_font_startup_regression/ { font = NR }
+  in_case && /run_authenticated_cache_regression/ { cache = NR }
+  END { exit !(font && cache && font < cache) }
+' "$profile_harness"; then
+  contract_fail "$profile_harness authenticated-cache case must run font-startup before its app launch."
+fi
+if ! awk '
+  /^void Sandbox::launchApplication\(\) \{/ { in_launch = 1 }
+  in_launch && /std::make_unique<UiStallWatchdog>/ { watchdog = NR }
+  in_launch && /if \(!_fontStartupWindow\)/ { splash = NR }
+  in_launch && /^void Sandbox::startFontDatabaseWarmup/ { in_launch = 0 }
+  END { exit !(watchdog && splash && watchdog < splash) }
+' Telegram/SourceFiles/core/sandbox.cpp; then
+  contract_fail 'The UI stall watchdog must start before the font splash.'
+fi
+if ! awk '
+  /^void Sandbox::startFontDatabaseWarmup\(\)/ { in_warmup = 1 }
+  in_warmup && /prewarmFontMetrics\(QFont\(\)\.family\(\)\)/ { system_font = NR }
+  in_warmup && /prewarmFontMetrics\(u"Open Sans"_q\)/ { bundled_font = NR }
+  in_warmup && /QFontMetricsF\(font\)/ { metrics = NR }
+  in_warmup && /QMetaObject::invokeMethod\(/ { callback = NR }
+  in_warmup && /^void Sandbox::setupScreenScale\(\)/ { in_warmup = 0 }
+  END { exit !(system_font && bundled_font && metrics && callback && system_font < callback && bundled_font < callback && metrics < callback) }
+' Telegram/SourceFiles/core/sandbox.cpp; then
+  contract_fail 'System and bundled font metrics must be prewarmed before application startup.'
+fi
 grep -Fq 'bash "$PROFILE_GUARD" "$FAKE_APP"' \
   Telegram/build/test_mac_lifecycle_case_runner.sh \
   || contract_fail 'The lifecycle runner self-test must invoke the profile harness without a case argument.'

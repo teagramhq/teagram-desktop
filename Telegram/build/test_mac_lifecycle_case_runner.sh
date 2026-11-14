@@ -184,11 +184,41 @@ cat > "$FAKE_BIN/md5" <<'EOF'
 #!/usr/bin/env bash
 python3 -c 'import hashlib, sys; print(hashlib.md5(sys.stdin.buffer.read()).hexdigest())'
 EOF
+cat > "$FAKE_BIN/sw_vers" <<'EOF'
+#!/usr/bin/env bash
+printf '15.0\n'
+EOF
 cat > "$FAKE_APP" <<'EOF'
 #!/usr/bin/env bash
+if [[ "${TDESKTOP_FONT_STARTUP_QUIT_REGRESSION:-}" == 1 ]]; then
+	printf 'Font shutdown regression: teardown=deferred\n'
+	printf 'Font shutdown regression: worker_started=1 quit_observed=1 resolver_cancelled=1 result=PASS\n'
+	printf 'Font shutdown regression: teardown=complete\n'
+	exit 0
+fi
+if [[ "${TDESKTOP_FONT_STARTUP_REGRESSION:-}" == 1 ]]; then
+	count_file="$HOME/font-startup-count"
+	if [[ -f "$count_file" ]]; then
+		wall_ns=50000000
+	else
+		wall_ns=25000000
+		printf 'started' > "$count_file"
+	fi
+	printf 'StartFonts startup regression: wall_ns=%s\n' "$wall_ns"
+	if [[ "${TDESKTOP_FONT_STARTUP_REGRESSION_SKIP_EXPOSE_CALLBACK:-}" == 1 ]]; then
+		printf 'Font startup exposure timeout regression: wall_ns=500000000\n'
+	else
+		printf 'Font startup splash regression: visible=1 wall_ns=30000000\n'
+	fi
+	printf 'Font database warmup regression: started=1\n'
+	printf 'Font database metrics warmup regression: ready=1\n'
+	printf 'Font database warmup regression: ready=1 custom-fonts=1\n'
+	printf 'Font fallback regression: emoji=Apple Color Emoji arabic=Vazirmatn UI NL wall_ns=1000000 result=PASS\n'
+	exit 0
+fi
 exit 0
 EOF
-chmod +x "$FAKE_BIN/uname" "$FAKE_BIN/md5" "$FAKE_APP"
+chmod +x "$FAKE_BIN/uname" "$FAKE_BIN/md5" "$FAKE_BIN/sw_vers" "$FAKE_APP"
 mkdir -p "$TEMP_ROOT/profile-harness"
 
 if TDESKTOP_MAC_PROFILE_TEST_TMP_BASE="$TEMP_ROOT/profile-harness" \
@@ -216,5 +246,16 @@ for case_name in \
 		exit 1
 	fi
 done
+
+font_start_line="$(grep -n -m 1 '^StartFonts cold=PASS' \
+	"$TEMP_ROOT/profile-entrypoint-output.txt" || true)"
+profile_ipc_line="$(grep -n -m 1 '^lifecycle_case=profile-ipc result=START' \
+	"$TEMP_ROOT/profile-entrypoint-output.txt" || true)"
+if [[ -z "$font_start_line" || -z "$profile_ipc_line" \
+	|| "${font_start_line%%:*}" -ge "${profile_ipc_line%%:*}" ]]; then
+	cat "$TEMP_ROOT/profile-entrypoint-output.txt" >&2
+	echo "default profile guard must run cold font startup before profile-ipc." >&2
+	exit 1
+fi
 
 printf 'mac lifecycle case runner self-test passed.\n'

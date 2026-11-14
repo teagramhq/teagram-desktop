@@ -1463,6 +1463,288 @@ fi
 printf 'authenticated_cache_regression=PASS roots=2 cache_directory_symlinks=2 cache_file_symlinks=2 cleanup_initial_symlink=1 cleanup_worker_symlink=1 download_history=PASS\n'
 }
 
+run_font_shutdown_regression() {
+	local font_home="$TEST_HOME/font-startup"
+	local shutdown_log="$TEST_HOME/font-startup-shutdown.log"
+	local font_profile_log="$font_home/Library/Application Support/Teagram/log.txt"
+	: > "$font_profile_log"
+	if ! env -u TDESKTOP_FONT_STARTUP_REGRESSION \
+		HOME="$font_home" TMPDIR="$TEST_TMP_BASE" \
+		TDESKTOP_MAC_PROFILE_TEST_HOME="$font_home" \
+		TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST=1 \
+		TDESKTOP_FONT_STARTUP_QUIT_REGRESSION=1 \
+		FONT_SHUTDOWN_TEST_MODE="${FONT_TEST_MODE:-pass}" \
+		"$APP" -noupdate -debug >"$shutdown_log" 2>&1; then
+		cat "$shutdown_log" >&2
+		if [[ -f "$font_profile_log" ]]; then
+			cat "$font_profile_log" >&2
+		fi
+		echo "font shutdown regression launch failed" >&2
+		return 1
+	fi
+	if ! grep -E -q 'Font shutdown regression: worker_started=1 quit_observed=1 resolver_cancelled=1 result=PASS' \
+		"$shutdown_log"; then
+		cat "$shutdown_log" >&2
+		echo "font shutdown regression did not observe an active worker and quit" >&2
+		return 1
+	fi
+	local deferred_position
+	deferred_position="$(grep -F -n 'Font shutdown regression: teardown=deferred' \
+		"$shutdown_log" | tail -n 1 | cut -d: -f1 || true)"
+	local resolver_position
+	resolver_position="$(grep -F -n 'Font shutdown regression: worker_started=1' \
+		"$shutdown_log" | tail -n 1 | cut -d: -f1 || true)"
+	local teardown_position
+	teardown_position="$(grep -F -n 'Font shutdown regression: teardown=complete' \
+		"$shutdown_log" | tail -n 1 | cut -d: -f1 || true)"
+	if [[ ! "$deferred_position" =~ ^[0-9]+$ ]] \
+		|| [[ ! "$resolver_position" =~ ^[0-9]+$ ]] \
+		|| [[ ! "$teardown_position" =~ ^[0-9]+$ ]] \
+		|| (( deferred_position >= resolver_position )) \
+		|| (( resolver_position >= teardown_position )); then
+		cat "$shutdown_log" >&2
+		echo "font shutdown teardown was not deferred until after resolver unwind" >&2
+		return 1
+	fi
+	printf 'Font shutdown teardown=PASS worker_active=1 order=PASS\n'
+}
+
+symbolicate_font_startup_crash() {
+	local font_home="$1"
+	local dumps_dir="$font_home/Library/Application Support/Teagram/tdata/dumps/completed"
+	local dump
+	local found=false
+	if [[ ! -d "$dumps_dir" ]]; then
+		printf 'Font startup crash report is missing: %s\n' "$dumps_dir" >&2
+		return 0
+	fi
+	for dump in "$dumps_dir"/*.dmp; do
+		[[ -f "$dump" ]] || continue
+		found=true
+		break
+	done
+	if [[ "$found" != true ]]; then
+		printf 'Font startup crash report is missing under: %s\n' "$dumps_dir" >&2
+		return 0
+	fi
+	for dump in "$dumps_dir"/*.dmp; do
+		[[ -f "$dump" ]] || continue
+		python3 "$REPO_ROOT/.github/scripts/symbolicate_macos_minidump.py" \
+			"$dump" "$APP" || {
+			printf 'Could not symbolicate font startup crash report: %s\n' \
+				"$dump" >&2
+		}
+	done
+}
+
+run_font_startup_regression() {
+	local font_home="$TEST_HOME/font-startup"
+	local font_profile_log="$font_home/Library/Application Support/Teagram/log.txt"
+	local expected_fallback='Font fallback regression: emoji=\.?Apple Color Emoji( UI)? arabic=Vazirmatn UI NL wall_ns=[0-9]+ result=PASS'
+	local cold_wall_ns=""
+	local warm_wall_ns=""
+	mkdir -p "$font_home"
+	for sample in cold warm; do
+		if [[ "$sample" == warm && -f "$font_profile_log" ]]; then
+			: > "$font_profile_log"
+		fi
+		local sample_log="$TEST_HOME/font-startup-$sample.log"
+		local launch_status=0
+		if env HOME="$font_home" TMPDIR="$TEST_TMP_BASE" \
+			TDESKTOP_MAC_PROFILE_TEST_HOME="$font_home" \
+			TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST=1 \
+			TDESKTOP_FONT_STARTUP_REGRESSION=1 \
+			"$APP" -noupdate -debug >"$sample_log" 2>&1; then
+			:
+		else
+			launch_status=$?
+		fi
+		if (( launch_status != 0 )); then
+			cat "$sample_log" >&2
+			if [[ -f "$font_profile_log" ]]; then
+				cat "$font_profile_log" >&2
+			fi
+			symbolicate_font_startup_crash "$font_home"
+			printf 'font startup regression launch failed: sample=%s exit_status=%s\n' \
+				"$sample" "$launch_status" >&2
+			return 1
+		fi
+		local splash_timing
+		splash_timing="$(grep -E 'Font startup splash regression: visible=1 wall_ns=[0-9]+' \
+			"$sample_log" 2>/dev/null | tail -n 1 || true)"
+		local splash_wall_ns
+		splash_wall_ns="$(sed -E 's/.*wall_ns=([0-9]+).*/\1/' <<<"$splash_timing")"
+		local startup_splash_position
+		if [[ "$splash_wall_ns" =~ ^[0-9]+$ ]]; then
+			printf 'Font startup splash=PASS sample=%s visible=1 wall_ns=%s\n' \
+				"$sample" "$splash_wall_ns"
+			startup_splash_position="$(grep -F -n -h 'Font startup splash regression: visible=1' \
+				"$sample_log" | tail -n 1 | cut -d: -f1)"
+		else
+			local exposure_timeout
+			exposure_timeout="$(grep -E 'Font startup exposure timeout regression: wall_ns=[0-9]+' \
+				"$sample_log" 2>/dev/null | tail -n 1 || true)"
+			local exposure_timeout_wall_ns
+			exposure_timeout_wall_ns="$(sed -E 's/.*wall_ns=([0-9]+).*/\1/' <<<"$exposure_timeout")"
+			if [[ ! "$exposure_timeout_wall_ns" =~ ^[0-9]+$ ]] \
+				|| (( exposure_timeout_wall_ns >= 2000000000 )); then
+				cat "$sample_log" >&2
+				printf 'Font startup splash evidence missing or exposure fallback exceeded 2s: %s\n' \
+					"$sample" >&2
+				return 1
+			fi
+			printf 'Font database warmup fallback=PASS sample=%s wall_ns=%s\n' \
+				"$sample" "$exposure_timeout_wall_ns"
+			startup_splash_position="$(grep -F -n -h 'Font startup exposure timeout regression:' \
+				"$sample_log" | tail -n 1 | cut -d: -f1)"
+		fi
+		local warmup_started_position
+		warmup_started_position="$(grep -F -n -h 'Font database warmup regression: started=1' \
+			"$sample_log" | tail -n 1 | cut -d: -f1)"
+		if [[ ! "$startup_splash_position" =~ ^[0-9]+$ ]] \
+			|| [[ ! "$warmup_started_position" =~ ^[0-9]+$ ]] \
+			|| (( warmup_started_position <= startup_splash_position )); then
+			cat "$sample_log" >&2
+			printf 'font database warmup started before splash exposure or timeout: %s\n' \
+				"$sample" >&2
+			return 1
+		fi
+		printf 'Font database warmup order=PASS sample=%s\n' "$sample"
+		local warmup
+		warmup="$(grep -F 'Font database warmup regression: ready=1' \
+			"$sample_log" "$font_profile_log" 2>/dev/null | tail -n 1 || true)"
+		if [[ -z "$warmup" ]]; then
+			cat "$sample_log" >&2
+			if [[ -f "$font_profile_log" ]]; then
+				cat "$font_profile_log" >&2
+			fi
+			echo "font database warmup did not finish before app initialization: $sample" >&2
+			return 1
+		fi
+		printf 'Font database warmup before app run=PASS sample=%s\n' "$sample"
+		if ! grep -F -q 'Font database metrics warmup regression: ready=1' \
+			"$sample_log"; then
+			cat "$sample_log" >&2
+			echo "font metrics were not prewarmed off the UI thread: $sample" >&2
+			return 1
+		fi
+		if ! grep -F -q 'Font database warmup regression: ready=1 custom-fonts=1' \
+			"$sample_log" "$font_profile_log" 2>/dev/null; then
+			cat "$sample_log" >&2
+			if [[ -f "$font_profile_log" ]]; then
+				cat "$font_profile_log" >&2
+			fi
+			echo "bundled fonts were not preloaded before app initialization: $sample" >&2
+			return 1
+		fi
+		local stalls
+		stalls="$(grep -E 'UI stall [0-9]+ ms.*(QFont|QRawFont|CTFont|CoreText|populateFromDescriptor)' \
+			"$sample_log" "$font_profile_log" 2>/dev/null || true)"
+		if [[ -n "$stalls" ]]; then
+			cat "$sample_log" >&2
+			if [[ -f "$font_profile_log" ]]; then
+				cat "$font_profile_log" >&2
+			fi
+			printf 'Font-code startup %s produced a main-thread stall: %s\n' \
+				"$sample" "$stalls" >&2
+			return 1
+		fi
+		printf 'Font-code startup stall gate=PASS sample=%s\n' "$sample"
+		local timing
+		timing="$(grep -E 'StartFonts startup regression: wall_ns=[0-9]+' \
+			"$sample_log" "$font_profile_log" 2>/dev/null | tail -n 1 || true)"
+		local wall_ns
+		wall_ns="$(sed -E 's/.*wall_ns=([0-9]+).*/\1/' <<<"$timing")"
+		if [[ ! "$wall_ns" =~ ^[0-9]+$ ]] || (( wall_ns >= 100000000 )); then
+			cat "$sample_log" >&2
+			if [[ -f "$font_profile_log" ]]; then
+				cat "$font_profile_log" >&2
+			fi
+			printf 'StartFonts %s exceeded the 100ms budget or had no timing: %s\n' \
+				"$sample" "$timing" >&2
+			return 1
+		fi
+		if ! grep -E -q "$expected_fallback" "$sample_log" "$font_profile_log" 2>/dev/null; then
+			cat "$sample_log" >&2
+			if [[ -f "$font_profile_log" ]]; then
+				cat "$font_profile_log" >&2
+			fi
+			echo "font fallback regression evidence missing or changed." >&2
+			return 1
+		fi
+		printf 'StartFonts %s=PASS wall_ns=%s under_100ms=1\n' "$sample" "$wall_ns"
+		if [[ "$sample" == cold ]]; then
+			cold_wall_ns="$wall_ns"
+		else
+			warm_wall_ns="$wall_ns"
+		fi
+	done
+	local exposure_timeout_log="$TEST_HOME/font-startup-exposure-timeout.log"
+	mkdir -p "$(dirname "$font_profile_log")"
+	: > "$font_profile_log"
+	if ! env HOME="$font_home" TMPDIR="$TEST_TMP_BASE" \
+		TDESKTOP_MAC_PROFILE_TEST_HOME="$font_home" \
+		TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST=1 \
+		TDESKTOP_FONT_STARTUP_REGRESSION=1 \
+		TDESKTOP_FONT_STARTUP_REGRESSION_SKIP_EXPOSE_CALLBACK=1 \
+		"$APP" -noupdate -debug >"$exposure_timeout_log" 2>&1; then
+		cat "$exposure_timeout_log" >&2
+		if [[ -f "$font_profile_log" ]]; then
+			cat "$font_profile_log" >&2
+		fi
+		symbolicate_font_startup_crash "$font_home"
+		echo "font startup exposure-timeout regression launch failed" >&2
+		return 1
+	fi
+	local exposure_timeout
+	exposure_timeout="$(grep -E 'Font startup exposure timeout regression: wall_ns=[0-9]+' \
+		"$exposure_timeout_log" 2>/dev/null | tail -n 1 || true)"
+	local exposure_timeout_wall_ns
+	exposure_timeout_wall_ns="$(sed -E 's/.*wall_ns=([0-9]+).*/\1/' <<<"$exposure_timeout")"
+	if [[ ! "$exposure_timeout_wall_ns" =~ ^[0-9]+$ ]] \
+		|| (( exposure_timeout_wall_ns >= 2000000000 )); then
+		cat "$exposure_timeout_log" >&2
+		printf 'font startup exposure fallback missing or exceeded 2s: %s\n' \
+			"$exposure_timeout" >&2
+		return 1
+	fi
+	local timeout_position
+	timeout_position="$(grep -F -n -h 'Font startup exposure timeout regression:' \
+		"$exposure_timeout_log" | tail -n 1 | cut -d: -f1)"
+	local warmup_started_position
+	warmup_started_position="$(grep -F -n -h 'Font database warmup regression: started=1' \
+		"$exposure_timeout_log" | tail -n 1 | cut -d: -f1)"
+	if [[ ! "$timeout_position" =~ ^[0-9]+$ ]] \
+		|| [[ ! "$warmup_started_position" =~ ^[0-9]+$ ]] \
+		|| (( warmup_started_position <= timeout_position )); then
+		cat "$exposure_timeout_log" >&2
+		echo "font database warmup did not start after the exposure timeout" >&2
+		return 1
+	fi
+	if ! grep -F -q 'Font database warmup regression: ready=1 custom-fonts=1' \
+		"$exposure_timeout_log" "$font_profile_log" 2>/dev/null \
+		|| ! grep -E -q 'StartFonts startup regression: wall_ns=[0-9]+' \
+			"$exposure_timeout_log" "$font_profile_log" 2>/dev/null; then
+		cat "$exposure_timeout_log" >&2
+		if [[ -f "$font_profile_log" ]]; then
+			cat "$font_profile_log" >&2
+		fi
+		echo "font startup did not continue after the exposure timeout" >&2
+		return 1
+	fi
+	if ! grep -F -q 'Font database metrics warmup regression: ready=1' \
+		"$exposure_timeout_log"; then
+		cat "$exposure_timeout_log" >&2
+		echo 'font metrics were not prewarmed after the exposure timeout' >&2
+		return 1
+	fi
+	printf 'Font database warmup fallback=PASS sample=occluded wall_ns=%s\n' \
+		"$exposure_timeout_wall_ns"
+	printf 'StartFonts startup regression: cold_wall_ns=%s warm_wall_ns=%s fallback=PASS font_stall_gate=PASS\n' \
+		"$cold_wall_ns" "$warm_wall_ns"
+	run_font_shutdown_regression
+}
+
 run_authenticated_lifecycle_regression() {
 local AUTH_HOME="$TEST_HOME/authenticated-lifecycle-regression"
 local AUTH_LOG="$TEST_HOME/authenticated-lifecycle-regression.log"
@@ -1826,6 +2108,8 @@ run_authenticated_folder_fault_case() {
 
 case "$CASE_NAME" in
 all)
+	run_font_startup_regression
+	export TDESKTOP_MAC_FONT_STARTUP_ALREADY_RUN=1
 	lifecycle_cases=(
 		profile-ipc
 		spoiler-cache-emoji
@@ -1860,7 +2144,13 @@ spoiler-cache-text)
 spoiler-cache-image)
 	run_spoiler_cache_symlink_case image-cache-leaf-symlink image
 	;;
+font-startup)
+	run_font_startup_regression
+	;;
 authenticated-cache)
+	if [[ "${TDESKTOP_MAC_FONT_STARTUP_ALREADY_RUN:-0}" != 1 ]]; then
+		run_font_startup_regression
+	fi
 	run_authenticated_cache_regression
 	;;
 authenticated-lifecycle)

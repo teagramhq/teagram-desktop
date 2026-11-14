@@ -83,6 +83,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/widgets/tooltip.h"
 #include "ui/gl/gl_detection.h"
 #include "ui/text/text_options.h"
+#include "ui/style/style_core_font.h"
 #include "ui/effects/spoiler_mess.h"
 #include "ui/cached_round_corners.h"
 #include "ui/power_saving.h"
@@ -105,8 +106,10 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/cached_webview_availability.h"
 #include "test/test_agent.h"
 #include "tests/signup_controls_regression.h"
+#include "tests/font_startup_regression.h"
 #include "tests/account_lifecycle_regression.h"
 
+#include <QtCore/QElapsedTimer>
 #include <QtCore/QStandardPaths>
 #include <QtCore/QMimeDatabase>
 #include <QtGui/QGuiApplication>
@@ -295,9 +298,14 @@ void Application::run() {
 		= qEnvironmentVariableIsSet("TDESKTOP_CUSTOM_EMOJI_UI_SMOKE");
 	const auto desktopScaleCheck
 		= qEnvironmentVariableIsSet("TDESKTOP_DESKTOP_SCALE_CHECK");
+	const auto fontStartupRegression
+		= qEnvironmentVariableIsSet("TDESKTOP_FONT_STARTUP_REGRESSION");
+	const auto fontShutdownRegression
+		= qEnvironmentVariableIsSet("TDESKTOP_FONT_STARTUP_QUIT_REGRESSION");
 	const auto headlessRegression
 		= qEnvironmentVariableIsSet("TDESKTOP_SIGNUP_UI_REGRESSION")
-		  || authLifecycleRegression || customEmojiUiSmoke || desktopScaleCheck;
+		  || authLifecycleRegression || customEmojiUiSmoke || desktopScaleCheck
+		  || fontStartupRegression || fontShutdownRegression;
 	const auto windowedApplication = !headlessRegression
 									 || authLifecycleRegression
 									 || customEmojiUiSmoke || desktopScaleCheck;
@@ -319,7 +327,19 @@ void Application::run() {
 	startLocalStorage();
 
 	style::SetCustomFont(settings().customFontFamily());
+#if defined(TDESKTOP_LIFECYCLE_REGRESSION)
+	auto startFontsTimer = QElapsedTimer();
+	if (fontStartupRegression) {
+		startFontsTimer.start();
+	}
+#endif // TDESKTOP_LIFECYCLE_REGRESSION
 	style::internal::StartFonts();
+#if defined(TDESKTOP_LIFECYCLE_REGRESSION)
+	if (fontStartupRegression) {
+		LOG(("StartFonts startup regression: wall_ns=%1")
+				.arg(startFontsTimer.nsecsElapsed()));
+	}
+#endif // TDESKTOP_LIFECYCLE_REGRESSION
 
 	Test::ApplyStartupOverrides();
 
@@ -345,12 +365,38 @@ void Application::run() {
 	_translator = std::make_unique<Lang::Translator>();
 	QCoreApplication::instance()->installTranslator(_translator.get());
 
+#if defined(Q_OS_MAC)
+	style::internal::SetShapedMetricsDeferred(true);
+#endif // Q_OS_MAC
 	style::StartManager(cScale());
+#if defined(Q_OS_MAC)
+#if defined(TDESKTOP_LIFECYCLE_REGRESSION)
+	if (fontShutdownRegression) {
+		const auto passed = RunFontShutdownRegression();
+		if (!passed) {
+			LOG(("Font shutdown regression failed."));
+		}
+		return;
+	}
+#endif // TDESKTOP_LIFECYCLE_REGRESSION
+	const auto resolved = style::internal::ResolveDeferredShapedMetrics();
+	if (!resolved) {
+		return;
+	}
+#endif // Q_OS_MAC
+
 	Ui::Accessible::Init();
 	Ui::InitUsernameInputAccessibility();
 	Ui::InitTextOptions();
 	Ui::StartCachedCorners();
 	Ui::Emoji::Init();
+
+#if defined(TDESKTOP_LIFECYCLE_REGRESSION)
+	if (fontStartupRegression) {
+		QCoreApplication::exit(RunFontFallbackRegression());
+		return;
+	}
+#endif // TDESKTOP_LIFECYCLE_REGRESSION
 
 	auto regressionResult = 0;
 

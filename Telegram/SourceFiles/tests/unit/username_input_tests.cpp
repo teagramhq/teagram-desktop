@@ -18,15 +18,28 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include <QtCore/QCoreApplication>
 #include <QtCore/QResource>
+#include <QtCore/QTimer>
 #include <QtGui/QAccessible>
 #include <QtGui/QClipboard>
+#include <QtGui/QFontMetrics>
 #include <QtGui/QKeyEvent>
 #include <QtGui/QKeySequence>
+#include <QtGui/QRawFont>
 #include <QtWidgets/QApplication>
 
+#include <cmath>
 #include <memory>
 #include <utility>
 #include <vector>
+
+namespace style::internal::testing {
+
+[[nodiscard]] bool
+ResolveDeferredShapedMetricsWithTestHooks(int workerStartFailures, bool cancel,
+										  int retryDelay,
+										  int *workerStartAttempts);
+
+} // namespace style::internal::testing
 
 namespace {
 
@@ -95,6 +108,127 @@ class UsernameInputFixture final {
 };
 
 } // namespace
+
+TEST_CASE(UsernameFontCachedWidthsMatchShapedMetrics) {
+	const auto application
+		= qobject_cast<QApplication *>(QCoreApplication::instance());
+	CHECK(application != nullptr);
+	if (!application) {
+		return;
+	}
+
+	auto fixture = UsernameInputFixture();
+	const auto font = st::defaultInputField.style.font;
+	CHECK(bool(font));
+	if (!font) {
+		return;
+	}
+
+	const auto &metrics = font->metrics();
+	CHECK_EQ(font->spacew, int(std::ceil(metrics.horizontalAdvance(u" "_q))));
+	CHECK_EQ(font->elidew, int(std::ceil(metrics.horizontalAdvance(u"..."_q))));
+}
+
+TEST_CASE(RawFontFixedWidthRejectsMissingGlyphs) {
+	const auto application
+		= qobject_cast<QApplication *>(QCoreApplication::instance());
+	CHECK(application != nullptr);
+	if (!application) {
+		return;
+	}
+
+	auto fixture = UsernameInputFixture();
+	const auto font = QFont(u"Open Sans"_q);
+	const auto raw = QRawFont::fromFont(font);
+	CHECK(raw.isValid());
+	CHECK(!raw.supportsCharacter(QChar(0xFFFF)));
+	const auto missing = QString(1, QChar(0xFFFF));
+	CHECK(!style::internal::KernedRawWidth(raw, missing).has_value());
+	const auto metrics = QFontMetricsF(font);
+	CHECK_EQ(style::internal::FixedMetricWidth(font, missing),
+			 int(std::ceil(metrics.horizontalAdvance(missing))));
+}
+
+TEST_CASE(CustomGposWidthsStayShapedAfterWorkerRetries) {
+	const auto application
+		= qobject_cast<QApplication *>(QCoreApplication::instance());
+	CHECK(application != nullptr);
+	if (!application) {
+		return;
+	}
+
+	auto fixture = UsernameInputFixture();
+	const auto font = QFont(u"Vazirmatn UI NL"_q);
+	const auto raw = QRawFont::fromFont(font);
+	CHECK(raw.isValid());
+	CHECK(!raw.fontTable("GPOS").isEmpty());
+	CHECK(!style::internal::RawFixedMetricWidth(font, u"..."_q).has_value());
+
+	auto eventProcessed = false;
+	auto workerStartAttempts = 0;
+	style::internal::SetShapedMetricsDeferred(true);
+	auto owned = style::internal::OwnedFont(u"Vazirmatn UI NL"_q, 0, 16);
+	CHECK_EQ(owned->spacew, 0);
+	CHECK_EQ(owned->elidew, 0);
+	QTimer::singleShot(1, [&] { eventProcessed = true; });
+	CHECK(style::internal::testing::ResolveDeferredShapedMetricsWithTestHooks(
+		2, false, 1, &workerStartAttempts));
+	style::internal::SetShapedMetricsDeferred(false);
+
+	CHECK(eventProcessed);
+	CHECK_EQ(workerStartAttempts, 3);
+	const auto &metrics = owned->metrics();
+	CHECK_EQ(owned->spacew, int(std::ceil(metrics.horizontalAdvance(u" "_q))));
+	CHECK_EQ(owned->elidew,
+			 int(std::ceil(metrics.horizontalAdvance(u"..."_q))));
+}
+
+TEST_CASE(DeferredMetricsWorkerStartRetriesAreBounded) {
+	const auto application
+		= qobject_cast<QApplication *>(QCoreApplication::instance());
+	CHECK(application != nullptr);
+	if (!application) {
+		return;
+	}
+
+	auto fixture = UsernameInputFixture();
+	auto workerStartAttempts = 0;
+	style::internal::SetShapedMetricsDeferred(true);
+	auto owned = style::internal::OwnedFont(u"Vazirmatn UI NL"_q, 0, 16);
+	CHECK_EQ(owned->spacew, 0);
+	CHECK_EQ(owned->elidew, 0);
+	CHECK(style::internal::testing::ResolveDeferredShapedMetricsWithTestHooks(
+		100, false, 1, &workerStartAttempts));
+	style::internal::SetShapedMetricsDeferred(false);
+
+	CHECK_EQ(workerStartAttempts, 20);
+	const auto &metrics = owned->metrics();
+	CHECK_EQ(owned->spacew, int(std::ceil(metrics.horizontalAdvance(u" "_q))));
+	CHECK_EQ(owned->elidew,
+			 int(std::ceil(metrics.horizontalAdvance(u"..."_q))));
+}
+
+TEST_CASE(DeferredMetricsCancellationWithoutWorkerReturnsCleanly) {
+	const auto application
+		= qobject_cast<QApplication *>(QCoreApplication::instance());
+	CHECK(application != nullptr);
+	if (!application) {
+		return;
+	}
+
+	auto fixture = UsernameInputFixture();
+	auto workerStartAttempts = 0;
+	style::internal::SetShapedMetricsDeferred(true);
+	auto owned = style::internal::OwnedFont(u"Vazirmatn UI NL"_q, 0, 16);
+	CHECK_EQ(owned->spacew, 0);
+	const auto resolved
+		= style::internal::testing::ResolveDeferredShapedMetricsWithTestHooks(
+			100, true, 100, &workerStartAttempts);
+	style::internal::SetShapedMetricsDeferred(false);
+
+	CHECK(!resolved);
+	CHECK_EQ(workerStartAttempts, 1);
+}
 
 TEST_CASE(UsernameInputStandaloneEventDispatch) {
 	const auto application

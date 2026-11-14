@@ -438,3 +438,52 @@ TEST_CASE(UiStallWatchdogCountsButDoesNotLogMidThresholdStall) {
 	CHECK_EQ(Core::UiStallWatchdog::StallCount(), before + 1);
 	CHECK(lines.empty());
 }
+
+TEST_CASE(UiStallWatchdogLogsShorterStallAfterLonger) {
+	auto lines = std::vector<QString>();
+	auto mutex = std::mutex();
+	auto logged = std::atomic_bool(false);
+	auto blockActive = std::atomic_bool(false);
+	const auto before = Core::UiStallWatchdog::StallCount();
+	{
+		auto loop = QEventLoop();
+		auto watchdog = Core::UiStallWatchdog(
+			[&](const QString &line, bool update) {
+				const auto lock = std::lock_guard(mutex);
+				if (update) {
+					if (!lines.empty()) {
+						lines.back() = line;
+					}
+				} else {
+					lines.push_back(line);
+				}
+				if (blockActive.load(std::memory_order_acquire)) {
+					logged.store(true, std::memory_order_release);
+				}
+			},
+			{.disableRateLimit = true});
+		auto blockFilter = UiStallWatchdogTestBlockFilter(
+			std::vector<std::chrono::milliseconds>{
+				std::chrono::milliseconds(500),
+				std::chrono::milliseconds(150),
+			},
+			&loop, &logged, &blockActive);
+		watchdog.installEventFilter(&blockFilter);
+		QTimer::singleShot(8000, &loop, &QEventLoop::quit);
+		loop.exec();
+		CHECK_EQ(blockFilter.BlocksCompleted(), 2);
+		CHECK(blockFilter.LoggedWhileBlocked());
+	}
+	CHECK_EQ(Core::UiStallWatchdog::StallCount(), before + 2);
+	const auto lock = std::lock_guard(mutex);
+	CHECK_EQ(int(lines.size()), 2);
+	if (lines.size() == 2) {
+		const auto first
+			= lines[0].mid(u"UI stall "_q.size()).section(u' ', 0, 0).toInt();
+		const auto second
+			= lines[1].mid(u"UI stall "_q.size()).section(u' ', 0, 0).toInt();
+		CHECK(first >= 450);
+		CHECK(second >= 100);
+		CHECK(second < first);
+	}
+}
