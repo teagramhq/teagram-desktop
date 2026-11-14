@@ -287,9 +287,10 @@ class AccountLifecycleRegressionAccess {
 		}
 		auto result = MTP::ServerDiscoveryResult();
 		result.status = MTP::ServerDiscoveryResponseStatus::Valid;
-		result.endpoint = QString::fromStdString(
-							  (pin.hostname.empty() ? pin.ip : pin.hostname))
-						  + u":"_q + QString::number(pin.port);
+		const auto host = QString::fromStdString(
+			pin.hostname.empty() ? pin.ip : pin.hostname);
+		const auto endpointHost = pin.ipv6 ? (u"["_q + host + u"]"_q) : host;
+		result.endpoint = endpointHost + u":"_q + QString::number(pin.port);
 		result.webSocketEndpoint
 			= QString::fromStdString(pin.webSocketEndpoint);
 		result.webSocketOnly = pin.webSocketOnly;
