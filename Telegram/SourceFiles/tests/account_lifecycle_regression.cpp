@@ -12531,14 +12531,14 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		const auto normalLayoutReached = WaitForRegressionCondition(
 			[&] {
 				return !controller->adaptive().isChatWide()
-					&& !firstHistory->layoutChatWideForRegressionTest();
+					   && !firstHistory->layoutChatWideForRegressionTest();
 			},
 			1500);
 		const auto requiredWindowWidth
 			= st::adaptiveChatWideWidth + st::columnMaximalWidthLeft + 40;
 		if (mainWindowWidget->width() < requiredWindowWidth) {
 			mainWindowWidget->resize(requiredWindowWidth,
-				originalWindowSize.height());
+									 originalWindowSize.height());
 			QCoreApplication::processEvents();
 		}
 		Core::App().settings().setAdaptiveForWide(true);
@@ -12547,14 +12547,13 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		const auto wideLayoutReached = WaitForRegressionCondition(
 			[&] {
 				return controller->adaptive().isChatWide()
-					&& firstHistory->layoutChatWideForRegressionTest();
+					   && firstHistory->layoutChatWideForRegressionTest();
 			},
 			1500);
 		const auto layoutWidth = firstHistory->layoutWidthForRegressionTest();
-		result.historyChatModeInitiallyWide = normalLayoutReached
-			&& (layoutWidth > 0)
-			&& wideLayoutReached
-			&& firstHistory->layoutChatWideForRegressionTest();
+		result.historyChatModeInitiallyWide
+			= normalLayoutReached && (layoutWidth > 0) && wideLayoutReached
+			  && firstHistory->layoutChatWideForRegressionTest();
 		result.historyChatModeResizeCountBefore
 			= firstHistory->layoutFullResizeCountForRegressionTest();
 		controller->showPeerHistory(secondHistory);
