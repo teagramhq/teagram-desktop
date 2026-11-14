@@ -11684,6 +11684,7 @@ struct CacheChatSwitchRegressionResult final {
 	bool attachMenuCacheBounded = false;
 	bool pendingRevealStartedAfterControlsGeometry = false;
 	bool fieldAutocompleteSuggestionsReady = false;
+	bool menuCommandsShownWhileFieldUnfocused = false;
 	bool botCommandsShownWhileFieldUnfocused = false;
 	bool attachMenuUncachedPeersReady = false;
 	bool chatSwitchWorkWithinBudget = false;
@@ -11867,6 +11868,15 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		   == secondHistory->peer.get());
 	const auto autocompleteFocusedAfterFocus
 		= historyWidget->fieldFocusedForRegressionTest();
+	historyWidget->setDraftTextForRegressionTest(u"@"_q);
+	result.fieldAutocompleteSuggestionsReady = WaitForRegressionCondition(
+		[&] {
+			return historyWidget
+				->fieldAutocompleteSuggestionsReadyForRegressionTest();
+		},
+		1000);
+	historyWidget->setDraftTextForRegressionTest(QString());
+	historyWidget->hideFieldAutocompleteForRegressionTest();
 	const auto tabbedPanelBuildsBeforeSwitch
 		= historyWidget->tabbedPanelBuildCountForRegressionTest();
 	showPeerHistoryMeasured(firstHistory);
@@ -11965,7 +11975,7 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 							  ->fieldAutocompleteSuggestionsReadyForRegressionTest();
 					  },
 					  1000);
-			result.fieldAutocompleteSuggestionsReady = menuCommandsShown;
+			result.menuCommandsShownWhileFieldUnfocused = menuCommandsShown;
 			historyWidget->hideFieldAutocompleteForRegressionTest();
 			historyWidget->setDraftTextForRegressionTest(QString());
 			auto revealProbeItem = commandBotHistory->lastMessage();
@@ -12014,7 +12024,8 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 					  },
 					  1000);
 			result.botCommandsShownWhileFieldUnfocused
-				= menuAutocompleteWasDeferred && menuCommandsShown
+				= menuAutocompleteWasDeferred
+				  && result.menuCommandsShownWhileFieldUnfocused
 				  && commandAutocompleteWasDeferred && startCommandsShown;
 			historyWidget->hideFieldAutocompleteForRegressionTest();
 			historyWidget->setDraftTextForRegressionTest(QString());
@@ -12512,16 +12523,38 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		originalChatLayoutCaptured = true;
 	}
 	if (originalChatLayoutCaptured) {
+		auto *mainWindowWidget = window->widget();
+		const auto originalWindowSize = mainWindowWidget->size();
+		Core::App().settings().setAdaptiveForWide(false);
+		controller->adaptive().setChatLayout(
+			Window::Adaptive::ChatLayout::Normal);
+		const auto normalLayoutReached = WaitForRegressionCondition(
+			[&] {
+				return !controller->adaptive().isChatWide()
+					&& !firstHistory->layoutChatWideForRegressionTest();
+			},
+			1500);
+		const auto requiredWindowWidth
+			= st::adaptiveChatWideWidth + st::columnMaximalWidthLeft + 40;
+		if (mainWindowWidget->width() < requiredWindowWidth) {
+			mainWindowWidget->resize(requiredWindowWidth,
+				originalWindowSize.height());
+			QCoreApplication::processEvents();
+		}
 		Core::App().settings().setAdaptiveForWide(true);
 		controller->adaptive().setChatLayout(
 			Window::Adaptive::ChatLayout::Wide);
+		const auto wideLayoutReached = WaitForRegressionCondition(
+			[&] {
+				return controller->adaptive().isChatWide()
+					&& firstHistory->layoutChatWideForRegressionTest();
+			},
+			1500);
 		const auto layoutWidth = firstHistory->layoutWidthForRegressionTest();
-		if (layoutWidth > 0 && controller->adaptive().isChatWide()) {
-			firstHistory->resizeToWidth(layoutWidth, true);
-		}
-		result.historyChatModeInitiallyWide
-			= (layoutWidth > 0) && controller->adaptive().isChatWide()
-			  && firstHistory->layoutChatWideForRegressionTest();
+		result.historyChatModeInitiallyWide = normalLayoutReached
+			&& (layoutWidth > 0)
+			&& wideLayoutReached
+			&& firstHistory->layoutChatWideForRegressionTest();
 		result.historyChatModeResizeCountBefore
 			= firstHistory->layoutFullResizeCountForRegressionTest();
 		controller->showPeerHistory(secondHistory);
@@ -12569,6 +12602,7 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 				  > result.historyChatModeResizeCountBefore);
 		Core::App().settings().setAdaptiveForWide(originalAdaptiveForWide);
 		controller->adaptive().setChatLayout(originalChatLayout);
+		mainWindowWidget->resize(originalWindowSize);
 		QCoreApplication::processEvents();
 	}
 	auto chatSwitchSchedulerTimeline
@@ -13834,6 +13868,7 @@ void RunAuthenticatedCacheSymlinkCases(
 					"pending_reveal_after_controls_geometry=%d "
 					"chat_switch_compose_ui_reused=%d "
 					"field_autocomplete_suggestions_ready=%d "
+					"menu_commands_unfocused=%d "
 					"bot_commands_unfocused=%d "
 					"history_chat_mode_invalidation_rebuilt=%d "
 					"dialog_histories_ready=%d "
@@ -13899,6 +13934,7 @@ void RunAuthenticatedCacheSymlinkCases(
 					chatSwitch.pendingRevealStartedAfterControlsGeometry,
 					chatSwitch.chatSwitchComposeUiReused,
 					chatSwitch.fieldAutocompleteSuggestionsReady,
+					chatSwitch.menuCommandsShownWhileFieldUnfocused,
 					chatSwitch.botCommandsShownWhileFieldUnfocused,
 					chatSwitch.historyChatModeInvalidationRebuilt,
 					chatSwitch.dialogHistoriesReady,
