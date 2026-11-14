@@ -6916,7 +6916,7 @@ bool HistoryWidget::clickBotMenuForRegressionTest() {
 }
 
 bool HistoryWidget::clickBotCommandStartForRegressionTest() {
-	if (_field->hasFocus()) {
+	if (_field->hasFocus() || _botCommandStart->isHidden()) {
 		return false;
 	}
 	_botCommandStart->clicked(Qt::NoModifier, Qt::LeftButton);

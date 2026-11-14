@@ -3588,6 +3588,21 @@ RegressionStockChatFullReply(ChatId chatId, int version, QString selfPhone,
 					MTPlong(), MTPlong(), MTPlong());
 }
 
+[[nodiscard]] MTPMessage RegressionPlainTextMessage(int id, PeerId sender,
+													PeerId peer, QString text) {
+	return MTP_message(
+		MTP_flags(MTPDmessage::Flag::f_from_id | MTPDmessage::Flag::f_out),
+		MTP_int(id), peerToMTP(sender), MTPint(), MTPstring(), peerToMTP(peer),
+		MTPPeer(), MTPMessageFwdHeader(), MTP_long(0), MTPlong(), MTPPeer(),
+		MTPMessageReplyHeader(), MTP_int(1), MTP_string(std::move(text)),
+		MTP_messageMediaEmpty(), MTPReplyMarkup(),
+		MTP_vector<MTPMessageEntity>(), MTP_int(0), MTP_int(0),
+		MTPMessageReplies(), MTP_int(0), MTPstring(), MTPlong(),
+		MTPMessageReactions(), MTPVector<MTPRestrictionReason>(), MTP_int(0),
+		MTPint(), MTPlong(), MTPFactCheck(), MTPint(), MTPlong(),
+		MTPSuggestedPost(), MTPint(), MTPstring(), MTPRichMessage());
+}
+
 // A username open on the session that owns it, taken session by session so
 // that no reference can outlive the session it was bound to.
 [[nodiscard]] bool
@@ -11626,12 +11641,23 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 			.command = u"help"_q,
 			.description = u"Show help"_q,
 		});
+		emptyFirstHistory->peer->asChat()->participants.emplace(commandBot);
+		emptyFirstHistory->peer->asChat()->setBotCommands({
+			{commandBotId, commandBot->botInfo->commands},
+		});
+		const auto commandBotHistory = data.history(commandBot);
+		const auto startedBotMessage = data.addNewMessage(
+			RegressionPlainTextMessage(1, session.userPeerId(),
+									   peerFromUser(commandBotId), u"/start"_q),
+			MessageFlags(), NewMessageType::Existing);
+		const auto startedBotHistory
+			= startedBotMessage && !commandBotHistory->isEmpty();
 		historyWidget->clearFieldFocusForRegressionTest();
 		historyWidget->resetFieldAutocompleteForRegressionTest();
-		showPeerHistoryMeasured(data.history(commandBot));
+		showPeerHistoryMeasured(commandBotHistory);
 		QCoreApplication::processEvents();
 		historyWidget->clearFieldFocusForRegressionTest();
-		const auto autocompleteWasDeferred
+		const auto menuAutocompleteWasDeferred
 			= (historyWidget->fieldAutocompletePeerForRegressionTest()
 			   == nullptr)
 			  && (historyWidget->fieldAutocompleteBuildCountForRegressionTest()
@@ -11646,6 +11672,14 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		historyWidget->hideFieldAutocompleteForRegressionTest();
 		historyWidget->setDraftTextForRegressionTest(QString());
 		historyWidget->resetFieldAutocompleteForRegressionTest();
+		showPeerHistoryMeasured(emptyFirstHistory);
+		QCoreApplication::processEvents();
+		historyWidget->clearFieldFocusForRegressionTest();
+		const auto commandAutocompleteWasDeferred
+			= (historyWidget->fieldAutocompletePeerForRegressionTest()
+			   == nullptr)
+			  && (historyWidget->fieldAutocompleteBuildCountForRegressionTest()
+				  == 0);
 		const auto startClickedUnfocused
 			= historyWidget->clickBotCommandStartForRegressionTest();
 		QCoreApplication::processEvents();
@@ -11653,9 +11687,10 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 			= startClickedUnfocused
 			  && historyWidget
 					 ->fieldAutocompleteSuggestionsReadyForRegressionTest();
-		result.botCommandsShownWhileFieldUnfocused = autocompleteWasDeferred
-													 && menuCommandsShown
-													 && startCommandsShown;
+		result.botCommandsShownWhileFieldUnfocused
+			= startedBotHistory && menuAutocompleteWasDeferred
+			  && menuCommandsShown && commandAutocompleteWasDeferred
+			  && startCommandsShown;
 		historyWidget->hideFieldAutocompleteForRegressionTest();
 		historyWidget->setDraftTextForRegressionTest(QString());
 		historyWidget->resetFieldAutocompleteForRegressionTest();
