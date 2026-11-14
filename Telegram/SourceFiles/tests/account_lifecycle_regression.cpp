@@ -2498,7 +2498,13 @@ class LocalEndpointRefreshDiscoveryStub final {
 					QObject::connect(socket, &QTcpSocket::readyRead, socket,
 									 [this, connection] { read(connection); });
 					QObject::connect(socket, &QTcpSocket::disconnected, socket,
-									 &QObject::deleteLater);
+									 [this, connection, socket] {
+										 if (_verifierConnection.lock()
+											 == connection) {
+											 _verifierConnection.reset();
+										 }
+										 socket->deleteLater();
+									 });
 				}
 			});
 	}
@@ -2548,7 +2554,9 @@ class LocalEndpointRefreshDiscoveryStub final {
 	[[nodiscard]] bool hasPendingVerifierConfig() const {
 		const auto connection = _verifierConnection.lock();
 		return connection && connection->pending.has_value()
-			   && connection->socket;
+			   && connection->socket
+			   && connection->socket->state()
+					  == QAbstractSocket::ConnectedState;
 	}
 
 	void replyToPendingVerifierConfig(bool authenticates) {
@@ -2627,6 +2635,8 @@ class LocalEndpointRefreshDiscoveryStub final {
 			}
 		}
 	}
+
+	~LocalEndpointRefreshDiscoveryStub() { close(); }
 
   private:
 	enum class ConnectionKind {
@@ -2815,7 +2825,9 @@ class LocalEndpointRefreshDiscoveryStub final {
 
 	void reply(const std::shared_ptr<Connection> &connection,
 			   bool authenticates, MTP::AuthKeyPtr encryptionKey = nullptr) {
-		if (!connection->pending || !connection->socket || !_verifierAuthKey) {
+		if (!connection->pending || !connection->socket
+			|| connection->socket->state() != QAbstractSocket::ConnectedState
+			|| !_verifierAuthKey) {
 			return;
 		}
 		if (!encryptionKey) {
