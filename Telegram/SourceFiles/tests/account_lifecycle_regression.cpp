@@ -2646,13 +2646,13 @@ class LocalEndpointRefreshDiscoveryStub final {
 		return configured && account->local().writeMtpConfig(true);
 	}
 
-	[[nodiscard]] bool restoreOriginalPin(
-		not_null<Main::Account *> account,
-		const MTP::CustomServer &moved,
-		const MTP::CustomServer &stale) const {
-		return account->mtp().dcOptions().refreshCustomServerEndpoint(
-				moved, stale)
-			&& account->local().writeMtpConfig(true);
+	[[nodiscard]] bool
+	restoreOriginalPin(not_null<Main::Account *> account,
+					   const MTP::CustomServer &moved,
+					   const MTP::CustomServer &stale) const {
+		return account->mtp().dcOptions().refreshCustomServerEndpoint(moved,
+																	  stale)
+			   && account->local().writeMtpConfig(true);
 	}
 
 	void close() {
