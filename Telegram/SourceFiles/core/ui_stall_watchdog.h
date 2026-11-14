@@ -56,6 +56,11 @@ class UiStallWatchdog final : public QObject {
 		char state = '?';
 	};
 
+	struct SchedulerTraceSnapshot {
+		QString trace;
+		std::vector<qint64> sampleOffsetsNanoseconds;
+	};
+
 	explicit UiStallWatchdog(
 		std::function<void(const QString &, bool update)> log);
 	UiStallWatchdog(std::function<void(const QString &, bool update)> log,
@@ -74,6 +79,9 @@ class UiStallWatchdog final : public QObject {
 	RecentPingAcknowledgementsForTesting();
 	[[nodiscard]] static std::vector<SchedulerSampleEvidence>
 	RecentSchedulerSamplesForTesting();
+	[[nodiscard]] static SchedulerTraceSnapshot BuildSchedulerTraceSnapshot(
+		const std::vector<SchedulerSampleEvidence> &samples,
+		qint64 startSteadyNanoseconds, qint64 endSteadyNanoseconds);
 	[[nodiscard]] static bool
 	ShouldStopBeforeTraceAttachment(bool stopping,
 									std::uint64_t acknowledgedSequence,

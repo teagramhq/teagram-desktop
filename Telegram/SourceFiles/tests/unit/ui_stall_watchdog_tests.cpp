@@ -556,6 +556,28 @@ TEST_CASE(UiStallWatchdogLogsMainThreadStack) {
 			std::fprintf(stderr, "The reported scheduler trace differs from "
 								 "the final evidence snapshot.\n");
 		}
+		CHECK_EQ(finalReportedSchedulerTrace, evidence.back().schedulerTrace);
+		const auto matchingAcknowledgement = std::find_if(
+			acknowledgements.begin(), acknowledgements.end(),
+			[&](const auto &item) {
+				return item.postedAtSteadyNanoseconds
+					   == evidence.back().postedAtSteadyNanoseconds;
+			});
+		CHECK(matchingAcknowledgement != acknowledgements.end());
+		if (matchingAcknowledgement != acknowledgements.end()) {
+			CHECK(matchingAcknowledgement->schedulerTraceComplete);
+			CHECK_EQ(matchingAcknowledgement->schedulerTrace,
+					 evidence.back().schedulerTrace);
+			CHECK_EQ(matchingAcknowledgement->schedulerSampleOffsetsNanoseconds
+						 .size(),
+					 evidence.back().schedulerSampleOffsetsNanoseconds.size());
+			CHECK(std::equal(
+				matchingAcknowledgement->schedulerSampleOffsetsNanoseconds
+					.begin(),
+				matchingAcknowledgement->schedulerSampleOffsetsNanoseconds
+					.end(),
+				evidence.back().schedulerSampleOffsetsNanoseconds.begin()));
+		}
 		if (!schedulerTraceProvesRunnable) {
 			const auto &offsets
 				= evidence.back().schedulerSampleOffsetsNanoseconds;
@@ -598,6 +620,35 @@ TEST_CASE(UiStallWatchdogLogsMainThreadStack) {
 				static_cast<long long>(windowOtherThreadCpuNanoseconds));
 		}
 	}
+}
+
+TEST_CASE(UiStallWatchdogTraceSnapshotIsStableAfterPublication) {
+	constexpr auto start = qint64(1'000'000'000);
+	constexpr auto end = start + 10'000'000;
+	auto samples = std::vector<Core::UiStallWatchdog::SchedulerSampleEvidence>{
+		{.sampledAtSteadyNanoseconds = start, .state = 'R'},
+		{.sampledAtSteadyNanoseconds = start + 1'000'000, .state = 'W'},
+		{.sampledAtSteadyNanoseconds = start + 2'000'000, .state = 'R'},
+	};
+	const auto completed = Core::UiStallWatchdog::BuildSchedulerTraceSnapshot(
+		samples, start, end);
+	samples.push_back({
+		.sampledAtSteadyNanoseconds = start + 3'000'000,
+		.state = 'U',
+	});
+	const auto later = Core::UiStallWatchdog::BuildSchedulerTraceSnapshot(
+		samples, start, end);
+
+	CHECK(completed.trace == u"RWR"_q);
+	CHECK_EQ(completed.sampleOffsetsNanoseconds.size(), std::size_t(3));
+	CHECK_EQ(completed.trace.size(),
+			 qsizetype(completed.sampleOffsetsNanoseconds.size()));
+	CHECK(later.trace == u"RWRU"_q);
+	CHECK_EQ(later.sampleOffsetsNanoseconds.size(), std::size_t(4));
+	CHECK_EQ(later.trace.size(),
+			 qsizetype(later.sampleOffsetsNanoseconds.size()));
+	CHECK_EQ(completed.trace, u"RWR"_q);
+	CHECK_EQ(completed.sampleOffsetsNanoseconds[2], qint64(2'000'000));
 }
 
 TEST_CASE(UiStallWatchdogSchedulerTraceRequiresContinuousCoverage) {
