@@ -68,7 +68,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #ifdef Q_OS_MAC
 #include <cstdio>
 #include <functional>
+#include <chrono>
 #include <system_error>
+#include <thread>
 #include <sys/un.h>
 #endif // Q_OS_MAC
 
@@ -337,12 +339,16 @@ int Sandbox::start() {
 	_started = true;
 	const auto result = exec();
 #ifdef Q_OS_MAC
-	if (_closeApplicationPending) {
-		closeApplication();
-		if (qEnvironmentVariableIsSet(
-				"TDESKTOP_FONT_STARTUP_QUIT_REGRESSION")) {
-			fprintf(stderr, "Font shutdown regression: teardown=complete\n");
-		}
+	// closeApplication() has run from aboutToQuit by now. Wait for the font
+	// warmup worker so it never outlives the Qt and style state it touches.
+	if (_fontDatabaseWarmupThread.joinable()) {
+		_fontDatabaseWarmupThread.join();
+	}
+	if (qEnvironmentVariableIsSet("TDESKTOP_FONT_STARTUP_QUIT_REGRESSION")) {
+		fprintf(stderr,
+				"Font shutdown regression: worker_joined=1 "
+				"application_created=%d teardown=complete\n",
+				_applicationCreated ? 1 : 0);
 	}
 #endif // Q_OS_MAC
 	return result;
@@ -503,7 +509,7 @@ void Sandbox::launchApplication() {
 		}, _lifetime);
 
 #ifdef Q_OS_MAC
-		_applicationRunActive = true;
+		_applicationCreated = true;
 #endif // Q_OS_MAC
 		_application = std::make_unique<Application>();
 
@@ -515,14 +521,9 @@ void Sandbox::launchApplication() {
 
 		_application->run();
 #ifdef Q_OS_MAC
-		_applicationRunActive = false;
 		if (_fontStartupWindow) {
 			_fontStartupWindow->close();
 			_fontStartupWindow.reset();
-		}
-		if (_clientReadPending) {
-			_clientReadPending = false;
-			readClients();
 		}
 #endif // Q_OS_MAC
 	});
@@ -534,8 +535,38 @@ void Sandbox::startFontDatabaseWarmup() {
 		return;
 	}
 	_fontDatabaseWarmupStarted = true;
+	const auto quitRegression
+		= qEnvironmentVariableIsSet("TDESKTOP_FONT_STARTUP_QUIT_REGRESSION");
+	if (quitRegression) {
+		// Hold the worker until the real quit path has run, so that the
+		// enumeration is still in flight while the process tears down.
+		connect(
+			this,
+			&QCoreApplication::aboutToQuit,
+			this,
+			[this] {
+				_fontStartupQuitObserved.store(
+					true,
+					std::memory_order_release);
+			},
+			Qt::DirectConnection);
+	}
 	try {
-		_fontDatabaseWarmupThread = std::thread([this] {
+		_fontDatabaseWarmupThread = std::thread([this, quitRegression] {
+			if (quitRegression) {
+				const auto deadline = std::chrono::steady_clock::now()
+					+ std::chrono::seconds(10);
+				while (!_fontStartupQuitObserved.load(
+						std::memory_order_acquire)
+					&& std::chrono::steady_clock::now() < deadline) {
+					std::this_thread::sleep_for(std::chrono::milliseconds(1));
+				}
+				fprintf(stderr,
+						"Font shutdown regression: quit_observed=%d "
+						"enumeration=in_flight\n",
+						_fontStartupQuitObserved.load(
+							std::memory_order_acquire) ? 1 : 0);
+			}
 			const auto openSansLoaded = style::internal::PreloadCustomFonts();
 			{
 #if QT_VERSION < QT_VERSION_CHECK(6, 0, 0)
@@ -581,6 +612,9 @@ void Sandbox::startFontDatabaseWarmup() {
 		});
 		if (qEnvironmentVariableIsSet("TDESKTOP_FONT_STARTUP_REGRESSION")) {
 			fprintf(stderr, "Font database warmup regression: started=1\n");
+		}
+		if (quitRegression) {
+			QTimer::singleShot(0, this, [] { Core::Quit(); });
 		}
 	} catch (const std::system_error &error) {
 		_fontDatabaseWarmupDone = true;
@@ -843,12 +877,6 @@ void Sandbox::newInstanceConnected() {
 }
 
 void Sandbox::readClients() {
-#ifdef Q_OS_MAC
-	if (_applicationRunActive) {
-		_clientReadPending = true;
-		return;
-	}
-#endif // Q_OS_MAC
 	// This method can be called before Application is constructed.
 	QList<QUrl> startUrls;
 	for (LocalClients::iterator i = _localClients.begin(), e = _localClients.end(); i != e; ++i) {
@@ -1109,27 +1137,9 @@ MTP::ProxyData Sandbox::sandboxProxy() const {
 }
 
 void Sandbox::closeApplication() {
-#ifdef Q_OS_MAC
-	if (_applicationRunActive) {
-		_closeApplicationPending = true;
-		SetLaunchState(LaunchState::QuitProcessed);
-		if (qEnvironmentVariableIsSet(
-				"TDESKTOP_FONT_STARTUP_QUIT_REGRESSION")) {
-			fprintf(stderr, "Font shutdown regression: teardown=deferred\n");
-		}
+	if (CurrentLaunchState() == LaunchState::QuitProcessed) {
 		return;
 	}
-#endif // Q_OS_MAC
-	if (CurrentLaunchState() == LaunchState::QuitProcessed
-#ifdef Q_OS_MAC
-		&& !_closeApplicationPending
-#endif // Q_OS_MAC
-	) {
-		return;
-	}
-#ifdef Q_OS_MAC
-	_closeApplicationPending = false;
-#endif // Q_OS_MAC
 	SetLaunchState(LaunchState::QuitProcessed);
 
 	_application = nullptr;

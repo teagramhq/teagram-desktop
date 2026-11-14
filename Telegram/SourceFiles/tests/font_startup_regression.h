@@ -8,4 +8,3 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #pragma once
 
 int RunFontFallbackRegression();
-bool RunFontShutdownRegression();

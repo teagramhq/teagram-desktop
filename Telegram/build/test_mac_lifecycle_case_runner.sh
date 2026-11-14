@@ -107,9 +107,8 @@ EOF
 cat > "$FAKE_APP" <<'EOF'
 #!/usr/bin/env bash
 if [[ "${TDESKTOP_FONT_STARTUP_QUIT_REGRESSION:-}" == 1 ]]; then
-	printf 'Font shutdown regression: teardown=deferred\n'
-	printf 'Font shutdown regression: worker_started=1 quit_observed=1 resolver_cancelled=1 result=PASS\n'
-	printf 'Font shutdown regression: teardown=complete\n'
+	printf 'Font shutdown regression: quit_observed=1 enumeration=in_flight\n'
+	printf 'Font shutdown regression: worker_joined=1 application_created=0 teardown=complete\n'
 	exit 0
 fi
 if [[ "${TDESKTOP_FONT_STARTUP_REGRESSION:-}" == 1 ]]; then

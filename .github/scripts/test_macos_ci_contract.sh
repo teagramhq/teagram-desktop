@@ -1180,25 +1180,18 @@ if ! awk '
   contract_fail 'System and bundled font metrics must be prewarmed before application startup.'
 fi
 if ! awk '
-  /^void Sandbox::readClients\(\)/ { in_read = 1 }
-  in_read && /if \(_applicationRunActive\)/ { active = NR }
-  in_read && /_clientReadPending = true/ { pending = NR }
-  in_read && /i->second\.append\(i->first->readAll\(\)\)/ { read = NR }
-  in_read && /^void Sandbox::removeClients/ { in_read = 0 }
-  END { exit !(active && pending > active && read > pending) }
+  /^int Sandbox::start\(\)/ { in_start = 1 }
+  in_start && /const auto result = exec\(\);/ { exec_line = NR }
+  in_start && /_fontDatabaseWarmupThread\.join\(\)/ { join_line = NR }
+  in_start && /^int Sandbox::stopRunningInstance/ { in_start = 0 }
+  END { exit !(exec_line && join_line && exec_line < join_line) }
 ' Telegram/SourceFiles/core/sandbox.cpp; then
-  contract_fail 'Local IPC commands must wait until application startup finishes.'
+  contract_fail 'The font warmup worker must be joined after the event loop exits.'
 fi
-if ! awk '
-  /^void Sandbox::launchApplication\(\)/ { in_launch = 1 }
-  in_launch && /_applicationRunActive = false/ { inactive = NR }
-  in_launch && /if \(_clientReadPending\)/ { pending = NR }
-  in_launch && /_clientReadPending = false/ { clear = NR }
-  in_launch && /readClients\(\)/ { drain = NR }
-  in_launch && /^void Sandbox::startFontDatabaseWarmup/ { in_launch = 0 }
-  END { exit !(inactive && pending > inactive && clear > pending && drain > clear) }
-' Telegram/SourceFiles/core/sandbox.cpp; then
-  contract_fail 'Deferred local IPC commands must be processed after application startup.'
+if grep -Eq 'QEventLoop' Telegram/SourceFiles/core/sandbox.cpp \
+  || grep -Eq 'ResolveDeferredShapedMetrics|SetShapedMetricsDeferred' \
+    Telegram/SourceFiles/core/application.cpp; then
+  contract_fail 'Startup must continue from the warmup completion callback, not a nested event loop.'
 fi
 grep -Fq 'bash "$PROFILE_GUARD" "$FAKE_APP"' \
   Telegram/build/test_mac_lifecycle_case_runner.sh \

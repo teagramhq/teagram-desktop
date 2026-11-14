@@ -44,9 +44,8 @@ if [[ "${TDESKTOP_FONT_STARTUP_REGRESSION:-}" == 1 ]]; then
     exit 0
 fi
 if [[ "${TDESKTOP_FONT_STARTUP_QUIT_REGRESSION:-}" == 1 ]]; then
-    printf 'Font shutdown regression: teardown=deferred\\n'
-    printf 'Font shutdown regression: worker_started=1 quit_observed=1 resolver_cancelled=1 result=PASS\\n'
-    printf 'Font shutdown regression: teardown=complete\\n'
+    printf 'Font shutdown regression: quit_observed=1 enumeration=in_flight\\n'
+    printf 'Font shutdown regression: worker_joined=1 application_created=0 teardown=complete\\n'
     exit 0
 fi
 if [[ "${TDESKTOP_MAC_SEATBELT_FORCE_COMPILE_FAILURE:-}" == 1 ]]; then
@@ -112,21 +111,23 @@ def run_font_startup_fixture(
 count_file="$HOME/font-startup-count"
 mode="$FONT_TEST_MODE"
 if [[ "${TDESKTOP_FONT_STARTUP_QUIT_REGRESSION:-}" == 1 ]]; then
-    if [[ "$FONT_SHUTDOWN_TEST_MODE" == shutdown-missing-worker ]]; then
-        printf 'Font shutdown regression: teardown=deferred\\n'
-        printf 'Font shutdown regression: worker_started=0 quit_observed=1 resolver_cancelled=1 result=FAIL\\n'
-        printf 'Font shutdown regression: teardown=complete\\n'
+    if [[ "$FONT_SHUTDOWN_TEST_MODE" == shutdown-not-in-flight ]]; then
+        printf 'Font shutdown regression: quit_observed=0 enumeration=in_flight\\n'
+        printf 'Font shutdown regression: worker_joined=1 application_created=0 teardown=complete\\n'
     elif [[ "$FONT_SHUTDOWN_TEST_MODE" == shutdown-order ]]; then
-        printf 'Font shutdown regression: teardown=complete\\n'
-        printf 'Font shutdown regression: teardown=deferred\\n'
-        printf 'Font shutdown regression: worker_started=1 quit_observed=1 resolver_cancelled=1 result=PASS\\n'
+        printf 'Font shutdown regression: worker_joined=1 application_created=0 teardown=complete\\n'
+        printf 'Font shutdown regression: quit_observed=1 enumeration=in_flight\\n'
+    elif [[ "$FONT_SHUTDOWN_TEST_MODE" == shutdown-application-created ]]; then
+        printf 'Font shutdown regression: quit_observed=1 enumeration=in_flight\\n'
+        printf 'Font shutdown regression: worker_joined=1 application_created=1 teardown=complete\\n'
     elif [[ "$FONT_SHUTDOWN_TEST_MODE" == shutdown-missing-teardown ]]; then
-        printf 'Font shutdown regression: teardown=deferred\\n'
-        printf 'Font shutdown regression: worker_started=1 quit_observed=1 resolver_cancelled=1 result=PASS\\n'
+        printf 'Font shutdown regression: quit_observed=1 enumeration=in_flight\\n'
+    elif [[ "$FONT_SHUTDOWN_TEST_MODE" == shutdown-crash ]]; then
+        printf 'Font shutdown regression: quit_observed=1 enumeration=in_flight\\n'
+        exit 139
     else
-        printf 'Font shutdown regression: teardown=deferred\\n'
-        printf 'Font shutdown regression: worker_started=1 quit_observed=1 resolver_cancelled=1 result=PASS\\n'
-        printf 'Font shutdown regression: teardown=complete\\n'
+        printf 'Font shutdown regression: quit_observed=1 enumeration=in_flight\\n'
+        printf 'Font shutdown regression: worker_joined=1 application_created=0 teardown=complete\\n'
     fi
     exit 0
 fi
@@ -251,7 +252,7 @@ assert 'Font-code startup stall gate=PASS sample=cold' in font_startup_output
 assert 'Font-code startup stall gate=PASS sample=warm' in font_startup_output
 assert 'fallback=PASS font_stall_gate=PASS' \
     in font_startup_output
-assert 'Font shutdown teardown=PASS worker_active=1 order=PASS' \
+assert 'Font shutdown teardown=PASS enumeration_in_flight=1 application_created=0' \
     in font_startup_output
 font_startup_failure = run_font_startup_fixture(50_000_000, 100_000_000, 1)
 assert 'StartFonts warm exceeded the 100ms budget' in font_startup_failure
@@ -261,12 +262,16 @@ font_startup_font_stall = run_font_startup_fixture(
     50_000_000, 50_000_000, 1, mode='font-stall')
 assert 'Font-code startup cold produced a main-thread stall' in font_startup_font_stall
 font_startup_harfbuzz_stall = run_font_startup_fixture(
-    50_000_000, 50_000_000, 1, mode='harfbuzz-stall')
-assert 'Font-code startup cold produced a main-thread stall' \
+    50_000_000, 50_000_000, 0, mode='harfbuzz-stall')
+assert 'Font-code startup stall gate=PASS sample=cold' \
+    in font_startup_harfbuzz_stall
+assert 'Font-code startup cold reported (not gated) stalls' \
     in font_startup_harfbuzz_stall
 font_startup_qrawfont_stall = run_font_startup_fixture(
-    50_000_000, 50_000_000, 1, mode='qrawfont-stall')
-assert 'Font-code startup cold produced a main-thread stall' \
+    50_000_000, 50_000_000, 0, mode='qrawfont-stall')
+assert 'Font-code startup stall gate=PASS sample=cold' \
+    in font_startup_qrawfont_stall
+assert 'Font-code startup cold reported (not gated) stalls' \
     in font_startup_qrawfont_stall
 font_startup_system_menu_stall = run_font_startup_fixture(
     50_000_000, 50_000_000, 0, mode='system-menu-stall')
@@ -326,16 +331,24 @@ font_startup_missing_custom_fonts = run_font_startup_fixture(
     50_000_000, 50_000_000, 1, mode='missing-custom-fonts')
 assert 'bundled fonts were not preloaded before app initialization' \
     in font_startup_missing_custom_fonts
-font_startup_shutdown_missing_worker = run_font_startup_fixture(
-    50_000_000, 50_000_000, 1, mode='shutdown-missing-worker')
-assert 'font shutdown regression did not observe an active worker and quit' \
-    in font_startup_shutdown_missing_worker
+font_startup_shutdown_not_in_flight = run_font_startup_fixture(
+    50_000_000, 50_000_000, 1, mode='shutdown-not-in-flight')
+assert 'font shutdown regression did not quit with the enumeration in flight' \
+    in font_startup_shutdown_not_in_flight
 font_startup_shutdown_order = run_font_startup_fixture(
     50_000_000, 50_000_000, 1, mode='shutdown-order')
-assert 'font shutdown teardown was not deferred until after resolver unwind' \
+assert 'font shutdown did not join the worker and tear down without starting the application' \
     in font_startup_shutdown_order
+font_startup_shutdown_application_created = run_font_startup_fixture(
+    50_000_000, 50_000_000, 1, mode='shutdown-application-created')
+assert 'font shutdown did not join the worker and tear down without starting the application' \
+    in font_startup_shutdown_application_created
 font_startup_shutdown_missing_teardown = run_font_startup_fixture(
     50_000_000, 50_000_000, 1, mode='shutdown-missing-teardown')
-assert 'font shutdown teardown was not deferred until after resolver unwind' \
+assert 'font shutdown did not join the worker and tear down without starting the application' \
     in font_startup_shutdown_missing_teardown
+font_startup_shutdown_crash = run_font_startup_fixture(
+    50_000_000, 50_000_000, 1, mode='shutdown-crash')
+assert 'font shutdown regression did not exit cleanly: exit_status=139' \
+    in font_startup_shutdown_crash
 print('macOS font startup timing and failure guards: PASS')

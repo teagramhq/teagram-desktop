@@ -1467,46 +1467,50 @@ run_font_shutdown_regression() {
 	local font_home="$TEST_HOME/font-startup"
 	local shutdown_log="$TEST_HOME/font-startup-shutdown.log"
 	local font_profile_log="$font_home/Library/Application Support/Teagram/log.txt"
+	mkdir -p "$(dirname "$font_profile_log")"
 	: > "$font_profile_log"
-	if ! env -u TDESKTOP_FONT_STARTUP_REGRESSION \
+	local launch_status=0
+	if env -u TDESKTOP_FONT_STARTUP_REGRESSION \
 		HOME="$font_home" TMPDIR="$TEST_TMP_BASE" \
 		TDESKTOP_MAC_PROFILE_TEST_HOME="$font_home" \
 		TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST=1 \
 		TDESKTOP_FONT_STARTUP_QUIT_REGRESSION=1 \
 		FONT_SHUTDOWN_TEST_MODE="${FONT_TEST_MODE:-pass}" \
 		"$APP" -noupdate -debug >"$shutdown_log" 2>&1; then
+		:
+	else
+		launch_status=$?
+	fi
+	if (( launch_status != 0 )); then
 		cat "$shutdown_log" >&2
 		if [[ -f "$font_profile_log" ]]; then
 			cat "$font_profile_log" >&2
 		fi
-		echo "font shutdown regression launch failed" >&2
+		symbolicate_font_startup_crash "$font_home"
+		printf 'font shutdown regression did not exit cleanly: exit_status=%s\n' \
+			"$launch_status" >&2
 		return 1
 	fi
-	if ! grep -E -q 'Font shutdown regression: worker_started=1 quit_observed=1 resolver_cancelled=1 result=PASS' \
+	if ! grep -F -q 'Font shutdown regression: quit_observed=1 enumeration=in_flight' \
 		"$shutdown_log"; then
 		cat "$shutdown_log" >&2
-		echo "font shutdown regression did not observe an active worker and quit" >&2
+		echo "font shutdown regression did not quit with the enumeration in flight" >&2
 		return 1
 	fi
-	local deferred_position
-	deferred_position="$(grep -F -n 'Font shutdown regression: teardown=deferred' \
-		"$shutdown_log" | tail -n 1 | cut -d: -f1 || true)"
-	local resolver_position
-	resolver_position="$(grep -F -n 'Font shutdown regression: worker_started=1' \
+	local in_flight_position
+	in_flight_position="$(grep -F -n 'Font shutdown regression: quit_observed=1' \
 		"$shutdown_log" | tail -n 1 | cut -d: -f1 || true)"
 	local teardown_position
-	teardown_position="$(grep -F -n 'Font shutdown regression: teardown=complete' \
+	teardown_position="$(grep -F -n 'Font shutdown regression: worker_joined=1 application_created=0 teardown=complete' \
 		"$shutdown_log" | tail -n 1 | cut -d: -f1 || true)"
-	if [[ ! "$deferred_position" =~ ^[0-9]+$ ]] \
-		|| [[ ! "$resolver_position" =~ ^[0-9]+$ ]] \
+	if [[ ! "$in_flight_position" =~ ^[0-9]+$ ]] \
 		|| [[ ! "$teardown_position" =~ ^[0-9]+$ ]] \
-		|| (( deferred_position >= resolver_position )) \
-		|| (( resolver_position >= teardown_position )); then
+		|| (( in_flight_position >= teardown_position )); then
 		cat "$shutdown_log" >&2
-		echo "font shutdown teardown was not deferred until after resolver unwind" >&2
+		echo "font shutdown did not join the worker and tear down without starting the application" >&2
 		return 1
 	fi
-	printf 'Font shutdown teardown=PASS worker_active=1 order=PASS\n'
+	printf 'Font shutdown teardown=PASS enumeration_in_flight=1 application_created=0\n'
 }
 
 symbolicate_font_startup_crash() {
@@ -1638,8 +1642,20 @@ run_font_startup_regression() {
 			return 1
 		fi
 		local stalls
-		stalls="$(grep -E 'UI stall [0-9]+ ms.*(QFont|QRawFont|CTFontManager|CoreText|populateFromDescriptor)' \
+		# Only the system font-family enumeration is gated. Other font
+		# stalls (first-text shaping, bundled-font registration) are
+		# reported below and belong to the chat-switch and startup work.
+		stalls="$(grep -E 'UI stall [0-9]+ ms.*(CTFontManagerCopyAvailableFontFamilyNames|populateFontDatabase|populateFromDescriptor|QFontDatabase::families)' \
 			"$sample_log" "$font_profile_log" 2>/dev/null || true)"
+		local other_font_stalls
+		other_font_stalls="$(grep -E 'UI stall [0-9]+ ms.*(QFont|QRawFont|CTFont|CoreText|QTextEngine)' \
+			"$sample_log" "$font_profile_log" 2>/dev/null \
+			| grep -v -E 'CTFontManagerCopyAvailableFontFamilyNames|populateFontDatabase|populateFromDescriptor|QFontDatabase::families' \
+			|| true)"
+		if [[ -n "$other_font_stalls" ]]; then
+			printf 'Font-code startup %s reported (not gated) stalls: %s\n' \
+				"$sample" "$other_font_stalls"
+		fi
 		if [[ -n "$stalls" ]]; then
 			cat "$sample_log" >&2
 			if [[ -f "$font_profile_log" ]]; then

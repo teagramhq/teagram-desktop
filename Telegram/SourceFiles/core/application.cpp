@@ -83,7 +83,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/widgets/tooltip.h"
 #include "ui/gl/gl_detection.h"
 #include "ui/text/text_options.h"
-#include "ui/style/style_core_font.h"
 #include "ui/effects/spoiler_mess.h"
 #include "ui/cached_round_corners.h"
 #include "ui/power_saving.h"
@@ -300,12 +299,10 @@ void Application::run() {
 		= qEnvironmentVariableIsSet("TDESKTOP_DESKTOP_SCALE_CHECK");
 	const auto fontStartupRegression
 		= qEnvironmentVariableIsSet("TDESKTOP_FONT_STARTUP_REGRESSION");
-	const auto fontShutdownRegression
-		= qEnvironmentVariableIsSet("TDESKTOP_FONT_STARTUP_QUIT_REGRESSION");
 	const auto headlessRegression
 		= qEnvironmentVariableIsSet("TDESKTOP_SIGNUP_UI_REGRESSION")
 		  || authLifecycleRegression || customEmojiUiSmoke || desktopScaleCheck
-		  || fontStartupRegression || fontShutdownRegression;
+		  || fontStartupRegression;
 	const auto windowedApplication = !headlessRegression
 									 || authLifecycleRegression
 									 || customEmojiUiSmoke || desktopScaleCheck;
@@ -365,26 +362,7 @@ void Application::run() {
 	_translator = std::make_unique<Lang::Translator>();
 	QCoreApplication::instance()->installTranslator(_translator.get());
 
-#if defined(Q_OS_MAC)
-	style::internal::SetShapedMetricsDeferred(true);
-#endif // Q_OS_MAC
 	style::StartManager(cScale());
-#if defined(Q_OS_MAC)
-#if defined(TDESKTOP_LIFECYCLE_REGRESSION)
-	if (fontShutdownRegression) {
-		const auto passed = RunFontShutdownRegression();
-		if (!passed) {
-			LOG(("Font shutdown regression failed."));
-		}
-		return;
-	}
-#endif // TDESKTOP_LIFECYCLE_REGRESSION
-	const auto resolved = style::internal::ResolveDeferredShapedMetrics();
-	if (!resolved) {
-		return;
-	}
-#endif // Q_OS_MAC
-
 	Ui::Accessible::Init();
 	Ui::InitUsernameInputAccessibility();
 	Ui::InitTextOptions();

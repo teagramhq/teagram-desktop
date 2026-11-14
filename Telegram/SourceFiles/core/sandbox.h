@@ -16,6 +16,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #ifdef Q_OS_MAC
 #include <QtCore/QElapsedTimer>
+#include <atomic>
 #include <thread>
 #endif // Q_OS_MAC
 
@@ -169,9 +170,8 @@ private:
 	bool _fontDatabaseWarmupDone = false;
 	bool _fontDatabaseWarmupSucceeded = false;
 	bool _launchAfterFontDatabaseWarmup = false;
-	bool _applicationRunActive = false;
-	bool _clientReadPending = false;
-	bool _closeApplicationPending = false;
+	bool _applicationCreated = false;
+	std::atomic_bool _fontStartupQuitObserved = false;
 	std::unique_ptr<QWindow> _fontStartupWindow;
 	std::thread _fontDatabaseWarmupThread;
 #endif // Q_OS_MAC
