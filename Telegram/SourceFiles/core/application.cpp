@@ -370,12 +370,9 @@ void Application::run() {
 #endif // Q_OS_MAC
 	style::StartManager(cScale());
 #if defined(Q_OS_MAC)
-	auto &sandbox = Core::Sandbox::Instance();
-	sandbox.setFontMetricsResolutionActive(true);
 #if defined(TDESKTOP_LIFECYCLE_REGRESSION)
 	if (fontShutdownRegression) {
 		const auto passed = RunFontShutdownRegression();
-		sandbox.setFontMetricsResolutionActive(false);
 		if (!passed) {
 			LOG(("Font shutdown regression failed."));
 		}
@@ -383,7 +380,6 @@ void Application::run() {
 	}
 #endif // TDESKTOP_LIFECYCLE_REGRESSION
 	const auto resolved = style::internal::ResolveDeferredShapedMetrics();
-	sandbox.setFontMetricsResolutionActive(false);
 	if (!resolved) {
 		return;
 	}

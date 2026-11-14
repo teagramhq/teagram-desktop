@@ -500,6 +500,9 @@ void Sandbox::launchApplication() {
 				: nullptr;
 		}, _lifetime);
 
+#ifdef Q_OS_MAC
+		_applicationRunActive = true;
+#endif // Q_OS_MAC
 		_application = std::make_unique<Application>();
 
 		// Ideally this should go to constructor.
@@ -510,6 +513,7 @@ void Sandbox::launchApplication() {
 
 		_application->run();
 #ifdef Q_OS_MAC
+		_applicationRunActive = false;
 		if (_fontStartupWindow) {
 			_fontStartupWindow->close();
 			_fontStartupWindow.reset();
@@ -1079,7 +1083,7 @@ MTP::ProxyData Sandbox::sandboxProxy() const {
 
 void Sandbox::closeApplication() {
 #ifdef Q_OS_MAC
-	if (_fontMetricsResolutionActive) {
+	if (_applicationRunActive) {
 		_closeApplicationPending = true;
 		SetLaunchState(LaunchState::QuitProcessed);
 		if (qEnvironmentVariableIsSet(
@@ -1113,12 +1117,6 @@ void Sandbox::closeApplication() {
 
 	_updateChecker = nullptr;
 }
-
-#ifdef Q_OS_MAC
-void Sandbox::setFontMetricsResolutionActive(bool active) {
-	_fontMetricsResolutionActive = active;
-}
-#endif // Q_OS_MAC
 
 uint64 Sandbox::execExternal(const QString &cmd) {
 	DEBUG_LOG(("Sandbox Info: executing external command '%1'").arg(cmd));
