@@ -385,6 +385,12 @@ void Application::run() {
 	}
 #endif // Q_OS_MAC
 
+	Ui::Accessible::Init();
+	Ui::InitUsernameInputAccessibility();
+	Ui::InitTextOptions();
+	Ui::StartCachedCorners();
+	Ui::Emoji::Init();
+
 #if defined(TDESKTOP_LIFECYCLE_REGRESSION)
 	if (fontStartupRegression) {
 		QCoreApplication::exit(RunFontFallbackRegression());
@@ -392,11 +398,6 @@ void Application::run() {
 	}
 #endif // TDESKTOP_LIFECYCLE_REGRESSION
 
-	Ui::Accessible::Init();
-	Ui::InitUsernameInputAccessibility();
-	Ui::InitTextOptions();
-	Ui::StartCachedCorners();
-	Ui::Emoji::Init();
 	auto regressionResult = 0;
 
 	Ui::PreloadTextSpoilerMask(_spoilerPreloadLifetime);

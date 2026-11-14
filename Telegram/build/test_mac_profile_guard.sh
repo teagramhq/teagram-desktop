@@ -1509,6 +1509,44 @@ run_font_shutdown_regression() {
 	printf 'Font shutdown teardown=PASS worker_active=1 order=PASS\n'
 }
 
+symbolicate_font_startup_crash() {
+	local font_home="$1"
+	local dumps_dir="$font_home/Library/Application Support/Teagram/tdata/dumps/completed"
+	local dsym_bundle="$TEST_HOME/font-startup-crash.dSYM"
+	local dsym_file="$dsym_bundle/Contents/Resources/DWARF/Teagram"
+	local dump
+	local found=false
+	if [[ ! -d "$dumps_dir" ]]; then
+		printf 'Font startup crash report is missing: %s\n' "$dumps_dir" >&2
+		return 0
+	fi
+	for dump in "$dumps_dir"/*.dmp; do
+		[[ -f "$dump" ]] || continue
+		found=true
+		break
+	done
+	if [[ "$found" != true ]]; then
+		printf 'Font startup crash report is missing under: %s\n' "$dumps_dir" >&2
+		return 0
+	fi
+	if ! dsymutil "$APP" -o "$dsym_bundle"; then
+		echo 'Could not generate Teagram dSYM for font startup crash.' >&2
+		return 0
+	fi
+	if [[ ! -f "$dsym_file" ]]; then
+		printf 'Teagram dSYM file is missing: %s\n' "$dsym_file" >&2
+		return 0
+	fi
+	for dump in "$dumps_dir"/*.dmp; do
+		[[ -f "$dump" ]] || continue
+		python3 "$REPO_ROOT/.github/scripts/symbolicate_macos_minidump.py" \
+			"$dump" "$dsym_file" || {
+			printf 'Could not symbolicate font startup crash report: %s\n' \
+				"$dump" >&2
+		}
+	done
+}
+
 run_font_startup_regression() {
 	local font_home="$TEST_HOME/font-startup"
 	local font_profile_log="$font_home/Library/Application Support/Teagram/log.txt"
@@ -1530,6 +1568,7 @@ run_font_startup_regression() {
 			if [[ -f "$font_profile_log" ]]; then
 				cat "$font_profile_log" >&2
 			fi
+			symbolicate_font_startup_crash "$font_home"
 			echo "font startup regression launch failed: $sample" >&2
 			return 1
 		fi
@@ -1650,6 +1689,7 @@ run_font_startup_regression() {
 		if [[ -f "$font_profile_log" ]]; then
 			cat "$font_profile_log" >&2
 		fi
+		symbolicate_font_startup_crash "$font_home"
 		echo "font startup exposure-timeout regression launch failed" >&2
 		return 1
 	fi

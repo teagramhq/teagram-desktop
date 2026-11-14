@@ -22,7 +22,8 @@ for trigger in push pull_request; do
   paths="$(workflow_field .github/workflows/workflow_lint.yml ".on.$trigger.paths[]")"
   for script_path in \
     .github/scripts/test_macos_launch_smoke.py \
-    .github/scripts/extract_dwarf_subprogram_address.py; do
+    .github/scripts/extract_dwarf_subprogram_address.py \
+    .github/scripts/symbolicate_macos_minidump.py; do
     grep -Fxq -- "$script_path" <<< "$paths" \
       || contract_fail "Workflow lint must run when $script_path changes ($trigger)."
   done
@@ -1006,6 +1007,15 @@ require_step_field "$mac_workflow" build-macos "$profile_step" '.if' \
 require_step_script "$mac_workflow" build-macos "$profile_step" \
   'test_mac_profile_guard.sh'
 profile_harness='Telegram/build/test_mac_profile_guard.sh'
+minidump_symbolizer='.github/scripts/symbolicate_macos_minidump.py'
+python3 "$minidump_symbolizer" --self-test
+for symbolizer_contract in \
+	symbolicate_font_startup_crash \
+	dsymutil \
+	"$minidump_symbolizer"; do
+	grep -Fq "$symbolizer_contract" "$profile_harness" \
+		|| contract_fail "$profile_harness must symbolicate font startup minidumps."
+done
 settings_link_evidence='Settings deep link regression passed: paid and story routes'
 grep -Fq "$settings_link_evidence" \
   Telegram/SourceFiles/tests/account_lifecycle_regression.cpp \
@@ -1128,6 +1138,15 @@ all_first_command="$(awk '
 ' "$profile_harness")"
 [[ "$all_first_command" == 'run_font_startup_regression' ]] \
   || contract_fail "$profile_harness must run the font-startup regression before any all-case app launches."
+application_source='Telegram/SourceFiles/core/application.cpp'
+emoji_init_line="$(rg -n -F 'Ui::Emoji::Init();' "$application_source" | head -n 1 | cut -d: -f1)"
+font_fallback_exit_line="$(rg -n -F \
+	'QCoreApplication::exit(RunFontFallbackRegression());' "$application_source" \
+	| head -n 1 | cut -d: -f1)"
+[[ "$emoji_init_line" =~ ^[0-9]+$ \
+	&& "$font_fallback_exit_line" =~ ^[0-9]+$ \
+	&& "$emoji_init_line" -lt "$font_fallback_exit_line" ]] \
+	|| contract_fail 'The font fallback exit must remain after Emoji initialization.'
 if ! awk '
   /^authenticated-cache\)$/ { in_case = 1; next }
   /^authenticated-lifecycle\)$/ { in_case = 0 }
