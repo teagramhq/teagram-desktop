@@ -292,9 +292,7 @@ public:
 	[[nodiscard]] int layoutScaleForRegressionTest() const {
 		return _layoutScale;
 	}
-	[[nodiscard]] int layoutWidthForRegressionTest() const {
-		return _width;
-	}
+	[[nodiscard]] int layoutWidthForRegressionTest() const { return _width; }
 	[[nodiscard]] int layoutFullResizeCountForRegressionTest() const {
 		return _layoutFullResizeCount;
 	}

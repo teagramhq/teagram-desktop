@@ -1283,12 +1283,12 @@ void HistoryWidget::refreshTabbedPanel() {
 	} else if (_tabbedPanel && !_tabbedPanel->isSelectorStolen()) {
 		return;
 	}
-	if (_tabbedPanel) {
-		if (controller()->hasTabbedSelectorOwnership()) {
-			controller()->tabbedSelector()->setParent(_tabbedPanel.get());
-			return;
-		}
-		setTabbedPanel(nullptr);
+		if (_tabbedPanel) {
+			if (controller()->hasTabbedSelectorOwnership()) {
+				controller()->tabbedSelector()->setParent(_tabbedPanel.get());
+				return;
+			}
+				setTabbedPanel(nullptr);
 	}
 	if (controller()->hasTabbedSelectorOwnership()) {
 		createTabbedPanel();
@@ -1544,7 +1544,7 @@ void HistoryWidget::initTabbedSelector() {
 
 	const auto selector = controller()->tabbedSelector();
 
-	base::install_event_filter(this, selector, [=](not_null<QEvent*> e) {
+	base::install_event_filter(this, selector, [=](not_null<QEvent *> e) {
 		if (_tabbedPanel && e->type() == QEvent::ParentChange
 			&& _tabbedPanel->isSelectorStolen()
 			&& !controller()->hasTabbedSelectorOwnership()) {
@@ -1553,9 +1553,7 @@ void HistoryWidget::initTabbedSelector() {
 		return base::EventFilterResult::Continue;
 	});
 
-	auto filter = rpl::filter([=] {
-		return !isHidden();
-	});
+	auto filter = rpl::filter([=] { return !isHidden(); });
 	using Selector = TabbedSelector;
 
 	selector->emojiChosen(
@@ -3303,7 +3301,7 @@ void HistoryWidget::showHistory(
 		if (_autocomplete) {
 			_autocomplete->setCurrentPeer(_peer);
 		}
-		checkCharsCount();
+				checkCharsCount();
 		_send->finishAnimating();
 
 		updateControlsGeometry();
@@ -7484,7 +7482,7 @@ bool HistoryWidget::returnTabbedSelector() {
 	} else {
 		createTabbedPanel();
 	}
-	moveFieldControls();
+		moveFieldControls();
 	return true;
 }
 

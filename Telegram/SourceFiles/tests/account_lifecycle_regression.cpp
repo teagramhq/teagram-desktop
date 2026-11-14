@@ -10681,13 +10681,12 @@ struct SchedulerTraceWindow final {
 	auto samplesInWindow = std::vector<std::pair<qint64, QChar>>();
 	auto latestSampleAt = qint64(0);
 	for (const auto &sample : samples) {
-		latestSampleAt = std::max(
-			latestSampleAt, sample.sampledAtSteadyNanoseconds);
+		latestSampleAt
+			= std::max(latestSampleAt, sample.sampledAtSteadyNanoseconds);
 		if ((sample.sampledAtSteadyNanoseconds >= start)
 			&& (sample.sampledAtSteadyNanoseconds <= windowEnd)) {
 			samplesInWindow.emplace_back(
-				sample.sampledAtSteadyNanoseconds - start,
-				QChar(sample.state));
+				sample.sampledAtSteadyNanoseconds - start, QChar(sample.state));
 		}
 	}
 	std::sort(begin(samplesInWindow), end(samplesInWindow),
@@ -11316,8 +11315,7 @@ void AccumulateMainThreadWorkEstimate(qint64 &aggregateNanoseconds,
 		= sparseStartupWindow.startedAtSteadyNanoseconds - 1'000'000,
 		.state = 'W',
 	});
-	for (auto offset = qint64(0); offset <= 225'000'000;
-		 offset += 1'000'000) {
+	for (auto offset = qint64(0); offset <= 225'000'000; offset += 1'000'000) {
 		continuousSchedulerTimeline.push_back({
 			.sampledAtSteadyNanoseconds
 			= sparseStartupWindow.startedAtSteadyNanoseconds + offset,
@@ -11359,7 +11357,7 @@ void AccumulateMainThreadWorkEstimate(qint64 &aggregateNanoseconds,
 				  + sparseStartupWindow.durationNanoseconds + 1'000'000,
 				.state = 'R',
 			},
-		};
+	};
 	const auto clusteredTimelineWindow = SchedulerTraceForInterval(
 		sparseStartupWindow, clusteredSchedulerTimeline);
 	const auto clusteredTimelineEstimate = EstimateMainThreadWork(
@@ -11486,29 +11484,30 @@ void AccumulateMainThreadWorkEstimate(qint64 &aggregateNanoseconds,
 			   slowSwitchOffsets, kMaxChatSwitchNanoseconds)
 		   && (initialSelectionOverBudget.estimatedWorkNanoseconds
 			   == 52'107'000)
-			&& !continuousTimelineWindow.capturePending
-			&& (continuousTimelineWindow.trace.size() == 226)
-			&& (continuousTimelineEstimate.blockedNanoseconds == 0)
-			&& (continuousTimelineEstimate.estimatedWorkNanoseconds == 18'000'000)
-			&& MainThreadWorkEstimateWithinBudget(
-				18'000'000, sparseStartupWindow.durationNanoseconds,
-				continuousTimelineWindow.trace,
-				continuousTimelineWindow.sampleOffsetsNanoseconds,
-				kMaxChatSwitchNanoseconds)
-			&& !clusteredTimelineWindow.capturePending
-			&& (clusteredTimelineEstimate.blockedNanoseconds == -1)
-			&& (clusteredTimelineEstimate.estimatedWorkNanoseconds
-				== sparseStartupWindow.durationNanoseconds)
-			&& !MainThreadWorkEstimateWithinBudget(
-				18'000'000, sparseStartupWindow.durationNanoseconds,
-				clusteredTimelineWindow.trace,
-				clusteredTimelineWindow.sampleOffsetsNanoseconds,
-				100'000'000)
-			&& !completedWithoutTimelineCoverage.capturePending
-			&& completedWithoutTimelineCoverage.trace.isEmpty()
-			&& (completedWithoutTimelineCoverageEstimate.blockedNanoseconds == -1)
-			&& (completedWithoutTimelineCoverageEstimate.estimatedWorkNanoseconds
-				== sparseStartupWindow.durationNanoseconds)
+		   && !continuousTimelineWindow.capturePending
+		   && (continuousTimelineWindow.trace.size() == 226)
+		   && (continuousTimelineEstimate.blockedNanoseconds == 0)
+		   && (continuousTimelineEstimate.estimatedWorkNanoseconds
+			   == 18'000'000)
+		   && MainThreadWorkEstimateWithinBudget(
+			   18'000'000, sparseStartupWindow.durationNanoseconds,
+			   continuousTimelineWindow.trace,
+			   continuousTimelineWindow.sampleOffsetsNanoseconds,
+			   kMaxChatSwitchNanoseconds)
+		   && !clusteredTimelineWindow.capturePending
+		   && (clusteredTimelineEstimate.blockedNanoseconds == -1)
+		   && (clusteredTimelineEstimate.estimatedWorkNanoseconds
+			   == sparseStartupWindow.durationNanoseconds)
+		   && !MainThreadWorkEstimateWithinBudget(
+			   18'000'000, sparseStartupWindow.durationNanoseconds,
+			   clusteredTimelineWindow.trace,
+			   clusteredTimelineWindow.sampleOffsetsNanoseconds, 100'000'000)
+		   && !completedWithoutTimelineCoverage.capturePending
+		   && completedWithoutTimelineCoverage.trace.isEmpty()
+		   && (completedWithoutTimelineCoverageEstimate.blockedNanoseconds
+			   == -1)
+		   && (completedWithoutTimelineCoverageEstimate.estimatedWorkNanoseconds
+			   == sparseStartupWindow.durationNanoseconds)
 		   && (boundedSwitch.estimatedWorkNanoseconds == 45'500'000)
 		   && MainThreadWorkEstimateWithinBudget(
 			   45'500'000, 227'000'000,
@@ -11970,9 +11969,7 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 			historyWidget->setDraftTextForRegressionTest(QString());
 			auto revealProbeItem = commandBotHistory->lastMessage();
 			const auto revealProbeReady = WaitForRegressionCondition(
-				[&] {
-					return revealProbeItem && revealProbeItem->mainView();
-				},
+				[&] { return revealProbeItem && revealProbeItem->mainView(); },
 				1000);
 			const auto revealProbeHasView
 				= revealProbeReady && revealProbeItem->mainView();
@@ -11980,14 +11977,16 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 				result.pendingRevealStartedAfterControlsGeometry
 					= historyWidget
 						  ->updateControlsGeometryStartsPendingRevealForRegressionTest(
-							revealProbeItem);
+							  revealProbeItem);
 			}
-			std::fprintf(stderr,
-						 "Pending reveal controls geometry: target_available=%d "
-						 "started=%d.\n",
-						revealProbeHasView,
-						result.pendingRevealStartedAfterControlsGeometry);
-			showPeerHistoryMeasured(emptyFirstHistory);
+                        std::fprintf(
+                            stderr,
+                            "Pending reveal controls geometry: "
+                            "target_available=%d "
+                            "started=%d.\n",
+                            revealProbeHasView,
+                            result.pendingRevealStartedAfterControlsGeometry);
+                        showPeerHistoryMeasured(emptyFirstHistory);
 			settleHistoryUnfocused();
 			historyWidget->resetFieldAutocompleteForRegressionTest();
 			commandAutocompleteWasDeferred
@@ -12516,16 +12515,15 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		Core::App().settings().setAdaptiveForWide(true);
 		controller->adaptive().setChatLayout(
 			Window::Adaptive::ChatLayout::Wide);
-		const auto layoutWidth
-			= firstHistory->layoutWidthForRegressionTest();
-		if (layoutWidth > 0 && controller->adaptive().isChatWide()) {
-			firstHistory->resizeToWidth(layoutWidth, true);
-		}
-		result.historyChatModeInitiallyWide
-			= (layoutWidth > 0)
-			  && controller->adaptive().isChatWide()
-			  && firstHistory->layoutChatWideForRegressionTest();
-		result.historyChatModeResizeCountBefore
+                const auto layoutWidth =
+                    firstHistory->layoutWidthForRegressionTest();
+                if (layoutWidth > 0 && controller->adaptive().isChatWide()) {
+                  firstHistory->resizeToWidth(layoutWidth, true);
+                }
+                result.historyChatModeInitiallyWide =
+                    (layoutWidth > 0) && controller->adaptive().isChatWide() &&
+                    firstHistory->layoutChatWideForRegressionTest();
+                result.historyChatModeResizeCountBefore
 			= firstHistory->layoutFullResizeCountForRegressionTest();
 		controller->showPeerHistory(secondHistory);
 		const auto switchedToSecondHistory = WaitForRegressionCondition(
@@ -12574,50 +12572,50 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		controller->adaptive().setChatLayout(originalChatLayout);
 		QCoreApplication::processEvents();
 	}
-	auto chatSwitchSchedulerTimeline
-		= Core::UiStallWatchdog::RecentSchedulerSamplesForTesting();
-	const auto chatSwitchSamplingSettled = [&] {
-		chatSwitchSchedulerTimeline
-			= Core::UiStallWatchdog::RecentSchedulerSamplesForTesting();
-		for (const auto &window : chatSwitchWindows) {
-			if ((window.durationNanoseconds >= kMaxChatSwitchNanoseconds)
-				&& SchedulerTraceForInterval(window, chatSwitchSchedulerTimeline)
-					   .capturePending) {
-				return false;
-			}
+        auto chatSwitchSchedulerTimeline =
+            Core::UiStallWatchdog::RecentSchedulerSamplesForTesting();
+        const auto chatSwitchSamplingSettled = [&] {
+          chatSwitchSchedulerTimeline =
+              Core::UiStallWatchdog::RecentSchedulerSamplesForTesting();
+          for (const auto &window : chatSwitchWindows) {
+			  if ((window.durationNanoseconds >= kMaxChatSwitchNanoseconds)
+				  && SchedulerTraceForInterval(window,
+											   chatSwitchSchedulerTimeline)
+						 .capturePending) {
+				  return false;
+			  }
+		  }
+          return true;
+        };
+		const auto chatSwitchSamplingCompleted
+			= chatSwitchSamplingSettled()
+			  || WaitForRegressionCondition(chatSwitchSamplingSettled, 1000);
+		if (!chatSwitchSamplingCompleted) {
+			std::fprintf(stderr, "Chat switch scheduler capture did not "
+								 "complete within 1000 ms.\n");
 		}
-		return true;
-	};
-	const auto chatSwitchSamplingCompleted
-		= chatSwitchSamplingSettled()
-		  || WaitForRegressionCondition(chatSwitchSamplingSettled, 1000);
-	if (!chatSwitchSamplingCompleted) {
-		std::fprintf(
-			stderr,
-			"Chat switch scheduler capture did not complete within 1000 ms.\n");
-	}
-	chatSwitchSchedulerTimeline
-		= Core::UiStallWatchdog::RecentSchedulerSamplesForTesting();
-	auto chatSwitchSchedulerSamples = std::vector<SchedulerTraceWindow>();
+        chatSwitchSchedulerTimeline =
+            Core::UiStallWatchdog::RecentSchedulerSamplesForTesting();
+        auto chatSwitchSchedulerSamples = std::vector<SchedulerTraceWindow>();
 	chatSwitchSchedulerSamples.reserve(chatSwitchWindows.size());
 	result.chatSwitchWorkWithinBudget
 		= chatSwitchCpuClockAvailable && !chatSwitchWindows.empty();
 	for (auto i = 0U; i != chatSwitchWindows.size(); ++i) {
-		const auto schedulerSamples = SchedulerTraceForInterval(
-			chatSwitchWindows[i], chatSwitchSchedulerTimeline);
-		chatSwitchSchedulerSamples.push_back(schedulerSamples);
-		const auto &schedulerTrace = schedulerSamples.trace;
-		const auto &schedulerSampleOffsetsNanoseconds
-			= schedulerSamples.sampleOffsetsNanoseconds;
-		const auto estimate = EstimateMainThreadWork(
-			chatSwitchWindows[i].mainThreadWorkNanoseconds,
-			chatSwitchWindows[i].durationNanoseconds, schedulerTrace,
-			schedulerSampleOffsetsNanoseconds);
-		if (i > 0) {
-			result.maxChatSwitchEstimatedWorkNanoseconds
-				= std::max(result.maxChatSwitchEstimatedWorkNanoseconds,
-						   estimate.estimatedWorkNanoseconds);
-		}
+          const auto schedulerSamples = SchedulerTraceForInterval(
+              chatSwitchWindows[i], chatSwitchSchedulerTimeline);
+          chatSwitchSchedulerSamples.push_back(schedulerSamples);
+          const auto &schedulerTrace = schedulerSamples.trace;
+          const auto &schedulerSampleOffsetsNanoseconds =
+              schedulerSamples.sampleOffsetsNanoseconds;
+          const auto estimate = EstimateMainThreadWork(
+              chatSwitchWindows[i].mainThreadWorkNanoseconds,
+              chatSwitchWindows[i].durationNanoseconds, schedulerTrace,
+              schedulerSampleOffsetsNanoseconds);
+          if (i > 0) {
+            result.maxChatSwitchEstimatedWorkNanoseconds =
+                std::max(result.maxChatSwitchEstimatedWorkNanoseconds,
+                         estimate.estimatedWorkNanoseconds);
+          }
 		if (i == 0) {
 			result.initialHistorySelectionBlockedNanoseconds
 				= estimate.blockedNanoseconds;
@@ -12739,33 +12737,33 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 			  kMaxSchedulerProofOtherThreadWorkNanoseconds);
 	const auto schedulerEvidenceRecords
 		= Core::UiStallWatchdog::RecentStallEvidenceForTesting();
-	const auto attachMenuSchedulerTimeline
-		= Core::UiStallWatchdog::RecentSchedulerSamplesForTesting();
-	auto attachMenuWorkSeen = std::array<bool, 4>();
+        const auto attachMenuSchedulerTimeline =
+            Core::UiStallWatchdog::RecentSchedulerSamplesForTesting();
+        auto attachMenuWorkSeen = std::array<bool, 4>();
 	for (const auto &callback : attachMenuCallbacks) {
-		const auto schedulerSamples
-			= SchedulerTraceForInterval(callback, attachMenuSchedulerTimeline);
-		const auto estimate = EstimateMainThreadWork(
-			callback.mainThreadWorkNanoseconds, callback.durationNanoseconds,
-			schedulerSamples.trace,
-			schedulerSamples.sampleOffsetsNanoseconds);
-		qint64 *destination = nullptr;
-		bool *seen = nullptr;
-		if (callback.label == u"first hover callback"_q) {
-			destination = &result.attachMenuFirstHoverEstimatedWorkNanoseconds;
-			seen = &attachMenuWorkSeen[0];
-		} else if (callback.label == u"cached hover callback"_q) {
-			destination = &result.attachMenuHoverEstimatedWorkNanoseconds;
-			seen = &attachMenuWorkSeen[1];
-		} else if (callback.label == u"invalidation hover callback"_q) {
-			destination
-				= &result.attachMenuInvalidationEstimatedWorkNanoseconds;
-			seen = &attachMenuWorkSeen[2];
-		} else if (callback.label.startsWith(u"uncached peer "_q)) {
-			destination
-				= &result.attachMenuUncachedPeerEstimatedWorkNanoseconds;
-			seen = &attachMenuWorkSeen[3];
-		}
+          const auto schedulerSamples =
+              SchedulerTraceForInterval(callback, attachMenuSchedulerTimeline);
+          const auto estimate = EstimateMainThreadWork(
+              callback.mainThreadWorkNanoseconds, callback.durationNanoseconds,
+              schedulerSamples.trace,
+              schedulerSamples.sampleOffsetsNanoseconds);
+          qint64 *destination = nullptr;
+          bool *seen = nullptr;
+          if (callback.label == u"first hover callback"_q) {
+            destination = &result.attachMenuFirstHoverEstimatedWorkNanoseconds;
+            seen = &attachMenuWorkSeen[0];
+          } else if (callback.label == u"cached hover callback"_q) {
+            destination = &result.attachMenuHoverEstimatedWorkNanoseconds;
+            seen = &attachMenuWorkSeen[1];
+          } else if (callback.label == u"invalidation hover callback"_q) {
+            destination =
+                &result.attachMenuInvalidationEstimatedWorkNanoseconds;
+            seen = &attachMenuWorkSeen[2];
+          } else if (callback.label.startsWith(u"uncached peer "_q)) {
+            destination =
+                &result.attachMenuUncachedPeerEstimatedWorkNanoseconds;
+            seen = &attachMenuWorkSeen[3];
+          }
 		if (destination && seen) {
 			if (!*seen) {
 				*destination = estimate.estimatedWorkNanoseconds;
@@ -13035,7 +13033,7 @@ RunFirstDialogsHandlerLatencyRegression(not_null<Main::Account *> account) {
 			= Core::UiStallWatchdog::RecentSchedulerSamplesForTesting();
 		return !SchedulerTraceForInterval(handlerInterval,
 										  handlerSchedulerTimeline)
-				.capturePending;
+					.capturePending;
 	};
 	const auto handlerCaptureComplete
 		= (result.handlerNanoseconds < kMaxHandlerNanoseconds)
@@ -13043,9 +13041,9 @@ RunFirstDialogsHandlerLatencyRegression(not_null<Main::Account *> account) {
 		  || WaitForRegressionCondition(handlerCaptureSettled, 1000);
 	const auto handlerSchedulerSamples
 		= handlerCaptureComplete
-			  ? SchedulerTraceForInterval(handlerInterval,
-										  Core::UiStallWatchdog::
-										  RecentSchedulerSamplesForTesting())
+			  ? SchedulerTraceForInterval(
+					handlerInterval,
+					Core::UiStallWatchdog::RecentSchedulerSamplesForTesting())
 			  : SchedulerTraceWindow{.capturePending = true};
 	if (!handlerSchedulerSamples.capturePending) {
 		result.handlerSchedulerTrace = handlerSchedulerSamples.trace;
