@@ -18,6 +18,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <chrono>
 #include <cstdint>
 #include <cstdlib>
+#include <deque>
 #include <functional>
 #include <memory>
 #include <system_error>
@@ -59,12 +60,12 @@ constexpr auto kMaxSchedulerSampleGap = 5ms;
 constexpr auto kMaxSchedulerSamples = 8192U;
 constexpr auto kMaxFrames = 32U;
 constexpr auto kMaxFrameCharacters = 160;
-constexpr auto kMaxPingAcknowledgements = 16'384U;
+constexpr auto kMaxPingAcknowledgements = 32'768U;
 
 std::atomic<quint64> TotalStallCount = 0;
 std::mutex StallEvidenceMutex;
 std::vector<UiStallWatchdog::StallEvidence> StallEvidenceHistory;
-std::vector<UiStallWatchdog::PingAcknowledgementEvidence>
+std::deque<UiStallWatchdog::PingAcknowledgementEvidence>
 	PingAcknowledgementHistory;
 
 #if defined(Q_OS_MAC)
@@ -486,7 +487,8 @@ UiStallWatchdog::RecentStallEvidenceForTesting() {
 std::vector<UiStallWatchdog::PingAcknowledgementEvidence>
 UiStallWatchdog::RecentPingAcknowledgementsForTesting() {
 	const auto lock = std::lock_guard(StallEvidenceMutex);
-	return PingAcknowledgementHistory;
+	return {PingAcknowledgementHistory.begin(),
+			PingAcknowledgementHistory.end()};
 }
 
 bool UiStallWatchdog::ShouldStopBeforeTraceAttachment(
@@ -623,8 +625,7 @@ bool UiStallWatchdog::event(QEvent *event) {
 				PingAcknowledgementHistory.push_back(evidence);
 				if (PingAcknowledgementHistory.size()
 					> kMaxPingAcknowledgements) {
-					PingAcknowledgementHistory.erase(
-						PingAcknowledgementHistory.begin());
+					PingAcknowledgementHistory.pop_front();
 				}
 			}
 			_acknowledgedSequence = ping->sequence;

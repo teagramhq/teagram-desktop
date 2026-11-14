@@ -11071,18 +11071,25 @@ EstimateMainThreadWork(qint64 mainThreadCpuNanoseconds, qint64 wallNanoseconds,
 		return {-1, wallNanoseconds};
 	} else if (mainThreadCpuNanoseconds < 0) {
 		return {};
-	} else if (!Core::UiStallWatchdog::SchedulerTraceCoversDuration(
-				   schedulerTrace, sampleOffsetsNanoseconds, wallNanoseconds)) {
-		return {-1, wallNanoseconds};
 	}
 	auto samples = qint64(0);
 	auto blockedSamples = qint64(0);
+	auto firstOffset = qint64(0);
+	auto lastOffset = qint64(0);
+	auto previousOffset = qint64(0);
+	auto hasPreviousOffset = false;
 	for (auto i = std::size_t(0); i != sampleOffsetsNanoseconds.size(); ++i) {
 		const auto offset = sampleOffsetsNanoseconds[i];
-		if (offset < 0) {
+		if ((offset < 0) || (hasPreviousOffset && (offset < previousOffset))) {
 			return {-1, wallNanoseconds};
 		}
+		previousOffset = offset;
+		hasPreviousOffset = true;
 		if ((offset >= 0) && (offset <= wallNanoseconds)) {
+			if (!samples) {
+				firstOffset = offset;
+			}
+			lastOffset = offset;
 			++samples;
 			const auto state = schedulerTrace[qsizetype(i)];
 			if ((state == u'W') || (state == u'U')) {
@@ -11092,8 +11099,30 @@ EstimateMainThreadWork(qint64 mainThreadCpuNanoseconds, qint64 wallNanoseconds,
 			}
 		}
 	}
-	if (!samples) {
+	if (samples < 4) {
 		return {-1, wallNanoseconds};
+	}
+	constexpr auto kMaximumEdgeGapNanoseconds = qint64(5'000'000);
+	const auto expectedSampleIntervalNanoseconds
+		= wallNanoseconds / (samples - 1);
+	const auto maximumSampleGapNanoseconds
+		= std::max(kMaximumEdgeGapNanoseconds,
+				   expectedSampleIntervalNanoseconds
+					   + expectedSampleIntervalNanoseconds / 2);
+	if ((firstOffset > kMaximumEdgeGapNanoseconds)
+		|| (wallNanoseconds - lastOffset > kMaximumEdgeGapNanoseconds)) {
+		return {-1, wallNanoseconds};
+	}
+	auto priorInWindowOffset = firstOffset;
+	for (auto i = std::size_t(0); i != sampleOffsetsNanoseconds.size(); ++i) {
+		const auto offset = sampleOffsetsNanoseconds[i];
+		if ((offset < 0) || (offset > wallNanoseconds)) {
+			continue;
+		}
+		if ((offset - priorInWindowOffset) > maximumSampleGapNanoseconds) {
+			return {-1, wallNanoseconds};
+		}
+		priorInWindowOffset = offset;
 	}
 	const auto wholeWallSampleNanoseconds = wallNanoseconds / samples;
 	const auto remainderWallNanoseconds = wallNanoseconds % samples;
@@ -11172,11 +11201,14 @@ void AccumulateMainThreadWorkEstimate(qint64 &aggregateNanoseconds,
 		18'000'000, 225'000'000, blockedTailTrace, switchOffsets);
 	const auto clustered = EstimateMainThreadWork(0, 200'000'000, u"RRR"_q,
 												  {0, 1'000'000, 2'000'000});
+	const auto uncoveredMiddle = EstimateMainThreadWork(
+		0, 200'000'000, QString(5, QChar(u'R')),
+		{0, 5'000'000, 10'000'000, 190'000'000, 200'000'000});
 	const auto sparseStartupOffsets = std::vector<qint64>{
-		0,			 12'000'000,  24'000'000,  36'000'000,	48'000'000,
-		60'000'000,	 72'000'000,  84'000'000,  96'000'000,	108'000'000,
-		120'000'000, 132'000'000, 144'000'000, 156'000'000, 168'000'000,
-		180'000'000, 192'000'000, 204'000'000, 216'000'000,
+		0,			 12'500'000,  25'000'000,  37'500'000,	50'000'000,
+		62'500'000,	 75'000'000,  87'500'000,  100'000'000, 112'500'000,
+		125'000'000, 137'500'000, 150'000'000, 162'500'000, 175'000'000,
+		187'500'000, 200'000'000, 212'500'000, 225'000'000,
 	};
 	const auto sparseStartupTrace
 		= QString(15, QChar(u'R')) + QString(4, QChar(u'W'));
@@ -11306,11 +11338,13 @@ void AccumulateMainThreadWorkEstimate(qint64 &aggregateNanoseconds,
 		   && (clustered.estimatedWorkNanoseconds == 200'000'000)
 		   && !MainThreadWorkEstimateWithinBudget(
 			   0, 200'000'000, u"RRR"_q, {0, 1'000'000, 2'000'000}, 100'000'000)
+		   && (uncoveredMiddle.blockedNanoseconds == -1)
+		   && (uncoveredMiddle.estimatedWorkNanoseconds == 200'000'000)
 		   && !Core::UiStallWatchdog::SchedulerTraceCoversDuration(
 			   u"RRR"_q, {0, 1'000'000, 2'000'000}, 200'000'000)
-		   && (sparseStartup.blockedNanoseconds == -1)
-		   && (sparseStartup.estimatedWorkNanoseconds == 225'000'000)
-		   && !MainThreadWorkEstimateWithinBudget(
+		   && (sparseStartup.blockedNanoseconds == 47'368'421)
+		   && (sparseStartup.estimatedWorkNanoseconds == 65'368'421)
+		   && MainThreadWorkEstimateWithinBudget(
 			   18'000'000, 225'000'000, sparseStartupTrace,
 			   sparseStartupOffsets, 100'000'000)
 		   && !MainThreadWorkEstimateWithinBudget(
@@ -11334,10 +11368,10 @@ void AccumulateMainThreadWorkEstimate(qint64 &aggregateNanoseconds,
 		   && (capturedWindowEstimate.estimatedWorkNanoseconds == 18'000'000)
 		   && !sparseStartupCapture.capturePending
 		   && (sparseStartupCapture.trace == sparseStartupTrace)
-		   && (sparseStartupCaptureEstimate.blockedNanoseconds == -1)
+		   && (sparseStartupCaptureEstimate.blockedNanoseconds == 47'368'421)
 		   && (sparseStartupCaptureEstimate.estimatedWorkNanoseconds
-			   == sparseStartupWindow.durationNanoseconds)
-		   && !MainThreadWorkEstimateWithinBudget(
+			   == 65'368'421)
+		   && MainThreadWorkEstimateWithinBudget(
 			   18'000'000, sparseStartupWindow.durationNanoseconds,
 			   sparseStartupCapture.trace,
 			   sparseStartupCapture.sampleOffsetsNanoseconds, 100'000'000)
@@ -11648,6 +11682,102 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 	}
 	showPeerHistoryMeasured(firstHistory);
 	settleHistoryUnfocused();
+	historyWidget->clearFieldFocusForRegressionTest();
+	historyWidget->resetFieldAutocompleteForRegressionTest();
+	historyWidget->initFieldAutocompleteForRegressionTest();
+	showPeerHistoryMeasured(secondHistory);
+	const auto autocompleteBuildsBeforeFocus
+		= historyWidget->fieldAutocompleteBuildCountForRegressionTest();
+	const auto autocompleteDeferredUntilFocus
+		= (autocompleteBuildsBeforeFocus == 0)
+		  && (historyWidget->fieldAutocompletePeerForRegressionTest()
+			  == nullptr)
+		  && !historyWidget->fieldFocusedForRegressionTest();
+	historyWidget->focusFieldForRegressionTest();
+	const auto autocompleteBuiltOnFocus = WaitForRegressionCondition(
+		[&] {
+			return (historyWidget
+						->fieldAutocompleteBuildCountForRegressionTest()
+					== 1)
+				   && (historyWidget->fieldAutocompletePeerForRegressionTest()
+					   == secondHistory->peer.get())
+				   && historyWidget->fieldFocusedForRegressionTest();
+		},
+		1000);
+	const auto autocompleteBuildsAfterFocus
+		= historyWidget->fieldAutocompleteBuildCountForRegressionTest();
+	const auto autocompletePeerMatchesAfterFocus
+		= (historyWidget->fieldAutocompletePeerForRegressionTest()
+		   == secondHistory->peer.get());
+	const auto autocompleteFocusedAfterFocus
+		= historyWidget->fieldFocusedForRegressionTest();
+	const auto tabbedPanelBuildsBeforeSwitch
+		= historyWidget->tabbedPanelBuildCountForRegressionTest();
+	showPeerHistoryMeasured(firstHistory);
+	settleHistoryUnfocused();
+	const auto autocompleteRestoredAfterSwitch = WaitForRegressionCondition(
+		[&] {
+			return historyWidget->fieldAutocompletePeerForRegressionTest()
+				   == firstHistory->peer.get();
+		},
+		1000);
+	const auto autocompleteBuildsAfterSwitch
+		= historyWidget->fieldAutocompleteBuildCountForRegressionTest();
+	const auto autocompletePeerMatches
+		= (historyWidget->fieldAutocompletePeerForRegressionTest()
+		   == firstHistory->peer.get());
+	const auto tabbedPanelBuildsAfterSwitch
+		= historyWidget->tabbedPanelBuildCountForRegressionTest();
+	result.chatSwitchComposeUiReused
+		= autocompleteDeferredUntilFocus && autocompleteBuiltOnFocus
+		  && (autocompleteBuildsAfterFocus == 1)
+		  && autocompletePeerMatchesAfterFocus && autocompleteFocusedAfterFocus
+		  && (autocompleteBuildsAfterSwitch == autocompleteBuildsAfterFocus)
+		  && (tabbedPanelBuildsAfterSwitch == tabbedPanelBuildsBeforeSwitch)
+		  && autocompleteRestoredAfterSwitch && autocompletePeerMatches
+		  && result.chatSwitchTransitionsSettled;
+	std::fprintf(
+		stderr,
+		"Chat switch compose UI reuse: autocomplete_builds_before_focus=%d "
+		"autocomplete_deferred_until_focus=%d "
+		"autocomplete_builds_after_focus=%d "
+		"autocomplete_builds_after=%d autocomplete_peer_matches=%d "
+		"autocomplete_focused_after_focus=%d "
+		"tabbed_panel_builds_before=%d tabbed_panel_builds_after=%d "
+		"transitions_settled=%d.\n",
+		autocompleteBuildsBeforeFocus, autocompleteDeferredUntilFocus,
+		autocompleteBuildsAfterFocus, autocompleteBuildsAfterSwitch,
+		autocompletePeerMatches, autocompleteFocusedAfterFocus,
+		tabbedPanelBuildsBeforeSwitch, tabbedPanelBuildsAfterSwitch,
+		result.chatSwitchTransitionsSettled);
+	historyWidget->setDraftTextForRegressionTest(u"@"_q);
+	result.fieldAutocompleteSuggestionsReady = WaitForRegressionCondition(
+		[&] {
+			return historyWidget
+				->fieldAutocompleteSuggestionsReadyForRegressionTest();
+		},
+		1000);
+	historyWidget->setDraftTextForRegressionTest(QString());
+	historyWidget->hideFieldAutocompleteForRegressionTest();
+	const auto unreadProbeElement = firstHistory->firstUnreadMessage();
+	auto revealProbeItem
+		= unreadProbeElement ? unreadProbeElement->data().get() : nullptr;
+	if (!revealProbeItem || !revealProbeItem->mainView()) {
+		revealProbeItem = firstHistory->lastMessage();
+	}
+	const auto revealProbeHasView
+		= revealProbeItem && revealProbeItem->mainView();
+	if (revealProbeHasView) {
+		result.pendingRevealStartedAfterControlsGeometry
+			= historyWidget
+				  ->updateControlsGeometryStartsPendingRevealForRegressionTest(
+					  revealProbeItem);
+	}
+	std::fprintf(stderr,
+				 "Pending reveal controls geometry: target_available=%d "
+				 "started=%d.\n",
+				 revealProbeHasView,
+				 result.pendingRevealStartedAfterControlsGeometry);
 	historyWidget->setDraftTextForRegressionTest(QString());
 	historyWidget->hideFieldAutocompleteForRegressionTest();
 	historyWidget->resetFieldAutocompleteForRegressionTest();
@@ -11746,84 +11876,6 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 			historyWidget->setDraftTextForRegressionTest(QString());
 		}
 	}
-	historyWidget->clearFieldFocusForRegressionTest();
-	historyWidget->resetFieldAutocompleteForRegressionTest();
-	historyWidget->initFieldAutocompleteForRegressionTest();
-	const auto autocompleteBuildsBeforeFocus
-		= historyWidget->fieldAutocompleteBuildCountForRegressionTest();
-	const auto autocompleteDeferredUntilFocus
-		= (autocompleteBuildsBeforeFocus == 0)
-		  && (historyWidget->fieldAutocompletePeerForRegressionTest()
-			  == nullptr)
-		  && !historyWidget->fieldFocusedForRegressionTest();
-	historyWidget->focusFieldForRegressionTest();
-	const auto autocompleteBuiltOnFocus = WaitForRegressionCondition(
-		[&] {
-			return (historyWidget
-						->fieldAutocompleteBuildCountForRegressionTest()
-					== 1)
-				   && (historyWidget->fieldAutocompletePeerForRegressionTest()
-					   == emptyFirstHistory->peer.get())
-				   && historyWidget->fieldFocusedForRegressionTest();
-		},
-		1000);
-	const auto autocompleteBuildsAfterFocus
-		= historyWidget->fieldAutocompleteBuildCountForRegressionTest();
-	const auto autocompletePeerMatchesAfterFocus
-		= (historyWidget->fieldAutocompletePeerForRegressionTest()
-		   == emptyFirstHistory->peer.get());
-	const auto autocompleteFocusedAfterFocus
-		= historyWidget->fieldFocusedForRegressionTest();
-	historyWidget->setDraftTextForRegressionTest(u"@"_q);
-	result.fieldAutocompleteSuggestionsReady = WaitForRegressionCondition(
-		[&] {
-			return historyWidget
-				->fieldAutocompleteSuggestionsReadyForRegressionTest();
-		},
-		1000);
-	historyWidget->setDraftTextForRegressionTest(QString());
-	historyWidget->hideFieldAutocompleteForRegressionTest();
-	const auto tabbedPanelBuildsBeforeSwitch
-		= historyWidget->tabbedPanelBuildCountForRegressionTest();
-	showPeerHistoryMeasured(secondHistory);
-	settleHistoryUnfocused();
-	showPeerHistoryMeasured(firstHistory);
-	settleHistoryUnfocused();
-	const auto autocompleteRestoredAfterSwitch = WaitForRegressionCondition(
-		[&] {
-			return historyWidget->fieldAutocompletePeerForRegressionTest()
-				   == firstHistory->peer.get();
-		},
-		1000);
-	const auto autocompleteBuildsAfterSwitch
-		= historyWidget->fieldAutocompleteBuildCountForRegressionTest();
-	const auto autocompletePeerMatches
-		= (historyWidget->fieldAutocompletePeerForRegressionTest()
-		   == firstHistory->peer.get());
-	const auto tabbedPanelBuildsAfterSwitch
-		= historyWidget->tabbedPanelBuildCountForRegressionTest();
-	result.chatSwitchComposeUiReused
-		= autocompleteDeferredUntilFocus && autocompleteBuiltOnFocus
-		  && (autocompleteBuildsAfterFocus == 1)
-		  && autocompletePeerMatchesAfterFocus && autocompleteFocusedAfterFocus
-		  && (autocompleteBuildsAfterSwitch == autocompleteBuildsAfterFocus)
-		  && (tabbedPanelBuildsAfterSwitch == tabbedPanelBuildsBeforeSwitch)
-		  && autocompleteRestoredAfterSwitch && autocompletePeerMatches
-		  && result.chatSwitchTransitionsSettled;
-	std::fprintf(
-		stderr,
-		"Chat switch compose UI reuse: autocomplete_builds_before_focus=%d "
-		"autocomplete_deferred_until_focus=%d "
-		"autocomplete_builds_after_focus=%d "
-		"autocomplete_builds_after=%d autocomplete_peer_matches=%d "
-		"autocomplete_focused_after_focus=%d "
-		"tabbed_panel_builds_before=%d tabbed_panel_builds_after=%d "
-		"transitions_settled=%d.\n",
-		autocompleteBuildsBeforeFocus, autocompleteDeferredUntilFocus,
-		autocompleteBuildsAfterFocus, autocompleteBuildsAfterSwitch,
-		autocompletePeerMatches, autocompleteFocusedAfterFocus,
-		tabbedPanelBuildsBeforeSwitch, tabbedPanelBuildsAfterSwitch,
-		result.chatSwitchTransitionsSettled);
 	std::fprintf(
 		stderr,
 		"Bot command controls while field unfocused: started_history=%d "
@@ -11835,23 +11887,6 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		menuClickedUnfocused, menuCommandsShown, commandStartVisible,
 		commandAutocompleteWasDeferred, startClickedUnfocused,
 		startCommandsShown);
-	const auto unreadProbeElement = firstHistory->firstUnreadMessage();
-	const auto revealProbeItem = unreadProbeElement
-									 ? unreadProbeElement->data().get()
-									 : firstHistory->lastMessage();
-	const auto revealProbeHasView
-		= revealProbeItem && revealProbeItem->mainView();
-	if (revealProbeHasView) {
-		result.pendingRevealStartedAfterControlsGeometry
-			= historyWidget
-				  ->updateControlsGeometryStartsPendingRevealForRegressionTest(
-					  revealProbeItem);
-	}
-	std::fprintf(stderr,
-				 "Pending reveal controls geometry: target_available=%d "
-				 "started=%d.\n",
-				 revealProbeHasView,
-				 result.pendingRevealStartedAfterControlsGeometry);
 	auto slowAttachMenuCallbacks = std::vector<MainThreadWorkInterval>();
 	auto attachMenuCallbacks = std::vector<MainThreadWorkInterval>();
 	const auto collectSlowAttachMenuCallbacks = [&](const QString &label) {
@@ -12341,6 +12376,8 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 			originalWindowSize.height());
 		QCoreApplication::processEvents();
 		Core::App().settings().setAdaptiveForWide(true);
+		controller->adaptive().setChatLayout(
+			Window::Adaptive::ChatLayout::Wide);
 		result.historyChatModeInitiallyWide = WaitForRegressionCondition(
 			[&] {
 				return controller->adaptive().isChatWide()

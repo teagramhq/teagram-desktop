@@ -107,7 +107,6 @@ main_thread_work_estimate_within_budget() {
 		local blocked_sample_count=0
 		local first_in_window_offset=0
 		local last_in_window_offset=0
-		local previous_in_window_offset=0
 		local has_in_window_offset=false
 		for ((i = 0; i < sample_count; ++i)); do
 			[[ "$samples_valid" == true ]] || break
@@ -126,15 +125,9 @@ main_thread_work_estimate_within_budget() {
 				break
 			fi
 			if (( offset >= 0 && offset <= wall_ns )); then
-				if [[ "$has_in_window_offset" == true ]] \
-					&& (( offset - previous_in_window_offset > 5000000 )); then
-					samples_valid=false
-					break
-				fi
 				if [[ "$has_in_window_offset" != true ]]; then
 					first_in_window_offset="$offset"
 				fi
-				previous_in_window_offset="$offset"
 				last_in_window_offset="$offset"
 				has_in_window_offset=true
 				((++in_window_samples))
@@ -150,7 +143,31 @@ main_thread_work_estimate_within_budget() {
 			has_previous=true
 		done
 		if [[ "$samples_valid" == true ]] \
-			&& (( in_window_samples > 0 )) \
+			&& (( in_window_samples >= 4 )); then
+			local expected_sample_interval_ns="$((wall_ns / (in_window_samples - 1)))"
+			local maximum_sample_gap_ns="$((expected_sample_interval_ns + expected_sample_interval_ns / 2))"
+			if (( maximum_sample_gap_ns < 5000000 )); then
+				maximum_sample_gap_ns=5000000
+			fi
+			if (( first_in_window_offset > 5000000 )) \
+				|| (( wall_ns - last_in_window_offset > 5000000 )); then
+				samples_valid=false
+			fi
+			local prior_in_window_offset="$first_in_window_offset"
+			for ((i = 0; i < sample_count; ++i)); do
+				[[ "$samples_valid" == true ]] || break
+				local offset="${scheduler_offsets[i]}"
+				if (( offset >= 0 && offset <= wall_ns )); then
+					if (( offset - prior_in_window_offset > maximum_sample_gap_ns )); then
+						samples_valid=false
+						break
+					fi
+					prior_in_window_offset="$offset"
+				fi
+			done
+		fi
+		if [[ "$samples_valid" == true ]] \
+			&& (( in_window_samples >= 4 )) \
 			&& (( first_in_window_offset <= 5000000 )) \
 			&& (( wall_ns - last_in_window_offset <= 5000000 )); then
 			local blocked_ns="$((

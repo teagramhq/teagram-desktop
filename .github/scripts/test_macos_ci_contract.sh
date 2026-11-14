@@ -1046,6 +1046,10 @@ callback_offsets=""
 for ((offset = 0; offset <= 200000000; offset += 5000000)); do
   callback_offsets="${callback_offsets:+$callback_offsets,}$offset"
 done
+sparse_startup_offsets=""
+for ((offset = 0; offset <= 225000000; offset += 12500000)); do
+  sparse_startup_offsets="${sparse_startup_offsets:+$sparse_startup_offsets,}$offset"
+done
 if main_thread_work_estimate_within_budget \
   0 101000000 "$(printf '%21s' '' | tr ' ' W)" 100000000 \
   "$startup_offsets"; then
@@ -1055,6 +1059,12 @@ if ! main_thread_work_estimate_within_budget \
   18000000 225000000 "$(printf '%46s' '' | tr ' ' R)" 100000000 \
   "$chat_switch_offsets"; then
   contract_fail 'A runnable 225 ms window with 18 ms CPU must pass.'
+fi
+if ! main_thread_work_estimate_within_budget \
+  18000000 225000000 \
+  "$(printf '%15s' '' | tr ' ' R)$(printf '%4s' '' | tr ' ' W)" \
+  100000000 "$sparse_startup_offsets"; then
+  contract_fail 'A covered 19-sample window must estimate blocked-time share.'
 fi
 if main_thread_work_estimate_within_budget 0 101000000 none 100000000 ""; then
   contract_fail 'A window without scheduler samples must fall back to wall time.'
@@ -1074,6 +1084,10 @@ fi
 if main_thread_work_estimate_within_budget \
 	0 200000000 RRR 100000000 0,1000000,2000000; then
 	contract_fail 'A clustered runnable trace must fall back to wall time.'
+fi
+if main_thread_work_estimate_within_budget \
+  0 200000000 RRRRR 100000000 0,5000000,10000000,190000000,200000000; then
+  contract_fail 'A long unobserved middle interval must fall back to wall time.'
 fi
 if main_thread_work_estimate_within_budget \
   18000000 225000000 \
