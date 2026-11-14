@@ -1837,6 +1837,13 @@ int HistoryWidget::itemTopForHighlight(
 }
 
 void HistoryWidget::initFieldAutocomplete() {
+	if (!_field->hasFocus() && _peer && !_autocomplete) {
+		return;
+	}
+	ensureFieldAutocomplete();
+}
+
+void HistoryWidget::ensureFieldAutocomplete() {
 	if (!_peer) {
 		if (_autocomplete) {
 			_autocomplete->setCurrentPeer(nullptr);
@@ -1845,9 +1852,6 @@ void HistoryWidget::initFieldAutocomplete() {
 	}
 	if (_autocomplete) {
 		_autocomplete->setCurrentPeer(_peer);
-		return;
-	}
-	if (!_field->hasFocus()) {
 		return;
 	}
 #ifdef TDESKTOP_LIFECYCLE_REGRESSION
@@ -6897,6 +6901,28 @@ bool HistoryWidget::fieldAutocompleteSuggestionsReadyForRegressionTest() const {
 		   && (_autocomplete->width() > 0) && (_autocomplete->height() > 0);
 }
 
+void HistoryWidget::resetFieldAutocompleteForRegressionTest() {
+	_emojiSuggestions.reset();
+	_autocomplete.reset();
+	_fieldAutocompleteBuildCountForRegressionTest = 0;
+}
+
+bool HistoryWidget::clickBotMenuForRegressionTest() {
+	if (_field->hasFocus() || !_botMenu.button || _botMenu.button->isHidden()) {
+		return false;
+	}
+	_botMenu.button->clicked(Qt::NoModifier, Qt::LeftButton);
+	return !_field->hasFocus();
+}
+
+bool HistoryWidget::clickBotCommandStartForRegressionTest() {
+	if (_field->hasFocus()) {
+		return false;
+	}
+	_botCommandStart->clicked(Qt::NoModifier, Qt::LeftButton);
+	return !_field->hasFocus();
+}
+
 int HistoryWidget::tabbedPanelBuildCountForRegressionTest() const {
 	return _tabbedPanelBuildCountForRegressionTest;
 }
@@ -7131,10 +7157,13 @@ bool HistoryWidget::updateCmdStartShown() {
 					},
 					.source = InlineBots::WebViewSourceBotMenu(),
 				});
-			} else if (_autocomplete && !_autocomplete->isHidden()) {
-				_autocomplete->hideAnimated();
-			} else if (_autocomplete) {
-				_autocomplete->showFiltered(_peer, "/", true);
+			} else {
+				ensureFieldAutocomplete();
+				if (_autocomplete && !_autocomplete->isHidden()) {
+					_autocomplete->hideAnimated();
+				} else if (_autocomplete) {
+					_autocomplete->showFiltered(_peer, "/", true);
+				}
 			}
 		});
 		_botMenu.button->widthValue(
@@ -7356,10 +7385,9 @@ void HistoryWidget::toggleKeyboard(bool manual) {
 }
 
 void HistoryWidget::startBotCommand() {
-	setFieldText(
-		{ u"/"_q, TextWithTags::Tags() },
-		0,
-		Ui::InputField::HistoryAction::NewEntry);
+	ensureFieldAutocomplete();
+	setFieldText({u"/"_q, TextWithTags::Tags()}, 0,
+				 Ui::InputField::HistoryAction::NewEntry);
 }
 
 void HistoryWidget::setMembersShowAreaActive(bool active) {

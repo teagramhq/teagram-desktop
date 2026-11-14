@@ -64,6 +64,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_message_reaction_id.h"
 #include "data/data_message_reactions.h"
 #include "data/data_messages.h"
+#include "data/data_peer_bot_command.h"
 #include "data/data_peer_id.h"
 #include "data/data_photo.h"
 #include "data/data_saved_messages.h"
@@ -11476,6 +11477,7 @@ struct CacheChatSwitchRegressionResult final {
 	bool attachMenuCacheBounded = false;
 	bool pendingRevealStartedAfterControlsGeometry = false;
 	bool fieldAutocompleteSuggestionsReady = false;
+	bool botCommandsShownWhileFieldUnfocused = false;
 	bool attachMenuUncachedPeersReady = false;
 	bool chatSwitchWorkWithinBudget = false;
 	bool chatSwitchSchedulerPreemptionProven = false;
@@ -11615,6 +11617,51 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		= historyWidget->fieldAutocompleteBuildCountForRegressionTest();
 	const auto autocompleteDeferredUntilFocus
 		= (autocompleteBuildsBeforeFocus == 0);
+	const auto commandBotId = UserId(1081);
+	const auto commandBot = data.processUsers(MTP_vector<MTPUser>({
+		RegressionBotUser(commandBotId),
+	}));
+	if (commandBot && commandBot->botInfo) {
+		commandBot->botInfo->commands.push_back({
+			.command = u"help"_q,
+			.description = u"Show help"_q,
+		});
+		historyWidget->clearFieldFocusForRegressionTest();
+		historyWidget->resetFieldAutocompleteForRegressionTest();
+		showPeerHistoryMeasured(data.history(commandBot));
+		QCoreApplication::processEvents();
+		historyWidget->clearFieldFocusForRegressionTest();
+		const auto autocompleteWasDeferred
+			= (historyWidget->fieldAutocompletePeerForRegressionTest()
+			   == nullptr)
+			  && (historyWidget->fieldAutocompleteBuildCountForRegressionTest()
+				  == 0);
+		const auto menuClickedUnfocused
+			= historyWidget->clickBotMenuForRegressionTest();
+		QCoreApplication::processEvents();
+		const auto menuCommandsShown
+			= menuClickedUnfocused
+			  && historyWidget
+					 ->fieldAutocompleteSuggestionsReadyForRegressionTest();
+		historyWidget->hideFieldAutocompleteForRegressionTest();
+		historyWidget->setDraftTextForRegressionTest(QString());
+		historyWidget->resetFieldAutocompleteForRegressionTest();
+		const auto startClickedUnfocused
+			= historyWidget->clickBotCommandStartForRegressionTest();
+		QCoreApplication::processEvents();
+		const auto startCommandsShown
+			= startClickedUnfocused
+			  && historyWidget
+					 ->fieldAutocompleteSuggestionsReadyForRegressionTest();
+		result.botCommandsShownWhileFieldUnfocused = autocompleteWasDeferred
+													 && menuCommandsShown
+													 && startCommandsShown;
+		historyWidget->hideFieldAutocompleteForRegressionTest();
+		historyWidget->setDraftTextForRegressionTest(QString());
+		historyWidget->resetFieldAutocompleteForRegressionTest();
+		showPeerHistoryMeasured(firstHistory);
+		QCoreApplication::processEvents();
+	}
 	historyWidget->focusFieldForRegressionTest();
 	QCoreApplication::processEvents();
 	const auto autocompleteBuildsAfterFocus
@@ -12462,6 +12509,7 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 			  kMaxChatSwitchNanoseconds)
 		  && result.attachMenuCacheBounded && result.chatSwitchComposeUiReused
 		  && result.fieldAutocompleteSuggestionsReady
+		  && result.botCommandsShownWhileFieldUnfocused
 		  && result.pendingRevealStartedAfterControlsGeometry
 		  && result.minimizedRestore && hydrationCpuClockAvailable
 		  && (result.maxHydrationMainThreadWorkNanoseconds >= 0)
@@ -13437,6 +13485,7 @@ void RunAuthenticatedCacheSymlinkCases(
 					"pending_reveal_after_controls_geometry=%d "
 					"chat_switch_compose_ui_reused=%d "
 					"field_autocomplete_suggestions_ready=%d "
+					"bot_commands_unfocused=%d "
 					"history_chat_mode_invalidation_rebuilt=%d "
 					"dialog_histories_ready=%d "
 					"synthetic_histories_ready=%d "
@@ -13501,6 +13550,7 @@ void RunAuthenticatedCacheSymlinkCases(
 					chatSwitch.pendingRevealStartedAfterControlsGeometry,
 					chatSwitch.chatSwitchComposeUiReused,
 					chatSwitch.fieldAutocompleteSuggestionsReady,
+					chatSwitch.botCommandsShownWhileFieldUnfocused,
 					chatSwitch.historyChatModeInvalidationRebuilt,
 					chatSwitch.dialogHistoriesReady,
 					chatSwitch.syntheticHistoriesReady,

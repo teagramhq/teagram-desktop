@@ -307,6 +307,9 @@ public:
 	void setDraftTextForRegressionTest(const QString &text);
 	[[nodiscard]] QString draftTextForRegressionTest() const;
 	[[nodiscard]] TextWithTags draftWithTagsForRegressionTest() const;
+	void resetFieldAutocompleteForRegressionTest();
+	[[nodiscard]] bool clickBotMenuForRegressionTest();
+	[[nodiscard]] bool clickBotCommandStartForRegressionTest();
 	void hideFieldAutocompleteForRegressionTest();
 	void sendForRegressionTest(Api::SendOptions options);
 	void chooseReactionForRegressionTest(FullMsgId context,
@@ -478,6 +481,7 @@ private:
 	void fieldResized();
 
 	void initFieldAutocomplete();
+	void ensureFieldAutocomplete();
 	void cancelInlineBot();
 	void saveDraft(bool delayed = false);
 	void saveCloudDraft();
