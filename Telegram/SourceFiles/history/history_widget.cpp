@@ -218,8 +218,15 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "styles/style_iv.h"
 #include "styles/style_layers.h"
 
-#include <QtGui/QWindow>
+#include <QtCore/QElapsedTimer>
 #include <QtCore/QMimeData>
+#include <QtCore/QTimer>
+#include <QtGui/QAction>
+#include <QtGui/QWindow>
+
+#include <algorithm>
+#include <chrono>
+#include <utility>
 
 namespace {
 
@@ -228,6 +235,7 @@ constexpr auto kMessagesPerPage = 50;
 constexpr auto kPreloadHeightsCount = 3; // when 3 screens to scroll left make a preload request
 constexpr auto kScrollToVoiceAfterScrolledMs = 1000;
 constexpr auto kSkipRepaintWhileScrollMs = 100;
+constexpr auto kAttachBotsMenuCacheLimit = 8;
 constexpr auto kShowMembersDropdownTimeoutMs = 300;
 constexpr auto kDisplayEditTimeWarningMs = 300 * 1000;
 constexpr auto kFullDayInMs = 86400 * 1000;
@@ -493,6 +501,8 @@ HistoryWidget::HistoryWidget(
 		updateExpandButtonVisibility();
 		updateSendButtonType();
 	}, lifetime());
+	Data::AmPremiumValue(&session()) | rpl::skip(1)
+		| rpl::on_next([=] { invalidateAttachBotsMenuCache(); }, lifetime());
 #ifdef Q_OS_MAC
 	// Removed an ability to insert text from the menu bar
 	// when the field is hidden.
@@ -509,8 +519,14 @@ HistoryWidget::HistoryWidget(
 	initTabbedSelector();
 
 	_attachToggle->setClickedCallback([=] {
-		const auto toggle = _attachBotsMenu && _attachBotsMenu->isHidden();
+		const auto toggle = !_attachBotsMenu || _attachBotsMenu->isHidden();
 		base::call_delayed(st::historyAttach.ripple.hideDuration, this, [=] {
+			if (!attachBotsMenuBuiltForCurrentPeer()) {
+				_attachMenuClickWhenReady = toggle;
+				_attachMenuShowWhenReady = toggle;
+				refreshAttachBotsMenu();
+				return;
+			}
 			if (_attachBotsMenu && toggle) {
 				_attachBotsMenu->showAnimated();
 			} else {
@@ -651,17 +667,19 @@ HistoryWidget::HistoryWidget(
 	_botCommandStart->hide();
 
 	session().attachWebView().requestBots();
-	rpl::merge(
-		session().attachWebView().attachBotsUpdates(),
-		session().changes().peerUpdates(
-			Data::PeerUpdate::Flag::Rights
-			| Data::PeerUpdate::Flag::StarsPerMessage
-		) | rpl::filter([=](const Data::PeerUpdate &update) {
-			return update.peer == _peer;
-		}) | rpl::to_empty
-	) | rpl::on_next([=] {
-		refreshAttachBotsMenu();
-	}, lifetime());
+	session().attachWebView().attachBotsUpdates()
+		| rpl::on_next([=] { invalidateAttachBotsMenuCache(); }, lifetime());
+	session().changes().peerUpdates(Data::PeerUpdate::Flag::Rights
+									| Data::PeerUpdate::Flag::StarsPerMessage)
+		| rpl::filter([=](const Data::PeerUpdate &update) {
+			  return _attachBotsMenuCache.find(update.peer)
+					 != end(_attachBotsMenuCache);
+		  })
+		| rpl::on_next(
+			[=](const Data::PeerUpdate &update) {
+				invalidateAttachBotsMenuCache(update.peer);
+			},
+			lifetime());
 
 	_botKeyboardShow->addClickHandler([=] { toggleKeyboard(); });
 	_botKeyboardHide->addClickHandler([=] { toggleKeyboard(); });
@@ -1257,10 +1275,23 @@ void HistoryWidget::refreshTopBarActiveChat() {
 }
 
 void HistoryWidget::refreshTabbedPanel() {
-	if (_peer && controller()->hasTabbedSelectorOwnership()) {
-		createTabbedPanel();
-	} else {
+	if (!_peer) {
+		if (_tabbedPanel) {
+			setTabbedPanel(nullptr);
+		}
+		return;
+	} else if (_tabbedPanel && !_tabbedPanel->isSelectorStolen()) {
+		return;
+	}
+	if (_tabbedPanel) {
+		if (controller()->hasTabbedSelectorOwnership()) {
+			controller()->tabbedSelector()->setParent(_tabbedPanel.get());
+			return;
+		}
 		setTabbedPanel(nullptr);
+	}
+	if (controller()->hasTabbedSelectorOwnership()) {
+		createTabbedPanel();
 	}
 }
 
@@ -1513,16 +1544,16 @@ void HistoryWidget::initTabbedSelector() {
 
 	const auto selector = controller()->tabbedSelector();
 
-	base::install_event_filter(this, selector, [=](not_null<QEvent*> e) {
-		if (_tabbedPanel && e->type() == QEvent::ParentChange) {
+	base::install_event_filter(this, selector, [=](not_null<QEvent *> e) {
+		if (_tabbedPanel && e->type() == QEvent::ParentChange
+			&& _tabbedPanel->isSelectorStolen()
+			&& !controller()->hasTabbedSelectorOwnership()) {
 			setTabbedPanel(nullptr);
 		}
 		return base::EventFilterResult::Continue;
 	});
 
-	auto filter = rpl::filter([=] {
-		return !isHidden();
-	});
+	auto filter = rpl::filter([=] { return !isHidden(); });
 	using Selector = TabbedSelector;
 
 	selector->emojiChosen(
@@ -1815,11 +1846,26 @@ int HistoryWidget::itemTopForHighlight(
 }
 
 void HistoryWidget::initFieldAutocomplete() {
-	_emojiSuggestions = nullptr;
-	_autocomplete = nullptr;
-	if (!_peer) {
+	if (!_field->hasFocus() && _peer && !_autocomplete) {
 		return;
 	}
+	ensureFieldAutocomplete();
+}
+
+void HistoryWidget::ensureFieldAutocomplete() {
+	if (!_peer) {
+		if (_autocomplete) {
+			_autocomplete->setCurrentPeer(nullptr);
+		}
+		return;
+	}
+	if (_autocomplete) {
+		_autocomplete->setCurrentPeer(_peer);
+		return;
+	}
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+	++_fieldAutocompleteBuildCountForRegressionTest;
+#endif
 	const auto processShortcut = [=](QString shortcut) {
 		if (!_peer) {
 			return;
@@ -1887,9 +1933,8 @@ void HistoryWidget::initFieldAutocomplete() {
 				context);
 		},
 	});
-	const auto allow = [=](const auto&) {
-		return _peer->isSelf();
-	};
+	_autocomplete->setBoundings(_scroll->geometry());
+	const auto allow = [=](const auto &) { return _peer && _peer->isSelf(); };
 	_emojiSuggestions.reset(Ui::Emoji::SuggestionsController::Init(
 		this,
 		_field,
@@ -3253,6 +3298,9 @@ void HistoryWidget::showHistory(
 		if (!applyDraft()) {
 			clearFieldText();
 		}
+		if (_autocomplete) {
+			_autocomplete->setCurrentPeer(_peer);
+		}
 		checkCharsCount();
 		_send->finishAnimating();
 
@@ -3353,20 +3401,19 @@ void HistoryWidget::setHistory(History *history) {
 	}
 	_pullToNext->setHistory(history);
 
-	const auto was = _attachBotsMenu && _history && _history->peer->isUser();
-	const auto now = _attachBotsMenu && history && history->peer->isUser();
-	if (was && !now) {
-		_attachToggle->removeEventFilter(_attachBotsMenu.get());
+	if (_attachBotsMenu) {
+		_attachToggle->removeEventFilter(_attachBotsMenu);
 		_attachBotsMenu->hideFast();
-	} else if (now && !was && !ChatHelpers::ShowPanelOnClick()) {
-		_attachToggle->installEventFilter(_attachBotsMenu.get());
 	}
+	_attachBotsMenu = nullptr;
+	_attachMenuShowWhenReady = false;
+	_attachMenuClickWhenReady = false;
+	_attachToggle->removeEventFilter(this);
 
 	const auto unloadHeavyViewParts = [](History *history) {
 		if (history) {
 			history->owner().unloadHeavyViewParts(
 				history->delegateMixin()->delegate());
-			history->forceFullResize();
 		}
 	};
 
@@ -3386,6 +3433,10 @@ void HistoryWidget::setHistory(History *history) {
 		}
 	}
 	if (history) {
+		if (history->needsResizeFor(_scroll->width(),
+									controller()->adaptive().isChatWide())) {
+			history->forceFullResize();
+		}
 		_history = history;
 		_migrated = _history ? _history->migrateFrom() : nullptr;
 		registerDraftSource();
@@ -3397,7 +3448,9 @@ void HistoryWidget::setHistory(History *history) {
 			_preview = nullptr;
 		}
 	}
-	refreshAttachBotsMenu();
+	if (_history) {
+		activateCachedAttachBotsMenuForCurrentPeer();
+	}
 }
 
 void HistoryWidget::setupPreview() {
@@ -3438,35 +3491,273 @@ void HistoryWidget::injectSponsoredMessages() const {
 }
 
 void HistoryWidget::refreshAttachBotsMenu() {
-	_attachBotsMenu = nullptr;
 	if (!_history) {
 		return;
 	}
-	_attachBotsMenu = InlineBots::MakeAttachBotsMenu(
-		this,
-		controller(),
-		_history->peer,
-		[=] { return prepareSendAction({}); },
-		[=] { return sendMenuDetails(); },
-		[=](bool compress) { chooseAttach(compress); },
-		crl::guard(this, [=] {
-			return _field->getTextWithAppliedMarkdown();
-		}),
-		crl::guard(this, [=] {
-			migrateFieldToRichEditor();
-		}));
-	if (!_attachBotsMenu) {
+	const auto peer = _history->peer;
+	if (const auto i = _attachBotsMenuCache.find(peer);
+		i != end(_attachBotsMenuCache)) {
+		touchAttachBotsMenuCache(peer);
+		if (i->second.ready) {
+			_attachBotsMenu = i->second.menu.get();
+			if (_attachBotsMenu && !ChatHelpers::ShowPanelOnClick()) {
+				_attachToggle->removeEventFilter(this);
+				_attachToggle->installEventFilter(_attachBotsMenu);
+			}
+		}
 		return;
 	}
-	_attachBotsMenu->setOrigin(
-		Ui::PanelAnimation::Origin::BottomLeft);
-	if (!ChatHelpers::ShowPanelOnClick()) {
-		_attachToggle->installEventFilter(_attachBotsMenu.get());
+	auto [i, inserted]
+		= _attachBotsMenuCache.emplace(peer, AttachBotsMenuCacheEntry());
+	if (!inserted) {
+		return;
 	}
-	_attachBotsMenu->heightValue(
-	) | rpl::on_next([=] {
+	touchAttachBotsMenuCache(peer);
+	trimAttachBotsMenuCache();
+	if (!ChatHelpers::ShowPanelOnClick()) {
+		_attachToggle->installEventFilter(this);
+	}
+	QTimer::singleShot(0, this, [=] { buildAttachBotsMenu(peer); });
+}
+
+void HistoryWidget::buildAttachBotsMenu(not_null<PeerData *> peer) {
+	const auto i = _attachBotsMenuCache.find(peer);
+	if (i == end(_attachBotsMenuCache)) {
+		return;
+	} else if (!_history || (_history->peer != peer)) {
+		_attachBotsMenuCache.erase(i);
+		std::erase(_attachBotsMenuCacheLru, peer);
+		return;
+	} else if (i->second.ready || i->second.menu) {
+		return;
+	}
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+	++_attachMenuBuildCountForRegressionTest;
+	const auto recordBuildMeasurement = [=](InlineBots::
+												AttachBotsMenuBuildStepTiming
+													timing) {
+		if (timing.mainThreadCpuNanoseconds < 0) {
+			_attachMenuBuildMaxCallbackCpuNanosecondsForRegressionTest = -1;
+		} else if (_attachMenuBuildMaxCallbackCpuNanosecondsForRegressionTest
+				   >= 0) {
+			_attachMenuBuildMaxCallbackCpuNanosecondsForRegressionTest
+				= std::max(
+					_attachMenuBuildMaxCallbackCpuNanosecondsForRegressionTest,
+					timing.mainThreadCpuNanoseconds);
+		}
+		if (timing.wallNanoseconds < 0) {
+			_attachMenuBuildMaxCallbackWallNanosecondsForRegressionTest = -1;
+		} else if (_attachMenuBuildMaxCallbackWallNanosecondsForRegressionTest
+				   >= 0) {
+			_attachMenuBuildMaxCallbackWallNanosecondsForRegressionTest
+				= std::max(
+					_attachMenuBuildMaxCallbackWallNanosecondsForRegressionTest,
+					timing.wallNanoseconds);
+		}
+		_attachMenuBuildCallbackMeasurementsForRegressionTest.push_back({
+			.startedAt = timing.startedAt,
+			.startedAtSteadyNanoseconds = timing.startedAtSteadyNanoseconds,
+			.wallNanoseconds = timing.wallNanoseconds,
+			.mainThreadCpuNanoseconds = timing.mainThreadCpuNanoseconds,
+			.processCpuNanoseconds = timing.processCpuNanoseconds,
+		});
+	};
+	auto buildTimer = QElapsedTimer();
+	const auto buildThreadStartedAt
+		= Tests::ThreadCpuTimeNanosecondsForRegressionTest();
+	const auto buildProcessStartedAt
+		= Tests::ProcessCpuTimeNanosecondsForRegressionTest();
+	const auto buildStartedAt = QDateTime::currentDateTime();
+	const auto buildStartedAtSteadyNanoseconds
+		= std::chrono::duration_cast<std::chrono::nanoseconds>(
+			  std::chrono::steady_clock::now().time_since_epoch())
+			  .count();
+	const auto recordBuildCallback = gsl::finally([&] {
+		const auto buildWallNanoseconds = buildTimer.nsecsElapsed();
+		const auto buildThreadFinishedAt
+			= Tests::ThreadCpuTimeNanosecondsForRegressionTest();
+		const auto buildProcessFinishedAt
+			= Tests::ProcessCpuTimeNanosecondsForRegressionTest();
+		const auto elapsedCpu = [](std::optional<qint64> started,
+								   std::optional<qint64> finished) {
+			return started && finished && (*finished >= *started)
+					   ? (*finished - *started)
+					   : qint64(-1);
+		};
+		recordBuildMeasurement({
+			.startedAt = buildStartedAt,
+			.startedAtSteadyNanoseconds = buildStartedAtSteadyNanoseconds,
+			.wallNanoseconds = buildWallNanoseconds,
+			.mainThreadCpuNanoseconds
+			= elapsedCpu(buildThreadStartedAt, buildThreadFinishedAt),
+			.processCpuNanoseconds
+			= elapsedCpu(buildProcessStartedAt, buildProcessFinishedAt),
+		});
+	});
+	auto buildStepMeasured = crl::guard(this, recordBuildMeasurement);
+	buildTimer.start();
+#endif
+	auto menu = InlineBots::MakeAttachBotsMenu(
+		this, controller(), peer, [=] { return prepareSendAction({}); },
+		[=] { return sendMenuDetails(); },
+		[=](bool compress) { chooseAttach(compress); },
+		crl::guard(this, [=] { return _field->getTextWithAppliedMarkdown(); }),
+		crl::guard(this, [=] { migrateFieldToRichEditor(); }),
+		InlineBots::AttachBotsMenuBuildMode::Incremental,
+		crl::guard(this, [=] { attachBotsMenuBuildFinished(peer); }),
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+		std::move(buildStepMeasured));
+#else
+		nullptr);
+#endif
+	i->second.menu = std::move(menu);
+	if (!i->second.menu) {
+		i->second.ready = true;
+		attachBotsMenuBuildFinished(peer);
+		return;
+	}
+	i->second.menu->setOrigin(Ui::PanelAnimation::Origin::BottomLeft);
+	if (_history && (_history->peer == peer)) {
+		_attachBotsMenu = i->second.menu.get();
+	}
+}
+
+void HistoryWidget::attachBotsMenuBuildFinished(not_null<PeerData *> peer) {
+	const auto i = _attachBotsMenuCache.find(peer);
+	if (i == end(_attachBotsMenuCache)) {
+		return;
+	}
+	i->second.ready = true;
+	const auto menu = i->second.menu.get();
+	if (menu) {
+		menu->heightValue()
+			| rpl::on_next(
+				[=] {
+					if (_history && (_history->peer == peer)
+						&& (_attachBotsMenu == menu)) {
+						moveFieldControls();
+					}
+				},
+				menu->lifetime());
+	}
+	if (!_history || (_history->peer != peer)) {
+		return;
+	}
+	_attachBotsMenu = menu;
+	_attachToggle->removeEventFilter(this);
+	if (menu && !ChatHelpers::ShowPanelOnClick()) {
+		_attachToggle->installEventFilter(menu);
 		moveFieldControls();
-	}, _attachBotsMenu->lifetime());
+	}
+	const auto show = std::exchange(_attachMenuShowWhenReady, false);
+	const auto click = std::exchange(_attachMenuClickWhenReady, false);
+	if (menu && (show || click)) {
+		menu->showAnimated();
+	} else if (!menu && click) {
+		chooseAttach();
+	}
+}
+
+void HistoryWidget::invalidateAttachBotsMenuCache() {
+	const auto showWhenReady
+		= !ChatHelpers::ShowPanelOnClick() && _attachToggle->underMouse();
+	if (_attachBotsMenu) {
+		_attachToggle->removeEventFilter(_attachBotsMenu);
+		_attachBotsMenu->hideFast();
+	}
+	_attachBotsMenu = nullptr;
+	_attachMenuShowWhenReady = showWhenReady;
+	_attachMenuClickWhenReady = false;
+	_attachBotsMenuCache.clear();
+	_attachBotsMenuCacheLru.clear();
+	_attachToggle->removeEventFilter(this);
+	if (_history && showWhenReady) {
+		refreshAttachBotsMenu();
+	} else if (_history && !ChatHelpers::ShowPanelOnClick()) {
+		_attachToggle->installEventFilter(this);
+	}
+}
+
+void HistoryWidget::invalidateAttachBotsMenuCache(not_null<PeerData *> peer) {
+	const auto i = _attachBotsMenuCache.find(peer);
+	if (i == end(_attachBotsMenuCache)) {
+		return;
+	}
+	const auto current = _history && (_history->peer == peer);
+	const auto showWhenReady = current && !ChatHelpers::ShowPanelOnClick()
+							   && _attachToggle->underMouse();
+	if (current) {
+		if (_attachBotsMenu) {
+			_attachToggle->removeEventFilter(_attachBotsMenu);
+			_attachBotsMenu->hideFast();
+			_attachBotsMenu = nullptr;
+		}
+		_attachMenuShowWhenReady = showWhenReady;
+		_attachMenuClickWhenReady = false;
+		_attachToggle->removeEventFilter(this);
+	}
+	_attachBotsMenuCache.erase(i);
+	std::erase(_attachBotsMenuCacheLru, peer);
+	if (showWhenReady) {
+		refreshAttachBotsMenu();
+	} else if (current && !ChatHelpers::ShowPanelOnClick()) {
+		_attachToggle->installEventFilter(this);
+	}
+}
+
+void HistoryWidget::activateCachedAttachBotsMenuForCurrentPeer() {
+	Expects(_history != nullptr);
+	const auto i = _attachBotsMenuCache.find(_history->peer);
+	if (i == end(_attachBotsMenuCache)) {
+		if (!ChatHelpers::ShowPanelOnClick()) {
+			_attachToggle->installEventFilter(this);
+		}
+		return;
+	}
+	touchAttachBotsMenuCache(_history->peer);
+	_attachBotsMenu = i->second.menu.get();
+	if (i->second.ready) {
+		_attachToggle->removeEventFilter(this);
+		if (_attachBotsMenu && !ChatHelpers::ShowPanelOnClick()) {
+			_attachToggle->installEventFilter(_attachBotsMenu);
+		}
+	} else {
+		if (!ChatHelpers::ShowPanelOnClick()) {
+			_attachToggle->installEventFilter(this);
+		}
+	}
+}
+
+void HistoryWidget::touchAttachBotsMenuCache(not_null<PeerData *> peer) {
+	const auto i = std::find(begin(_attachBotsMenuCacheLru),
+							 end(_attachBotsMenuCacheLru), peer);
+	if (i != end(_attachBotsMenuCacheLru)) {
+		_attachBotsMenuCacheLru.erase(i);
+	}
+	_attachBotsMenuCacheLru.push_back(peer);
+}
+
+void HistoryWidget::trimAttachBotsMenuCache() {
+	while (_attachBotsMenuCache.size() > kAttachBotsMenuCacheLimit) {
+		const auto oldest = _attachBotsMenuCacheLru.front();
+		_attachBotsMenuCacheLru.erase(begin(_attachBotsMenuCacheLru));
+		if (_history && (_history->peer == oldest)) {
+			touchAttachBotsMenuCache(oldest);
+			continue;
+		}
+		const auto i = _attachBotsMenuCache.find(oldest);
+		if (i != end(_attachBotsMenuCache)) {
+			_attachBotsMenuCache.erase(i);
+		}
+	}
+}
+
+bool HistoryWidget::attachBotsMenuBuiltForCurrentPeer() const {
+	if (!_history) {
+		return false;
+	}
+	const auto i = _attachBotsMenuCache.find(_history->peer);
+	return (i != end(_attachBotsMenuCache)) && i->second.ready;
 }
 
 void HistoryWidget::unregisterDraftSources() {
@@ -6449,6 +6740,16 @@ void HistoryWidget::insertTextAtCursor(const QString &text) {
 }
 
 bool HistoryWidget::eventFilter(QObject *obj, QEvent *e) {
+	if (obj == _attachToggle.get() && e->type() == QEvent::Enter) {
+		if (!attachBotsMenuBuiltForCurrentPeer()) {
+			_attachMenuShowWhenReady = true;
+			refreshAttachBotsMenu();
+		}
+		return false;
+	} else if (obj == _attachToggle.get() && e->type() == QEvent::Leave) {
+		_attachMenuShowWhenReady = false;
+		return false;
+	}
 	if (e->type() == QEvent::KeyPress) {
 		const auto k = static_cast<QKeyEvent*>(e);
 		if ((k->modifiers() & kCommonModifiers) == Qt::ControlModifier) {
@@ -6546,12 +6847,171 @@ void HistoryWidget::setDraftTextForRegressionTest(const QString &text) {
 	_field->setTextWithTags({text, TextWithTags::Tags()});
 }
 
+Ui::IconButton *HistoryWidget::attachToggleForRegressionTest() const {
+	return _attachToggle.get();
+}
+
+int HistoryWidget::attachMenuBuildCountForRegressionTest() const {
+	return _attachMenuBuildCountForRegressionTest;
+}
+
+qint64
+HistoryWidget::attachMenuBuildMaxCallbackCpuNanosecondsForRegressionTest()
+	const {
+	return _attachMenuBuildMaxCallbackCpuNanosecondsForRegressionTest;
+}
+
+qint64
+HistoryWidget::attachMenuBuildMaxCallbackWallNanosecondsForRegressionTest()
+	const {
+	return _attachMenuBuildMaxCallbackWallNanosecondsForRegressionTest;
+}
+
+const std::vector<
+	HistoryWidget::AttachMenuBuildCallbackMeasurementForRegressionTest> &
+HistoryWidget::attachMenuBuildCallbackMeasurementsForRegressionTest() const {
+	return _attachMenuBuildCallbackMeasurementsForRegressionTest;
+}
+
+void HistoryWidget::
+	resetAttachMenuBuildCallbackMeasurementsForRegressionTest() {
+	_attachMenuBuildMaxCallbackCpuNanosecondsForRegressionTest = 0;
+	_attachMenuBuildMaxCallbackWallNanosecondsForRegressionTest = 0;
+	_attachMenuBuildCallbackMeasurementsForRegressionTest.clear();
+}
+
+bool HistoryWidget::attachMenuExistsForRegressionTest() const {
+	return _attachBotsMenu != nullptr;
+}
+
+bool HistoryWidget::attachMenuContainsBotForRegressionTest(UserId botId) const {
+	if (!_attachBotsMenu) {
+		return false;
+	}
+	const auto expected = QString::number(botId.bare);
+	const auto actions = _attachBotsMenu->menu()->findChildren<QAction *>();
+	return ranges::any_of(actions, [&](QAction *action) {
+		return action->data().toString() == expected;
+	});
+}
+
+int HistoryWidget::attachMenuCacheSizeForRegressionTest() const {
+	return int(_attachBotsMenuCache.size());
+}
+
+int HistoryWidget::fieldAutocompleteBuildCountForRegressionTest() const {
+	return _fieldAutocompleteBuildCountForRegressionTest;
+}
+
+PeerData *HistoryWidget::fieldAutocompletePeerForRegressionTest() const {
+	return _autocomplete ? _autocomplete->currentPeer() : nullptr;
+}
+
+bool HistoryWidget::fieldFocusedForRegressionTest() const {
+	return _field->hasFocus();
+}
+
+bool HistoryWidget::fieldAutocompleteSuggestionsReadyForRegressionTest() const {
+	return _autocomplete && !_autocomplete->isHidden()
+		   && (_autocomplete->width() == _scroll->width())
+		   && (_autocomplete->width() > 0) && (_autocomplete->height() > 0);
+}
+
+void HistoryWidget::resetFieldAutocompleteForRegressionTest() {
+	_emojiSuggestions.reset();
+	_autocomplete.reset();
+	_fieldAutocompleteBuildCountForRegressionTest = 0;
+}
+
+void HistoryWidget::initFieldAutocompleteForRegressionTest() {
+	initFieldAutocomplete();
+}
+
+bool HistoryWidget::clickBotMenuForRegressionTest() {
+	if (_field->hasFocus() || !_botMenu.button || _botMenu.button->isHidden()) {
+		return false;
+	}
+	_botMenu.button->clicked(Qt::NoModifier, Qt::LeftButton);
+	return !_field->hasFocus();
+}
+
+bool HistoryWidget::clickBotCommandStartForRegressionTest() {
+	if (_field->hasFocus() || _botCommandStart->isHidden()) {
+		return false;
+	}
+	_botCommandStart->clicked(Qt::NoModifier, Qt::LeftButton);
+	return !_field->hasFocus();
+}
+
+bool HistoryWidget::botMenuButtonVisibleForRegressionTest() const {
+	return _botMenu.button && !_botMenu.button->isHidden();
+}
+
+bool HistoryWidget::botCommandStartVisibleForRegressionTest() const {
+	return !_botCommandStart->isHidden();
+}
+
+bool HistoryWidget::historyTransitionFinishedForRegressionTest() const {
+	return !_showAnimation;
+}
+
+int HistoryWidget::tabbedPanelBuildCountForRegressionTest() const {
+	return _tabbedPanelBuildCountForRegressionTest;
+}
+
+void HistoryWidget::clearFieldFocusForRegressionTest() { _field->clearFocus(); }
+
+void HistoryWidget::focusFieldForRegressionTest() { _field->setFocus(); }
+
+bool HistoryWidget::updateControlsGeometryStartsPendingRevealForRegressionTest(
+	not_null<HistoryItem *> item) {
+	const auto scrollSize = _scroll->size();
+	if (!_list) {
+		return false;
+	}
+	auto view = item->mainView();
+	auto target = item;
+	while (view) {
+		const auto candidate = view->data();
+		if (!_itemRevealAnimations.contains(candidate)
+			&& (_list->itemTop(view) >= 0)) {
+			target = candidate;
+			break;
+		}
+		view = view->previousInBlocks();
+	}
+	if (!view) {
+		return false;
+	}
+	auto previousShowAnimation = std::move(_showAnimation);
+	_showAnimation = std::make_unique<Window::SlideAnimation>();
+	_itemRevealPending.emplace(target);
+	updateControlsGeometry();
+	const auto pendingRetainedDuringShowAnimation
+		= _itemRevealPending.contains(target);
+	_showAnimation = std::move(previousShowAnimation);
+	if (_showAnimation) {
+		showFinished();
+	} else {
+		updateControlsGeometry();
+	}
+	return pendingRetainedDuringShowAnimation && (_scroll->size() == scrollSize)
+		   && !_itemRevealPending.contains(target)
+		   && _itemRevealAnimations.contains(target);
+}
+
 QString HistoryWidget::draftTextForRegressionTest() const {
 	return _field->getTextWithTags().text;
 }
 
 TextWithTags HistoryWidget::draftWithTagsForRegressionTest() const {
 	return _field->getTextWithTags();
+}
+
+void HistoryWidget::hideFieldAutocompleteForRegressionTest() {
+	if (_autocomplete) {
+		_autocomplete->hideFast();
+	}
 }
 
 void HistoryWidget::sendForRegressionTest(Api::SendOptions options) {
@@ -6729,10 +7189,13 @@ bool HistoryWidget::updateCmdStartShown() {
 					},
 					.source = InlineBots::WebViewSourceBotMenu(),
 				});
-			} else if (_autocomplete && !_autocomplete->isHidden()) {
-				_autocomplete->hideAnimated();
-			} else if (_autocomplete) {
-				_autocomplete->showFiltered(_peer, "/", true);
+			} else {
+				ensureFieldAutocomplete();
+				if (_autocomplete && !_autocomplete->isHidden()) {
+					_autocomplete->hideAnimated();
+				} else if (_autocomplete) {
+					_autocomplete->showFiltered(_peer, "/", true);
+				}
 			}
 		});
 		_botMenu.button->widthValue(
@@ -6954,10 +7417,9 @@ void HistoryWidget::toggleKeyboard(bool manual) {
 }
 
 void HistoryWidget::startBotCommand() {
-	setFieldText(
-		{ u"/"_q, TextWithTags::Tags() },
-		0,
-		Ui::InputField::HistoryAction::NewEntry);
+	ensureFieldAutocomplete();
+	setFieldText({u"/"_q, TextWithTags::Tags()}, 0,
+				 Ui::InputField::HistoryAction::NewEntry);
 }
 
 void HistoryWidget::setMembersShowAreaActive(bool active) {
@@ -7015,12 +7477,19 @@ bool HistoryWidget::pushTabbedSelectorToThirdSection(
 }
 
 bool HistoryWidget::returnTabbedSelector() {
-	createTabbedPanel();
+	if (_tabbedPanel && _tabbedPanel->isSelectorStolen()) {
+		controller()->tabbedSelector()->setParent(_tabbedPanel.get());
+	} else {
+		createTabbedPanel();
+	}
 	moveFieldControls();
 	return true;
 }
 
 void HistoryWidget::createTabbedPanel() {
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+	++_tabbedPanelBuildCountForRegressionTest;
+#endif
 	setTabbedPanel(std::make_unique<TabbedPanel>(
 		this,
 		controller(),
@@ -7439,6 +7908,7 @@ void HistoryWidget::fieldResized() {
 }
 
 void HistoryWidget::fieldFocused() {
+	initFieldAutocomplete();
 	if (_list) {
 		_list->clearSelected(true);
 		_list->hideElementOverlay();
@@ -8009,10 +8479,8 @@ void HistoryWidget::updateControlsGeometry() {
 		}
 	}
 
-	updateHistoryGeometry(
-		false,
-		false,
-		{ ScrollChangeAdd, base::take(_topDelta) });
+	updateHistoryGeometry(false, false,
+						  {ScrollChangeAdd, base::take(_topDelta)}, false);
 
 	updateFieldSize();
 
@@ -8234,12 +8702,14 @@ void HistoryWidget::updateSendRestriction() {
 	}
 }
 
-void HistoryWidget::updateHistoryGeometry(
-		bool initial,
-		bool loadedDown,
-		const ScrollChange &change) {
+void HistoryWidget::updateHistoryGeometry(bool initial, bool loadedDown,
+										  const ScrollChange &change,
+										  bool listChanged) {
+	auto clearPendingReveal = true;
 	const auto guard = gsl::finally([&] {
-		_itemRevealPending.clear();
+		if (clearPendingReveal) {
+			_itemRevealPending.clear();
+		}
 	});
 	if (!_history
 		|| (initial && _historyInited)
@@ -8248,6 +8718,7 @@ void HistoryWidget::updateHistoryGeometry(
 	}
 	if (_showAnimation) {
 		_updateHistoryGeometryRequired = true;
+		clearPendingReveal = false;
 		return;
 	}
 
@@ -8315,7 +8786,11 @@ void HistoryWidget::updateHistoryGeometry(
 	const auto wasScrollTop = _scroll->scrollTop();
 	const auto wasAtBottom = (wasScrollTop >= _scroll->scrollTopMax());
 	const auto needResize = (_scroll->width() != newScrollWidth)
-		|| (_scroll->height() != newScrollHeight);
+							|| (_scroll->height() != newScrollHeight);
+	const auto chatWide = controller()->adaptive().isChatWide();
+	const auto needsHistoryLayoutResize
+		= _history->needsResizeFor(newScrollWidth, chatWide)
+		  || (_migrated && _migrated->needsResizeFor(newScrollWidth, chatWide));
 	if (needResize) {
 		_scroll->resize(newScrollWidth, newScrollHeight);
 		// on initial updateListSize we didn't put the _scroll->scrollTop
@@ -8355,7 +8830,11 @@ void HistoryWidget::updateHistoryGeometry(
 		return;
 	}
 
-	updateListSize();
+	if (listChanged || needResize || needsHistoryLayoutResize
+		|| hasPendingResizedItems() || !_itemRevealPending.empty()
+		|| _updateHistoryGeometryRequired) {
+		updateListSize();
+	}
 	_updateHistoryGeometryRequired = false;
 
 	auto newScrollTop = 0;

@@ -17,6 +17,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/chat/attach/attach_bot_webview.h"
 #include "ui/rp_widget.h"
 
+#include <QtCore/QDateTime>
+
 namespace Data {
 class Thread;
 } // namespace Data
@@ -56,11 +58,24 @@ class WebViewInstance;
 class Downloads;
 class Storage;
 
+enum class AttachBotsMenuBuildMode {
+	Immediate,
+	Incremental,
+};
+
+struct AttachBotsMenuBuildStepTiming final {
+	QDateTime startedAt;
+	qint64 startedAtSteadyNanoseconds = -1;
+	qint64 wallNanoseconds = -1;
+	qint64 mainThreadCpuNanoseconds = -1;
+	qint64 processCpuNanoseconds = -1;
+};
+
 enum class PeerType : uint8 {
-	SameBot   = 0x01,
-	Bot       = 0x02,
-	User      = 0x04,
-	Group     = 0x08,
+	SameBot = 0x01,
+	Bot = 0x02,
+	User = 0x04,
+	Group = 0x08,
 	Broadcast = 0x10,
 };
 using PeerTypes = base::flags<PeerType>;
@@ -396,6 +411,9 @@ public:
 	[[nodiscard]] int appActivateCountForRegressionTest() const;
 	[[nodiscard]] int usernameResolveCountForRegressionTest() const;
 	[[nodiscard]] int unavailableToastCountForRegressionTest() const;
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+	void setAttachBotsForRegressionTest(std::vector<AttachWebViewBot> bots);
+#endif
 
 	// Drives the completion an in-flight username resolve would run, with its
 	// real guards, so the regression can complete it after a window or a
@@ -521,14 +539,15 @@ private:
 };
 
 [[nodiscard]] std::unique_ptr<Ui::DropdownMenu> MakeAttachBotsMenu(
-	not_null<QWidget*> parent,
-	not_null<Window::SessionController*> controller,
-	not_null<PeerData*> peer,
+	not_null<QWidget *> parent,
+	not_null<Window::SessionController *> controller, not_null<PeerData *> peer,
 	Fn<Api::SendAction()> actionFactory,
-	Fn<SendMenu::Details()> sendMenuDetails,
-	Fn<void(bool)> attach,
+	Fn<SendMenu::Details()> sendMenuDetails, Fn<void(bool)> attach,
 	Fn<TextWithTags()> composeFieldText = nullptr,
-	Fn<void()> composeFieldMigrated = nullptr);
+	Fn<void()> composeFieldMigrated = nullptr,
+	AttachBotsMenuBuildMode buildMode = AttachBotsMenuBuildMode::Immediate,
+	Fn<void()> buildComplete = nullptr,
+	Fn<void(AttachBotsMenuBuildStepTiming)> buildStepMeasured = nullptr);
 
 class MenuBotIcon final : public Ui::RpWidget {
 public:

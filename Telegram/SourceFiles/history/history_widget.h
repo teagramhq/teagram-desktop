@@ -7,6 +7,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #pragma once
 
+#include "base/flat_map.h"
 #include "history/view/controls/history_view_compose_media_edit_manager.h"
 #include "history/view/history_view_corner_buttons.h"
 #include "history/history_drag_area.h"
@@ -21,6 +22,10 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "window/window_session_controller.h"
 #include "ui/widgets/fields/input_field.h"
 #include "mtproto/sender.h"
+
+#include <QtCore/QDateTime>
+
+#include <vector>
 
 enum class SendMediaType;
 class MessageLinksParser;
@@ -291,15 +296,56 @@ public:
 		std::optional<bool> show = std::nullopt);
 	[[nodiscard]] Ui::ChatTheme *customChatTheme() const;
 #ifdef TDESKTOP_LIFECYCLE_REGRESSION
+	struct AttachMenuBuildCallbackMeasurementForRegressionTest final {
+		QDateTime startedAt;
+		qint64 startedAtSteadyNanoseconds = -1;
+		qint64 wallNanoseconds = -1;
+		qint64 mainThreadCpuNanoseconds = -1;
+		qint64 processCpuNanoseconds = -1;
+	};
+
 	void setDraftTextForRegressionTest(const QString &text);
 	[[nodiscard]] QString draftTextForRegressionTest() const;
 	[[nodiscard]] TextWithTags draftWithTagsForRegressionTest() const;
+	void initFieldAutocompleteForRegressionTest();
+	void resetFieldAutocompleteForRegressionTest();
+	[[nodiscard]] bool clickBotMenuForRegressionTest();
+	[[nodiscard]] bool clickBotCommandStartForRegressionTest();
+	[[nodiscard]] bool botMenuButtonVisibleForRegressionTest() const;
+	[[nodiscard]] bool botCommandStartVisibleForRegressionTest() const;
+	[[nodiscard]] bool historyTransitionFinishedForRegressionTest() const;
+	void hideFieldAutocompleteForRegressionTest();
 	void sendForRegressionTest(Api::SendOptions options);
 	void chooseReactionForRegressionTest(FullMsgId context,
 										 Data::ReactionId id);
 	[[nodiscard]] bool chatThemeControlsAccessibleForRegressionTest() const;
 	[[nodiscard]] ClickHandlerContext
 	prepareClickHandlerContextForRegressionTest(FullMsgId itemId) const;
+	[[nodiscard]] Ui::IconButton *attachToggleForRegressionTest() const;
+	[[nodiscard]] int attachMenuBuildCountForRegressionTest() const;
+	[[nodiscard]] qint64
+	attachMenuBuildMaxCallbackCpuNanosecondsForRegressionTest() const;
+	[[nodiscard]] qint64
+	attachMenuBuildMaxCallbackWallNanosecondsForRegressionTest() const;
+	[[nodiscard]] const std::vector<
+		AttachMenuBuildCallbackMeasurementForRegressionTest> &
+	attachMenuBuildCallbackMeasurementsForRegressionTest() const;
+	void resetAttachMenuBuildCallbackMeasurementsForRegressionTest();
+	[[nodiscard]] bool attachMenuExistsForRegressionTest() const;
+	[[nodiscard]] bool
+	attachMenuContainsBotForRegressionTest(UserId botId) const;
+	[[nodiscard]] int attachMenuCacheSizeForRegressionTest() const;
+	[[nodiscard]] int fieldAutocompleteBuildCountForRegressionTest() const;
+	[[nodiscard]] PeerData *fieldAutocompletePeerForRegressionTest() const;
+	[[nodiscard]] bool fieldFocusedForRegressionTest() const;
+	[[nodiscard]] bool
+	fieldAutocompleteSuggestionsReadyForRegressionTest() const;
+	[[nodiscard]] int tabbedPanelBuildCountForRegressionTest() const;
+	void clearFieldFocusForRegressionTest();
+	void focusFieldForRegressionTest();
+	[[nodiscard]] bool
+	updateControlsGeometryStartsPendingRevealForRegressionTest(
+		not_null<HistoryItem *> item);
 #endif
 
 	void applyCloudDraft(History *history);
@@ -377,6 +423,10 @@ private:
 	using TabbedPanel = ChatHelpers::TabbedPanel;
 	using TabbedSelector = ChatHelpers::TabbedSelector;
 	using VoiceToSend = HistoryView::Controls::VoiceToSend;
+	struct AttachBotsMenuCacheEntry final {
+		std::unique_ptr<Ui::DropdownMenu> menu;
+		bool ready = false;
+	};
 	enum ScrollChangeType {
 		ScrollChangeNone,
 
@@ -436,6 +486,7 @@ private:
 	void fieldResized();
 
 	void initFieldAutocomplete();
+	void ensureFieldAutocomplete();
 	void cancelInlineBot();
 	void saveDraft(bool delayed = false);
 	void saveCloudDraft();
@@ -692,7 +743,10 @@ private:
 
 	void updateSendRestriction();
 	[[nodiscard]] Data::SendError computeSendRestriction() const;
-	void updateHistoryGeometry(bool initial = false, bool loadedDown = false, const ScrollChange &change = { ScrollChangeNone, 0 });
+	void updateHistoryGeometry(bool initial = false, bool loadedDown = false,
+							   const ScrollChange &change
+							   = {ScrollChangeNone, 0},
+							   bool listChanged = true);
 	void updateListSize();
 	void startItemRevealAnimations();
 	void revealItemsCallback();
@@ -787,6 +841,14 @@ private:
 	void setupSendAsToggle();
 	void refreshSendAsToggle();
 	void refreshAttachBotsMenu();
+	void buildAttachBotsMenu(not_null<PeerData *> peer);
+	void attachBotsMenuBuildFinished(not_null<PeerData *> peer);
+	void invalidateAttachBotsMenuCache();
+	void invalidateAttachBotsMenuCache(not_null<PeerData *> peer);
+	void activateCachedAttachBotsMenuForCurrentPeer();
+	void touchAttachBotsMenuCache(not_null<PeerData *> peer);
+	void trimAttachBotsMenuCache();
+	[[nodiscard]] bool attachBotsMenuBuiltForCurrentPeer() const;
 
 	void injectSponsoredMessages() const;
 
@@ -984,7 +1046,21 @@ private:
 
 	object_ptr<InlineBots::Layout::Widget> _inlineResults = { nullptr };
 	std::unique_ptr<TabbedPanel> _tabbedPanel;
-	std::unique_ptr<Ui::DropdownMenu> _attachBotsMenu;
+	base::flat_map<not_null<PeerData *>, AttachBotsMenuCacheEntry>
+		_attachBotsMenuCache;
+	std::vector<not_null<PeerData *>> _attachBotsMenuCacheLru;
+	Ui::DropdownMenu *_attachBotsMenu = nullptr;
+	bool _attachMenuShowWhenReady = false;
+	bool _attachMenuClickWhenReady = false;
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+	int _fieldAutocompleteBuildCountForRegressionTest = 0;
+	int _tabbedPanelBuildCountForRegressionTest = 0;
+	int _attachMenuBuildCountForRegressionTest = 0;
+	qint64 _attachMenuBuildMaxCallbackCpuNanosecondsForRegressionTest = 0;
+	qint64 _attachMenuBuildMaxCallbackWallNanosecondsForRegressionTest = 0;
+	std::vector<AttachMenuBuildCallbackMeasurementForRegressionTest>
+		_attachMenuBuildCallbackMeasurementsForRegressionTest;
+#endif
 
 	DragArea::Areas _attachDragAreas;
 

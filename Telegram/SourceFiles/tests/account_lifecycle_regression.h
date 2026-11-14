@@ -11,6 +11,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include <array>
 #include <cstddef>
+#include <optional>
 #include <vector>
 
 namespace Main {
@@ -36,6 +37,10 @@ class SerializedRequest;
 namespace Tests {
 
 #ifdef TDESKTOP_LIFECYCLE_REGRESSION
+[[nodiscard]] std::optional<qint64> ThreadCpuTimeNanosecondsForRegressionTest();
+[[nodiscard]] std::optional<qint64>
+ProcessCpuTimeNanosecondsForRegressionTest();
+
 enum class MainQueueBarrierResult {
 	Completed,
 	TimedOut,

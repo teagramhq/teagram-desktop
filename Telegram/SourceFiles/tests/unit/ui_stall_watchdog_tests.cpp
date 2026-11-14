@@ -12,24 +12,202 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include <QtCore/QByteArray>
 #include <QtCore/QCoreApplication>
+#include <QtCore/QDateTime>
 #include <QtCore/QDir>
 #include <QtCore/QEventLoop>
 #include <QtCore/QFile>
 #include <QtCore/QTemporaryDir>
 #include <QtCore/QTimer>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cstdio>
 #include <mutex>
+#include <optional>
 #include <thread>
 #include <utility>
 #include <vector>
+
+#if defined(Q_OS_MAC)
+#include <mach/mach.h>
+#include <pthread.h>
+#include <pthread/qos.h>
+#endif // Q_OS_MAC
+#if defined(Q_OS_LINUX) || defined(Q_OS_MAC)
+#include <sys/resource.h>
+#endif // Q_OS_LINUX || Q_OS_MAC
+#if defined(Q_OS_LINUX)
+#include <time.h>
+#endif // Q_OS_LINUX
+
+TEST_CASE(UiStallWatchdogDoesNotSkipTraceAfterAcknowledgedShutdown) {
+	const auto current = std::uint64_t(42);
+	CHECK(!Core::UiStallWatchdog::ShouldStopBeforeTraceAttachment(true, current,
+																  current));
+	CHECK(Core::UiStallWatchdog::ShouldStopBeforeTraceAttachment(
+		true, current - 1, current));
+	CHECK(!Core::UiStallWatchdog::ShouldStopBeforeTraceAttachment(
+		false, current - 1, current));
+}
+
+#if defined(Q_OS_LINUX) || defined(Q_OS_MAC)
+TEST_CASE(UiStallWatchdogAttachesTraceWhenStoppedAfterAcknowledgement) {
+	for (const auto waitForCountThreshold : std::vector<bool>{false, true}) {
+		const auto before
+			= Core::UiStallWatchdog::RecentPingAcknowledgementsForTesting();
+		const auto lastAcknowledgedAtNanoseconds
+			= before.empty() ? qint64(0)
+							 : before.back().acknowledgedAtNanoseconds;
+		auto acknowledged = false;
+		{
+			auto loop = QEventLoop();
+			auto timer = QTimer();
+			QObject::connect(&timer, &QTimer::timeout, &loop, [&] {
+				const auto acknowledgements = Core::UiStallWatchdog::
+					RecentPingAcknowledgementsForTesting();
+				acknowledged = std::any_of(
+					acknowledgements.begin(), acknowledgements.end(),
+					[lastAcknowledgedAtNanoseconds](const auto &item) {
+						return item.acknowledgedAtNanoseconds
+							   > lastAcknowledgedAtNanoseconds;
+					});
+				if (acknowledged) {
+					loop.quit();
+				}
+			});
+			timer.setInterval(1);
+			auto watchdog = Core::UiStallWatchdog(
+				[](const QString &, bool) {}, {.captureSchedulerTrace = true});
+			watchdog.StopAfterNextAcknowledgementForTesting();
+			if (waitForCountThreshold) {
+				const auto deadline = std::chrono::steady_clock::now()
+									  + std::chrono::seconds(2);
+				while (watchdog.StallCountForTesting() == 0
+					   && std::chrono::steady_clock::now() < deadline) {
+					std::this_thread::sleep_for(std::chrono::milliseconds(1));
+				}
+				CHECK(watchdog.StallCountForTesting() > 0);
+			}
+			timer.start();
+			QTimer::singleShot(2000, &loop, &QEventLoop::quit);
+			loop.exec();
+			timer.stop();
+			CHECK(acknowledged);
+		}
+		const auto after
+			= Core::UiStallWatchdog::RecentPingAcknowledgementsForTesting();
+		const auto attached
+			= std::find_if(after.begin(), after.end(),
+						   [lastAcknowledgedAtNanoseconds](const auto &item) {
+							   return item.acknowledgedAtNanoseconds
+									  > lastAcknowledgedAtNanoseconds;
+						   });
+		CHECK(attached != after.end());
+		if (attached != after.end()) {
+			CHECK(attached->schedulerTraceComplete);
+			CHECK(!attached->schedulerTrace.isEmpty());
+			// An acknowledgement faster than the 1 ms sampler interval
+			// covers no samples and carries the "none" marker instead.
+			if (attached->schedulerSampleOffsetsNanoseconds.empty()) {
+				CHECK(attached->schedulerTrace == u"none"_q);
+			} else {
+				CHECK_EQ(
+					attached->schedulerTrace.size(),
+					qsizetype(
+						attached->schedulerSampleOffsetsNanoseconds.size()));
+			}
+		}
+	}
+}
+#endif // Q_OS_LINUX || Q_OS_MAC
+
+#if defined(Q_OS_MAC)
+class UiStallWatchdogTestMainThreadPriority final {
+  public:
+	UiStallWatchdogTestMainThreadPriority() {
+		_changed
+			= (pthread_get_qos_class_np(pthread_self(), &_qosClass,
+										&_relativePriority)
+			   == 0)
+			  && (pthread_set_qos_class_self_np(QOS_CLASS_USER_INITIATED, 0)
+				  == 0);
+	}
+
+	~UiStallWatchdogTestMainThreadPriority() {
+		if (_changed) {
+			(void)pthread_set_qos_class_self_np(_qosClass, _relativePriority);
+		}
+	}
+
+  private:
+	qos_class_t _qosClass = QOS_CLASS_DEFAULT;
+	int _relativePriority = 0;
+	bool _changed = false;
+};
+#endif // Q_OS_MAC
+
+[[nodiscard]] std::optional<qint64>
+UiStallWatchdogProcessCpuTimeNanosecondsForTest() {
+#if defined(Q_OS_LINUX) || defined(Q_OS_MAC)
+	auto usage = rusage();
+	if (getrusage(RUSAGE_SELF, &usage) != 0) {
+		return std::nullopt;
+	}
+	const auto userNanoseconds
+		= (qint64(usage.ru_utime.tv_sec) * 1'000'000 + usage.ru_utime.tv_usec)
+		  * 1'000;
+	const auto systemNanoseconds
+		= (qint64(usage.ru_stime.tv_sec) * 1'000'000 + usage.ru_stime.tv_usec)
+		  * 1'000;
+	return userNanoseconds + systemNanoseconds;
+#else
+	return std::nullopt;
+#endif
+}
+
+[[nodiscard]] std::optional<qint64>
+UiStallWatchdogThreadCpuTimeNanosecondsForTest() {
+#if defined(Q_OS_MAC)
+	const auto thread = mach_thread_self();
+	if (thread == MACH_PORT_NULL) {
+		return std::nullopt;
+	}
+	auto info = thread_basic_info_data_t();
+	auto count = mach_msg_type_number_t(THREAD_BASIC_INFO_COUNT);
+	const auto infoResult
+		= thread_info(thread, THREAD_BASIC_INFO,
+					  reinterpret_cast<thread_info_t>(&info), &count);
+	const auto releaseResult = mach_port_deallocate(mach_task_self(), thread);
+	if (infoResult != KERN_SUCCESS || releaseResult != KERN_SUCCESS) {
+		return std::nullopt;
+	}
+	const auto userNanoseconds = (qint64(info.user_time.seconds) * 1'000'000
+								  + info.user_time.microseconds)
+								 * 1'000;
+	const auto systemNanoseconds = (qint64(info.system_time.seconds) * 1'000'000
+									+ info.system_time.microseconds)
+								   * 1'000;
+	return userNanoseconds + systemNanoseconds;
+#elif defined(Q_OS_LINUX)
+	auto usage = timespec();
+	if (clock_gettime(CLOCK_THREAD_CPUTIME_ID, &usage) != 0) {
+		return std::nullopt;
+	}
+	return qint64(usage.tv_sec) * 1'000'000'000 + usage.tv_nsec;
+#else
+	return std::nullopt;
+#endif
+}
 
 // Spins without calling into libstdc++ or the vDSO: those are built without
 // frame pointers, so a sample taken inside them would skip this frame.
 __attribute__((noinline)) void
 UiStallWatchdogTestBlock(std::chrono::milliseconds duration,
 						 std::atomic_bool *waitUntil = nullptr) {
+#if defined(Q_OS_MAC)
+	const auto mainThreadPriority = UiStallWatchdogTestMainThreadPriority();
+#endif // Q_OS_MAC
 	auto released = std::atomic_bool(false);
 	auto releaser = std::thread([&] {
 		std::this_thread::sleep_for(duration);
@@ -106,6 +284,13 @@ class UiStallWatchdogTestBlockFilter final : public QObject {
 	[[nodiscard]] bool LoggedWhileBlocked() const {
 		return _loggedWhileBlocked;
 	}
+	[[nodiscard]] std::chrono::steady_clock::time_point BlockStartedAt() const {
+		return _blockStartedAt;
+	}
+	[[nodiscard]] std::chrono::steady_clock::time_point
+	BlockFinishedAt() const {
+		return _blockFinishedAt;
+	}
 
   protected:
 	bool eventFilter(QObject *, QEvent *event) override {
@@ -123,7 +308,9 @@ class UiStallWatchdogTestBlockFilter final : public QObject {
 			if (_blockActive) {
 				_blockActive->store(true, std::memory_order_release);
 			}
+			_blockStartedAt = std::chrono::steady_clock::now();
 			UiStallWatchdogTestBlock(_durations[_nextBlock], _logged);
+			_blockFinishedAt = std::chrono::steady_clock::now();
 			if (_blockActive) {
 				_blockActive->store(false, std::memory_order_release);
 			}
@@ -145,6 +332,8 @@ class UiStallWatchdogTestBlockFilter final : public QObject {
 	int _nextBlock = 0;
 	bool _blocked = false;
 	bool _loggedWhileBlocked = false;
+	std::chrono::steady_clock::time_point _blockStartedAt;
+	std::chrono::steady_clock::time_point _blockFinishedAt;
 };
 
 TEST_CASE(UiStallWatchdogLogsMainThreadStack) {
@@ -153,15 +342,62 @@ TEST_CASE(UiStallWatchdogLogsMainThreadStack) {
 	auto logged = std::atomic_bool(false);
 	auto blockActive = std::atomic_bool(false);
 	auto completed = std::atomic_bool(false);
-	const auto before = Core::UiStallWatchdog::StallCount();
+	auto acknowledgementsDuringLogging = std::atomic_int(0);
+	auto finalReportedSchedulerTrace = QString();
+	const auto schedulerTraceFromLine = [](const QString &line) {
+		const auto prefix = u"scheduler_trace="_q;
+		const auto start = line.indexOf(prefix);
+		if (start < 0) {
+			return QString();
+		}
+		const auto traceStart = start + prefix.size();
+		const auto traceEnd = line.indexOf(u" stack="_q, traceStart);
+		return (traceEnd >= traceStart)
+				   ? line.mid(traceStart, traceEnd - traceStart)
+				   : QString();
+	};
+	const auto beforeEvidence
+		= Core::UiStallWatchdog::RecentStallEvidenceForTesting();
+	const auto beforeAcknowledgements
+		= Core::UiStallWatchdog::RecentPingAcknowledgementsForTesting();
+	const auto lastEvidenceStartedAt
+		= beforeEvidence.empty() ? QString() : beforeEvidence.back().startedAt;
+	const auto lastAcknowledgedAt
+		= beforeAcknowledgements.empty()
+			  ? QString()
+			  : beforeAcknowledgements.back().acknowledgedAt;
+	const auto lastAcknowledgedAtNanoseconds
+		= beforeAcknowledgements.empty()
+			  ? qint64(0)
+			  : beforeAcknowledgements.back().acknowledgedAtNanoseconds;
+	const auto windowProcessCpuBefore
+		= UiStallWatchdogProcessCpuTimeNanosecondsForTest();
+	const auto windowThreadCpuBefore
+		= UiStallWatchdogThreadCpuTimeNanosecondsForTest();
+	auto loop = QEventLoop();
+	auto blockFilter = UiStallWatchdogTestBlockFilter(
+		std::chrono::milliseconds(300), &loop, &logged, &blockActive);
 	{
-		auto loop = QEventLoop();
 		auto watchdog = Core::UiStallWatchdog(
 			[&](const QString &line, bool update) {
 				const auto lock = std::lock_guard(mutex);
 				if (update) {
 					if (!lines.empty()) {
 						lines.back() = line;
+					}
+					if (!blockActive.load(std::memory_order_acquire)) {
+						const auto before
+							= Core::UiStallWatchdog::
+								  RecentPingAcknowledgementsForTesting()
+									  .size();
+						std::this_thread::sleep_for(
+							std::chrono::milliseconds(200));
+						const auto after
+							= Core::UiStallWatchdog::
+								  RecentPingAcknowledgementsForTesting()
+									  .size();
+						acknowledgementsDuringLogging.store(
+							int(after - before), std::memory_order_release);
 					}
 					const auto duration = line.mid(u"UI stall "_q.size())
 											  .section(u' ', 0, 0)
@@ -173,34 +409,277 @@ TEST_CASE(UiStallWatchdogLogsMainThreadStack) {
 				if (blockActive.load(std::memory_order_acquire)) {
 					logged.store(true, std::memory_order_release);
 				}
-			});
-		auto blockFilter = UiStallWatchdogTestBlockFilter(
-			std::chrono::milliseconds(300), &loop, &logged, &blockActive);
+			},
+			{.captureSchedulerTrace = true});
 		watchdog.installEventFilter(&blockFilter);
 		QTimer::singleShot(2000, &loop, &QEventLoop::quit);
 		loop.exec();
 		CHECK(blockFilter.Blocked());
 		CHECK(blockFilter.LoggedWhileBlocked());
+		CHECK(blockFilter.BlockFinishedAt() > blockFilter.BlockStartedAt());
 		const auto deadline
 			= std::chrono::steady_clock::now() + std::chrono::seconds(2);
 		while (!completed.load(std::memory_order_acquire)
 			   && std::chrono::steady_clock::now() < deadline) {
 			QCoreApplication::processEvents();
-			std::this_thread::sleep_for(std::chrono::milliseconds(1));
+			std::this_thread::yield();
 		}
 		QCoreApplication::processEvents();
+		CHECK_EQ(watchdog.StallCountForTesting(), 1);
 	}
-	CHECK_EQ(Core::UiStallWatchdog::StallCount(), before + 1);
+	const auto windowProcessCpuAfter
+		= UiStallWatchdogProcessCpuTimeNanosecondsForTest();
+	const auto windowThreadCpuAfter
+		= UiStallWatchdogThreadCpuTimeNanosecondsForTest();
+	auto windowOtherThreadCpuNanoseconds = qint64(-1);
+	if (windowProcessCpuBefore && windowProcessCpuAfter && windowThreadCpuBefore
+		&& windowThreadCpuAfter) {
+		const auto processWork
+			= *windowProcessCpuAfter - *windowProcessCpuBefore;
+		const auto threadWork = *windowThreadCpuAfter - *windowThreadCpuBefore;
+		if (processWork >= threadWork) {
+			windowOtherThreadCpuNanoseconds = processWork - threadWork;
+		}
+	}
 	CHECK_EQ(int(lines.size()), 1);
 	if (!lines.empty()) {
 		CHECK(lines.front().startsWith(u"UI stall "_q));
 		CHECK(lines.front().contains(u"UiStallWatchdogTestBlock"_q));
+		CHECK(lines.front().contains(u"scheduler_trace="_q));
+		finalReportedSchedulerTrace = schedulerTraceFromLine(lines.front());
 		const auto duration = lines.front()
 								  .mid(u"UI stall "_q.size())
 								  .section(u' ', 0, 0)
 								  .toInt();
 		CHECK(duration >= 300);
 	}
+	const auto evidence
+		= Core::UiStallWatchdog::RecentStallEvidenceForTesting();
+	const auto acknowledgements
+		= Core::UiStallWatchdog::RecentPingAcknowledgementsForTesting();
+	CHECK(!evidence.empty());
+	CHECK(std::all_of(
+		acknowledgements.begin(), acknowledgements.end(),
+		[lastAcknowledgedAtNanoseconds](const auto &acknowledgement) {
+			return (acknowledgement.acknowledgedAtNanoseconds
+					<= lastAcknowledgedAtNanoseconds)
+				   || acknowledgement.schedulerTraceComplete;
+		}));
+	CHECK(std::any_of(
+		acknowledgements.begin(), acknowledgements.end(),
+		[lastAcknowledgedAtNanoseconds](const auto &acknowledgement) {
+			return (acknowledgement.acknowledgedAtNanoseconds
+					> lastAcknowledgedAtNanoseconds)
+				   && acknowledgement.schedulerTraceComplete
+				   && !acknowledgement.schedulerTrace.isEmpty()
+				   && (acknowledgement.schedulerTrace.size()
+					   == qsizetype(
+						   acknowledgement.schedulerSampleOffsetsNanoseconds
+							   .size()));
+		}));
+	auto shortSchedulerCapturePingObserved = false;
+	auto pingIntervalNanoseconds = qint64(-1);
+	auto previousAcknowledgedAtNanoseconds = lastAcknowledgedAtNanoseconds;
+	auto hasPreviousAcknowledgement = (lastAcknowledgedAtNanoseconds > 0);
+	auto acknowledgementGapsNanoseconds = std::vector<qint64>();
+	for (const auto &acknowledgement : acknowledgements) {
+		const auto acknowledgedAtNanoseconds
+			= acknowledgement.acknowledgedAtNanoseconds;
+		if (acknowledgedAtNanoseconds <= lastAcknowledgedAtNanoseconds) {
+			continue;
+		}
+		pingIntervalNanoseconds = acknowledgement.pingIntervalNanoseconds;
+		if (hasPreviousAcknowledgement
+			&& (acknowledgedAtNanoseconds
+				> previousAcknowledgedAtNanoseconds)) {
+			const auto gapNanoseconds
+				= acknowledgedAtNanoseconds - previousAcknowledgedAtNanoseconds;
+			acknowledgementGapsNanoseconds.push_back(gapNanoseconds);
+			if (gapNanoseconds <= 5'000'000) {
+				shortSchedulerCapturePingObserved = true;
+			}
+		}
+		previousAcknowledgedAtNanoseconds = acknowledgedAtNanoseconds;
+		hasPreviousAcknowledgement = true;
+	}
+	if (!shortSchedulerCapturePingObserved) {
+		std::fprintf(
+			stderr,
+			"Scheduler ping cadence failure: ping_interval_ns=%lld "
+			"window_other_thread_cpu_ns=%lld acknowledgement_gaps_ns=[",
+			static_cast<long long>(pingIntervalNanoseconds),
+			static_cast<long long>(windowOtherThreadCpuNanoseconds));
+		for (auto i = std::size_t(0);
+			 i != acknowledgementGapsNanoseconds.size(); ++i) {
+			std::fprintf(
+				stderr, "%s%lld", i ? "," : "",
+				static_cast<long long>(acknowledgementGapsNanoseconds[i]));
+		}
+		std::fprintf(stderr, "]\n");
+	}
+	if (acknowledgementsDuringLogging.load(std::memory_order_acquire) == 0) {
+		std::fprintf(stderr, "No watchdog ping acknowledgement arrived during "
+							 "stall reporting.\n");
+	}
+	if (!evidence.empty()) {
+		CHECK(evidence.back().startedAt != lastEvidenceStartedAt);
+		CHECK(evidence.back().stack.contains(u"UiStallWatchdogTestBlock"_q));
+		CHECK(evidence.back().schedulerTrace.size()
+			  == qsizetype(
+				  evidence.back().schedulerSampleOffsetsNanoseconds.size()));
+		auto schedulerTraceProvesRunnable = false;
+		if (blockFilter.Blocked()
+			&& (evidence.back().postedAtSteadyNanoseconds > 0)) {
+			auto blockSampleOffsetsNanoseconds
+				= evidence.back().schedulerSampleOffsetsNanoseconds;
+			const auto blockStartNanoseconds
+				= std::chrono::duration_cast<std::chrono::nanoseconds>(
+					  blockFilter.BlockStartedAt().time_since_epoch())
+					  .count();
+			const auto blockStartOffsetNanoseconds
+				= blockStartNanoseconds
+				  - evidence.back().postedAtSteadyNanoseconds;
+			for (auto &offset : blockSampleOffsetsNanoseconds) {
+				offset -= blockStartOffsetNanoseconds;
+			}
+			const auto blockDurationNanoseconds
+				= std::chrono::duration_cast<std::chrono::nanoseconds>(
+					  blockFilter.BlockFinishedAt()
+					  - blockFilter.BlockStartedAt())
+					  .count();
+			schedulerTraceProvesRunnable = Core::UiStallWatchdog::
+				SchedulerTraceProvesRunnableForDuration(
+					evidence.back().schedulerTrace,
+					blockSampleOffsetsNanoseconds, blockDurationNanoseconds);
+		}
+		if (finalReportedSchedulerTrace != evidence.back().schedulerTrace) {
+			std::fprintf(stderr, "The reported scheduler trace differs from "
+								 "the final evidence snapshot.\n");
+		}
+		if (!schedulerTraceProvesRunnable) {
+			const auto &offsets
+				= evidence.back().schedulerSampleOffsetsNanoseconds;
+			auto maxGapNanoseconds = qint64(0);
+			auto gapsOverFiveMilliseconds = 0;
+			for (auto i = std::size_t(1); i != offsets.size(); ++i) {
+				const auto gap = offsets[i] - offsets[i - 1];
+				maxGapNanoseconds = std::max(maxGapNanoseconds, gap);
+				if (gap > 5'000'000) {
+					++gapsOverFiveMilliseconds;
+				}
+			}
+			const auto blockStartNanoseconds
+				= std::chrono::duration_cast<std::chrono::nanoseconds>(
+					  blockFilter.BlockStartedAt().time_since_epoch())
+					  .count();
+			const auto blockDurationNanoseconds
+				= std::chrono::duration_cast<std::chrono::nanoseconds>(
+					  blockFilter.BlockFinishedAt()
+					  - blockFilter.BlockStartedAt())
+					  .count();
+			std::fprintf(
+				stderr,
+				"Scheduler runnable interval failure: posted_at_ns=%lld "
+				"block_start_ns=%lld block_duration_ns=%lld "
+				"trace_samples=%lld runnable_samples=%lld "
+				"max_gap_ns=%lld gaps_over_5ms=%d first_offset_ns=%lld "
+				"last_offset_ns=%lld other_thread_cpu_ns=%lld.\n",
+				static_cast<long long>(
+					evidence.back().postedAtSteadyNanoseconds),
+				static_cast<long long>(blockStartNanoseconds),
+				static_cast<long long>(blockDurationNanoseconds),
+				static_cast<long long>(evidence.back().schedulerTrace.size()),
+				static_cast<long long>(
+					evidence.back().schedulerTrace.count(u'R')),
+				static_cast<long long>(maxGapNanoseconds),
+				gapsOverFiveMilliseconds,
+				static_cast<long long>(offsets.empty() ? -1 : offsets.front()),
+				static_cast<long long>(offsets.empty() ? -1 : offsets.back()),
+				static_cast<long long>(windowOtherThreadCpuNanoseconds));
+		}
+	}
+}
+
+TEST_CASE(UiStallWatchdogSchedulerTraceRequiresContinuousCoverage) {
+	constexpr auto sampleIntervalNanoseconds = qint64(1'000'000);
+	constexpr auto durationNanoseconds = qint64(95'000'000);
+	constexpr auto jitterNanoseconds = qint64(2'000'000);
+	auto offsets = std::vector<qint64>();
+	for (auto offset = qint64(0); offset <= 94'000'000;
+		 offset += sampleIntervalNanoseconds) {
+		offsets.push_back(offset);
+	}
+	const auto trace = QString(int(offsets.size()), QChar(u'R'));
+	CHECK(Core::UiStallWatchdog::SchedulerTraceCoversDuration(
+		trace, offsets, durationNanoseconds));
+	CHECK(Core::UiStallWatchdog::SchedulerTraceProvesRunnableForDuration(
+		trace, offsets, durationNanoseconds));
+	CHECK(!Core::UiStallWatchdog::SchedulerTraceCoversDuration(
+		u"RRR"_q, {0, sampleIntervalNanoseconds, 2 * sampleIntervalNanoseconds},
+		200'000'000));
+
+	auto paddedTrace = u"W"_q + trace + u"W"_q;
+	auto paddedOffsets = std::vector<qint64>{-1'000'000};
+	paddedOffsets.insert(paddedOffsets.end(), offsets.begin(), offsets.end());
+	paddedOffsets.push_back(95'000'000);
+	CHECK(Core::UiStallWatchdog::SchedulerTraceProvesRunnableForDuration(
+		paddedTrace, paddedOffsets, 94'000'000));
+
+	auto blockedTrace = trace;
+	blockedTrace[45] = u'W';
+	CHECK(Core::UiStallWatchdog::SchedulerTraceCoversDuration(
+		blockedTrace, offsets, durationNanoseconds));
+	CHECK(!Core::UiStallWatchdog::SchedulerTraceProvesRunnableForDuration(
+		blockedTrace, offsets, durationNanoseconds));
+
+	auto smallJitterOffsets = offsets;
+	for (auto i = std::size_t(10); i != smallJitterOffsets.size(); ++i) {
+		smallJitterOffsets[i] += jitterNanoseconds;
+	}
+	CHECK(Core::UiStallWatchdog::SchedulerTraceProvesRunnableForDuration(
+		trace, smallJitterOffsets, durationNanoseconds));
+
+	auto jitteredOffsets = offsets;
+	for (auto i = std::size_t(0); i != jitteredOffsets.size(); ++i) {
+		const auto phase = i % 32;
+		const auto jitterSteps = phase <= 16 ? phase : 32 - phase;
+		const auto jitter = qint64(jitterSteps) * (jitterNanoseconds / 8);
+		jitteredOffsets[i] += jitter;
+	}
+	CHECK(Core::UiStallWatchdog::SchedulerTraceProvesRunnableForDuration(
+		trace, jitteredOffsets, durationNanoseconds));
+
+	auto skippedSlotOffsets = offsets;
+	for (auto i = std::size_t(10); i != skippedSlotOffsets.size(); ++i) {
+		skippedSlotOffsets[i] += 5 * sampleIntervalNanoseconds;
+	}
+	CHECK(!Core::UiStallWatchdog::SchedulerTraceProvesRunnableForDuration(
+		trace, skippedSlotOffsets, durationNanoseconds));
+
+	auto blockedInJitteredGapOffsets = jitteredOffsets;
+	for (auto i = std::size_t(10); i != blockedInJitteredGapOffsets.size();
+		 ++i) {
+		blockedInJitteredGapOffsets[i] += 5'000'000;
+	}
+	CHECK(!Core::UiStallWatchdog::SchedulerTraceProvesRunnableForDuration(
+		trace, blockedInJitteredGapOffsets, durationNanoseconds));
+
+	auto lateStartOffsets = offsets;
+	for (auto &offset : lateStartOffsets) {
+		offset += 7'000'000;
+	}
+	CHECK(!Core::UiStallWatchdog::SchedulerTraceProvesRunnableForDuration(
+		trace, lateStartOffsets, durationNanoseconds));
+
+	auto lateEndOffsets = offsets;
+	lateEndOffsets.back() -= 6'000'000;
+	CHECK(!Core::UiStallWatchdog::SchedulerTraceProvesRunnableForDuration(
+		trace, lateEndOffsets, durationNanoseconds));
+	CHECK(!Core::UiStallWatchdog::SchedulerTraceProvesRunnableForDuration(
+		QString(4, QChar(u'R')),
+		{0, sampleIntervalNanoseconds, 2 * sampleIntervalNanoseconds,
+		 3 * sampleIntervalNanoseconds},
+		92'000'000));
 }
 
 TEST_CASE(UiStallWatchdogCapturesShortStalls) {
@@ -210,7 +689,6 @@ TEST_CASE(UiStallWatchdogCapturesShortStalls) {
 	auto logged = std::atomic_bool(false);
 	auto completed = std::atomic_bool(false);
 	auto loop = QEventLoop();
-	const auto before = Core::UiStallWatchdog::StallCount();
 	auto watchdog = Core::UiStallWatchdog(
 		[&](const QString &line, bool update) {
 			const auto lock = std::lock_guard(mutex);
@@ -237,7 +715,7 @@ TEST_CASE(UiStallWatchdogCapturesShortStalls) {
 	loop.exec();
 	CHECK(blockFilter.Blocked());
 	CHECK(blockFilter.LoggedWhileBlocked());
-	CHECK_EQ(Core::UiStallWatchdog::StallCount(), before + 1);
+	CHECK_EQ(watchdog.StallCountForTesting(), 1);
 	const auto deadline
 		= std::chrono::steady_clock::now() + std::chrono::seconds(2);
 	while (!completed.load(std::memory_order_acquire)
@@ -353,7 +831,6 @@ TEST_CASE(UiStallWatchdogReplacesShortLogWithLongerStall) {
 	auto loggedWhileBlocked = std::atomic_bool(false);
 	auto blockActive = std::atomic_bool(false);
 	auto completedLongStall = std::atomic_bool(false);
-	const auto before = Core::UiStallWatchdog::StallCount();
 	{
 		auto loop = QEventLoop();
 		auto watchdog = Core::UiStallWatchdog([&](const QString &line,
@@ -394,8 +871,8 @@ TEST_CASE(UiStallWatchdogReplacesShortLogWithLongerStall) {
 			QCoreApplication::processEvents();
 			std::this_thread::sleep_for(std::chrono::milliseconds(1));
 		}
+		CHECK_EQ(watchdog.StallCountForTesting(), 2);
 	}
-	CHECK_EQ(Core::UiStallWatchdog::StallCount(), before + 2);
 	CHECK_EQ(int(lines.size()), 1);
 	if (!lines.empty()) {
 		const auto duration = lines.front()
@@ -407,7 +884,6 @@ TEST_CASE(UiStallWatchdogReplacesShortLogWithLongerStall) {
 }
 
 TEST_CASE(UiStallWatchdogIgnoresIdleTimeForShortStall) {
-	const auto before = Core::UiStallWatchdog::StallCount();
 	{
 		auto loop = QEventLoop();
 		auto watchdog = Core::UiStallWatchdog([](const QString &, bool) {});
@@ -417,13 +893,12 @@ TEST_CASE(UiStallWatchdogIgnoresIdleTimeForShortStall) {
 		QTimer::singleShot(2000, &loop, &QEventLoop::quit);
 		loop.exec();
 		CHECK(blockFilter.Blocked());
+		CHECK_EQ(watchdog.StallCountForTesting(), 0);
 	}
-	CHECK_EQ(Core::UiStallWatchdog::StallCount(), before);
 }
 
 TEST_CASE(UiStallWatchdogCountsButDoesNotLogMidThresholdStall) {
 	auto lines = std::vector<QString>();
-	const auto before = Core::UiStallWatchdog::StallCount();
 	{
 		auto loop = QEventLoop();
 		auto watchdog = Core::UiStallWatchdog(
@@ -434,7 +909,7 @@ TEST_CASE(UiStallWatchdogCountsButDoesNotLogMidThresholdStall) {
 		QTimer::singleShot(2000, &loop, &QEventLoop::quit);
 		loop.exec();
 		CHECK(blockFilter.Blocked());
+		CHECK_EQ(watchdog.StallCountForTesting(), 1);
 	}
-	CHECK_EQ(Core::UiStallWatchdog::StallCount(), before + 1);
 	CHECK(lines.empty());
 }

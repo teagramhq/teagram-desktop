@@ -18,8 +18,11 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <chrono>
 #include <cstdint>
 #include <cstdlib>
+#include <deque>
 #include <functional>
+#include <memory>
 #include <system_error>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -29,6 +32,11 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <pthread.h>
 #include <signal.h>
 #include <sys/ucontext.h>
+#if defined(Q_OS_MAC)
+#include <mach/mach.h>
+#include <mach/mach_time.h>
+#include <pthread/qos.h>
+#endif // Q_OS_MAC
 #if defined(Q_OS_MAC) && defined(__arm64__)
 #include <ptrauth.h>
 #endif // Q_OS_MAC && __arm64__
@@ -45,11 +53,44 @@ constexpr auto kPingInterval = 50ms;
 constexpr auto kLogThreshold = 100ms;
 constexpr auto kLogRateLimit = 10s;
 constexpr auto kShortPingInterval = 10ms;
+constexpr auto kSchedulerTracePingInterval = 2ms;
 constexpr auto kShortLogThreshold = 40ms;
+constexpr auto kSchedulerSampleInterval = 1ms;
+constexpr auto kMaxSchedulerSampleGap = 5ms;
+constexpr auto kMaxSchedulerSamples = 8192U;
+constexpr auto kMaxSchedulerHistorySamples = 65'536U;
 constexpr auto kMaxFrames = 32U;
 constexpr auto kMaxFrameCharacters = 160;
+constexpr auto kMaxPingAcknowledgements = 32'768U;
 
 std::atomic<quint64> TotalStallCount = 0;
+std::mutex StallEvidenceMutex;
+std::vector<UiStallWatchdog::StallEvidence> StallEvidenceHistory;
+std::deque<UiStallWatchdog::PingAcknowledgementEvidence>
+	PingAcknowledgementHistory;
+std::mutex SchedulerSampleHistoryMutex;
+std::deque<UiStallWatchdog::SchedulerSampleEvidence> SchedulerSampleHistory;
+
+#if defined(Q_OS_MAC)
+[[nodiscard]] std::uint64_t SchedulerSampleIntervalMachTicks() {
+	static const auto result = [] {
+		auto timebase = mach_timebase_info_data_t();
+		const auto status = mach_timebase_info(&timebase);
+		if ((status != KERN_SUCCESS) || !timebase.numer || !timebase.denom) {
+			return std::uint64_t(0);
+		}
+		const auto intervalNanoseconds
+			= std::chrono::duration_cast<std::chrono::nanoseconds>(
+				  kSchedulerSampleInterval)
+				  .count();
+		const auto numerator = std::uint64_t(timebase.numer);
+		const auto nanoseconds
+			= std::uint64_t(intervalNanoseconds) * timebase.denom;
+		return (nanoseconds + numerator - 1) / numerator;
+	}();
+	return result;
+}
+#endif // Q_OS_MAC
 
 #if defined(Q_OS_LINUX) || defined(Q_OS_MAC)
 
@@ -69,12 +110,46 @@ std::atomic_uint RequestedCapture = 0;
 std::atomic_uint CompletedCapture = 0;
 std::atomic_uint CaptureSequence = 0;
 pthread_t MainThread = {};
+#if defined(Q_OS_MAC)
+thread_t MainMachThread = MACH_PORT_NULL;
+#endif // Q_OS_MAC
 StackBounds MainStack;
 struct sigaction PreviousSignalAction = {};
 std::mutex SignalInstallMutex;
 bool SignalInstalled = false;
 
 static_assert(std::atomic_uint::is_always_lock_free);
+
+[[nodiscard]] char MainThreadSchedulerState() noexcept {
+#if defined(Q_OS_MAC)
+	if (MainMachThread == MACH_PORT_NULL) {
+		return '?';
+	}
+	auto info = thread_basic_info_data_t();
+	auto count = mach_msg_type_number_t(THREAD_BASIC_INFO_COUNT);
+	if (thread_info(MainMachThread, THREAD_BASIC_INFO,
+					reinterpret_cast<thread_info_t>(&info), &count)
+		!= KERN_SUCCESS) {
+		return '?';
+	}
+	switch (info.run_state) {
+	case TH_STATE_RUNNING:
+		return 'R';
+	case TH_STATE_WAITING:
+		return 'W';
+	case TH_STATE_UNINTERRUPTIBLE:
+		return 'U';
+	case TH_STATE_STOPPED:
+		return 'S';
+	case TH_STATE_HALTED:
+		return 'H';
+	default:
+		return '?';
+	}
+#else  // Q_OS_MAC
+	return '?';
+#endif // else for Q_OS_MAC
+}
 
 [[nodiscard]] StackBounds CurrentStackBounds(pthread_t thread) {
 #ifdef Q_OS_MAC
@@ -173,12 +248,21 @@ void CaptureSignal(int, siginfo_t *, void *context) {
 		return false;
 	}
 	MainThread = pthread_self();
+#if defined(Q_OS_MAC)
+	MainMachThread = mach_thread_self();
+#endif // Q_OS_MAC
 	MainStack = CurrentStackBounds(MainThread);
 	struct sigaction action = {};
 	action.sa_sigaction = CaptureSignal;
 	sigemptyset(&action.sa_mask);
 	action.sa_flags = SA_SIGINFO | SA_RESTART;
 	if (sigaction(SIGUSR2, &action, &PreviousSignalAction) != 0) {
+#if defined(Q_OS_MAC)
+		if (MainMachThread != MACH_PORT_NULL) {
+			mach_port_deallocate(mach_task_self(), MainMachThread);
+			MainMachThread = MACH_PORT_NULL;
+		}
+#endif // Q_OS_MAC
 		return false;
 	}
 	SignalInstalled = true;
@@ -195,6 +279,16 @@ void CaptureSignal(int, siginfo_t *, void *context) {
 		return false;
 	}
 	SignalInstalled = false;
+#if defined(Q_OS_MAC)
+	if (MainMachThread != MACH_PORT_NULL) {
+		const auto result
+			= mach_port_deallocate(mach_task_self(), MainMachThread);
+		MainMachThread = MACH_PORT_NULL;
+		if (result != KERN_SUCCESS) {
+			return false;
+		}
+	}
+#endif // Q_OS_MAC
 	return true;
 }
 
@@ -270,6 +364,23 @@ void CaptureSignal(int, siginfo_t *, void *context) {
 	return result.isEmpty() ? u"stack unavailable"_q : result.join(u" <- "_q);
 }
 
+[[nodiscard]] QString FormatStallLine(qint64 durationMilliseconds,
+									  const QString &startedAt,
+									  const QString &schedulerTrace,
+									  const QString &stack,
+									  bool captureSchedulerTrace) {
+	if (captureSchedulerTrace) {
+		return u"UI stall %1 ms (started %2): "
+			   "scheduler_trace=%3 stack=%4"_q.arg(durationMilliseconds)
+				   .arg(startedAt)
+				   .arg(schedulerTrace)
+				   .arg(stack);
+	}
+	return u"UI stall %1 ms (started %2): %3"_q.arg(durationMilliseconds)
+		.arg(startedAt)
+		.arg(stack);
+}
+
 #endif // Q_OS_LINUX || Q_OS_MAC
 
 class PingEvent final : public QEvent {
@@ -279,10 +390,11 @@ class PingEvent final : public QEvent {
 		return Result;
 	}
 
-	explicit PingEvent(std::uint64_t sequence)
-		: QEvent(Type()), sequence(sequence) {}
+	explicit PingEvent(std::uint64_t sequence, Clock::time_point postedAt)
+		: QEvent(Type()), sequence(sequence), postedAt(postedAt) {}
 
 	const std::uint64_t sequence;
+	const Clock::time_point postedAt;
 };
 
 } // namespace
@@ -294,17 +406,28 @@ UiStallWatchdog::UiStallWatchdog(
 UiStallWatchdog::UiStallWatchdog(
 	std::function<void(const QString &, bool update)> log, Settings settings)
 	: QObject(nullptr), _log(std::move(log)),
-	  _pingInterval(settings.captureShortStalls ? kShortPingInterval
-												: kPingInterval),
+	  _pingInterval(settings.captureSchedulerTrace ? kSchedulerTracePingInterval
+					: settings.captureShortStalls  ? kShortPingInterval
+												   : kPingInterval),
 	  _countThreshold(kCountThreshold),
 	  _logThreshold(settings.captureShortStalls ? kShortLogThreshold
 												: kLogThreshold),
-	  _logRateLimit(settings.captureShortStalls ? 0ms : kLogRateLimit) {
+	  _logRateLimit(settings.captureShortStalls ? 0ms : kLogRateLimit),
+	  _captureSchedulerTrace(settings.captureSchedulerTrace) {
 #if defined(Q_OS_LINUX) || defined(Q_OS_MAC)
 	_canCaptureStack = InstallSignalHandler();
 	try {
+		_reportThread = std::thread([this] { reportLoop(); });
 		_thread = std::thread([this] { run(); });
 	} catch (const std::system_error &error) {
+		{
+			const auto lock = std::lock_guard(_reportMutex);
+			_reportStopping = true;
+		}
+		_reportCondition.notify_all();
+		if (_reportThread.joinable()) {
+			_reportThread.join();
+		}
 		if (_log) {
 			_log(u"UI stall watchdog could not start: %1"_q.arg(
 					 QString::fromLocal8Bit(error.what())),
@@ -326,6 +449,14 @@ UiStallWatchdog::~UiStallWatchdog() {
 	if (_thread.joinable()) {
 		_thread.join();
 	}
+	{
+		const auto lock = std::lock_guard(_reportMutex);
+		_reportStopping = true;
+	}
+	_reportCondition.notify_all();
+	if (_reportThread.joinable()) {
+		_reportThread.join();
+	}
 #if defined(Q_OS_LINUX) || defined(Q_OS_MAC)
 	if (_canCaptureStack && !RestoreSignalHandler() && _log) {
 		_log(u"UI stall watchdog could not restore its signal handler"_q,
@@ -341,16 +472,175 @@ quint64 UiStallWatchdog::StallCount() {
 	return TotalStallCount.load(std::memory_order_relaxed);
 }
 
+quint64 UiStallWatchdog::StallCountForTesting() const {
+	return _stallCount.load(std::memory_order_relaxed);
+}
+
+void UiStallWatchdog::StopAfterNextAcknowledgementForTesting() {
+	const auto lock = std::lock_guard(_mutex);
+	_stopAfterNextAcknowledgementForTesting = true;
+}
+
+std::vector<UiStallWatchdog::StallEvidence>
+UiStallWatchdog::RecentStallEvidenceForTesting() {
+	const auto lock = std::lock_guard(StallEvidenceMutex);
+	return StallEvidenceHistory;
+}
+
+std::vector<UiStallWatchdog::PingAcknowledgementEvidence>
+UiStallWatchdog::RecentPingAcknowledgementsForTesting() {
+	const auto lock = std::lock_guard(StallEvidenceMutex);
+	return {PingAcknowledgementHistory.begin(),
+			PingAcknowledgementHistory.end()};
+}
+
+std::vector<UiStallWatchdog::SchedulerSampleEvidence>
+UiStallWatchdog::RecentSchedulerSamplesForTesting() {
+	const auto lock = std::lock_guard(SchedulerSampleHistoryMutex);
+	return {SchedulerSampleHistory.begin(), SchedulerSampleHistory.end()};
+}
+
+bool UiStallWatchdog::ShouldStopBeforeTraceAttachment(
+	bool stopping, std::uint64_t acknowledgedSequence,
+	std::uint64_t currentSequence) {
+	return stopping && (acknowledgedSequence < currentSequence);
+}
+
+bool UiStallWatchdog::SchedulerTraceCoversDuration(
+	const QString &trace, const std::vector<qint64> &sampleOffsetsNanoseconds,
+	qint64 durationNanoseconds) {
+	const auto maxSchedulerSampleGapNanoseconds
+		= std::chrono::duration_cast<std::chrono::nanoseconds>(
+			  kMaxSchedulerSampleGap)
+			  .count();
+	if ((durationNanoseconds < 0)
+		|| (trace.size() != qsizetype(sampleOffsetsNanoseconds.size()))
+		|| trace.isEmpty()) {
+		return false;
+	}
+	auto previousOffset = qint64(0);
+	auto hasPreviousOffset = false;
+	auto previousCoveredOffset = qint64(0);
+	auto firstCoveredOffset = qint64(0);
+	auto lastCoveredOffset = qint64(0);
+	auto hasCoveredOffset = false;
+	for (auto i = std::size_t(0); i != sampleOffsetsNanoseconds.size(); ++i) {
+		const auto offset = sampleOffsetsNanoseconds[i];
+		if (hasPreviousOffset && (offset < previousOffset)) {
+			return false;
+		}
+		if ((offset >= 0) && (offset <= durationNanoseconds)) {
+			if (hasCoveredOffset
+				&& (offset - previousCoveredOffset
+					> maxSchedulerSampleGapNanoseconds)) {
+				return false;
+			}
+			if (!hasCoveredOffset) {
+				firstCoveredOffset = offset;
+				hasCoveredOffset = true;
+			}
+			previousCoveredOffset = offset;
+			lastCoveredOffset = offset;
+		}
+		previousOffset = offset;
+		hasPreviousOffset = true;
+	}
+	return hasCoveredOffset
+		   && (firstCoveredOffset <= maxSchedulerSampleGapNanoseconds)
+		   && (durationNanoseconds - lastCoveredOffset
+			   <= maxSchedulerSampleGapNanoseconds);
+}
+
+bool UiStallWatchdog::SchedulerTraceProvesRunnableForDuration(
+	const QString &trace, const std::vector<qint64> &sampleOffsetsNanoseconds,
+	qint64 durationNanoseconds) {
+	if (!SchedulerTraceCoversDuration(trace, sampleOffsetsNanoseconds,
+									  durationNanoseconds)) {
+		return false;
+	}
+	for (auto i = std::size_t(0); i != sampleOffsetsNanoseconds.size(); ++i) {
+		const auto offset = sampleOffsetsNanoseconds[i];
+		if ((offset >= 0) && (offset <= durationNanoseconds)
+			&& (trace[qsizetype(i)] != u'R')) {
+			return false;
+		}
+	}
+	return true;
+}
+
+void UiStallWatchdog::enqueueReport(std::function<void()> report) {
+	{
+		const auto lock = std::lock_guard(_reportMutex);
+		if (_reportStopping) {
+			return;
+		}
+		_reports.push_back(std::move(report));
+	}
+	_reportCondition.notify_one();
+}
+
+void UiStallWatchdog::reportLoop() {
+	while (true) {
+		auto report = std::function<void()>();
+		{
+			auto lock = std::unique_lock(_reportMutex);
+			_reportCondition.wait(
+				lock, [this] { return _reportStopping || !_reports.empty(); });
+			if (_reports.empty()) {
+				return;
+			}
+			report = std::move(_reports.front());
+			_reports.pop_front();
+		}
+		report();
+	}
+}
+
 bool UiStallWatchdog::event(QEvent *event) {
 	if (event->type() != PingEvent::Type()) {
 		return QObject::event(event);
 	}
 	const auto ping = static_cast<PingEvent *>(event);
+	const auto acknowledgedAt = Clock::now();
 	{
 		const auto lock = std::lock_guard(_mutex);
 		if (ping->sequence > _acknowledgedSequence) {
+			if (_captureSchedulerTrace) {
+				const auto duration = acknowledgedAt - ping->postedAt;
+				const auto evidence = PingAcknowledgementEvidence{
+					.acknowledgedAt
+					= QDateTime::currentDateTime().toString(Qt::ISODateWithMs),
+					.acknowledgedAtNanoseconds
+					= std::chrono::duration_cast<std::chrono::nanoseconds>(
+						  acknowledgedAt.time_since_epoch())
+						  .count(),
+					.responseNanoseconds
+					= std::chrono::duration_cast<std::chrono::nanoseconds>(
+						  duration)
+						  .count(),
+					.pingIntervalNanoseconds
+					= std::chrono::duration_cast<std::chrono::nanoseconds>(
+						  _pingInterval)
+						  .count(),
+					.sequence = ping->sequence,
+					.postedAtSteadyNanoseconds
+					= std::chrono::duration_cast<std::chrono::nanoseconds>(
+						  ping->postedAt.time_since_epoch())
+						  .count(),
+				};
+				const auto evidenceLock = std::lock_guard(StallEvidenceMutex);
+				PingAcknowledgementHistory.push_back(evidence);
+				if (PingAcknowledgementHistory.size()
+					> kMaxPingAcknowledgements) {
+					PingAcknowledgementHistory.pop_front();
+				}
+			}
 			_acknowledgedSequence = ping->sequence;
-			_acknowledgedAt = Clock::now();
+			_acknowledgedAt = acknowledgedAt;
+			if (_stopAfterNextAcknowledgementForTesting) {
+				_stopAfterNextAcknowledgementForTesting = false;
+				_stopping = true;
+			}
 		}
 	}
 	_condition.notify_one();
@@ -359,6 +649,127 @@ bool UiStallWatchdog::event(QEvent *event) {
 
 void UiStallWatchdog::run() {
 #if defined(Q_OS_LINUX) || defined(Q_OS_MAC)
+	struct SchedulerSample final {
+		Clock::time_point sampledAt;
+		char state = '?';
+	};
+	auto schedulerSamplesMutex = std::mutex();
+	auto schedulerSamples = std::deque<SchedulerSample>();
+	auto schedulerSampler = std::jthread();
+	if (_captureSchedulerTrace) {
+		try {
+			schedulerSampler = std::jthread([this, &schedulerSamplesMutex,
+											 &schedulerSamples](
+												std::stop_token stop) {
+#if defined(Q_OS_MAC)
+				const auto qosResult = pthread_set_qos_class_self_np(
+					QOS_CLASS_USER_INTERACTIVE, 0);
+				if (qosResult != 0) {
+					enqueueReport([this, qosResult] {
+						if (_log) {
+							_log(
+								u"UI stall watchdog scheduler sampler could not set QoS: %1"_q
+									.arg(qosResult),
+								false);
+						}
+					});
+					return;
+				}
+				auto sampleIntervalMachTicks
+					= SchedulerSampleIntervalMachTicks();
+				auto nextSampleAtMach
+					= sampleIntervalMachTicks
+						  ? mach_absolute_time() + sampleIntervalMachTicks
+						  : std::uint64_t(0);
+#endif // Q_OS_MAC
+				auto nextSampleAt = Clock::now();
+				while (!stop.stop_requested()) {
+					auto sampleAt = nextSampleAt;
+					const auto now = Clock::now();
+					if (sampleAt < now) {
+						sampleAt = now;
+					}
+#if defined(Q_OS_MAC)
+					if (sampleIntervalMachTicks) {
+						if (mach_wait_until(nextSampleAtMach) != KERN_SUCCESS) {
+							std::this_thread::sleep_until(sampleAt);
+						}
+					} else {
+						std::this_thread::sleep_until(sampleAt);
+					}
+#else
+					std::this_thread::sleep_until(sampleAt);
+#endif // Q_OS_MAC
+					if (stop.stop_requested()) {
+						break;
+					}
+					const auto state = MainThreadSchedulerState();
+					const auto sampledAt = Clock::now();
+					{
+						const auto lock
+							= std::lock_guard(schedulerSamplesMutex);
+						schedulerSamples.push_back({sampledAt, state});
+						if (schedulerSamples.size() > kMaxSchedulerSamples) {
+							schedulerSamples.pop_front();
+						}
+					}
+					{
+						const auto lock
+							= std::lock_guard(SchedulerSampleHistoryMutex);
+						SchedulerSampleHistory.push_back({
+							.sampledAtSteadyNanoseconds
+							= std::chrono::duration_cast<
+								  std::chrono::nanoseconds>(
+								  sampledAt.time_since_epoch())
+								  .count(),
+							.state = state,
+						});
+						if (SchedulerSampleHistory.size()
+							> kMaxSchedulerHistorySamples) {
+							SchedulerSampleHistory.pop_front();
+						}
+					}
+					nextSampleAt = sampledAt + kSchedulerSampleInterval;
+#if defined(Q_OS_MAC)
+					if (sampleIntervalMachTicks) {
+						nextSampleAtMach
+							= mach_absolute_time() + sampleIntervalMachTicks;
+					}
+#endif // Q_OS_MAC
+				}
+			});
+		} catch (const std::system_error &error) {
+			const auto message = QString::fromLocal8Bit(error.what());
+			enqueueReport([this, message] {
+				if (_log) {
+					_log(
+						u"UI stall watchdog scheduler sampler could not start: %1"_q
+							.arg(message),
+						false);
+				}
+			});
+		}
+	}
+	const auto schedulerSampleSnapshot
+		= [&](Clock::time_point start, Clock::time_point end) {
+			  auto trace = std::string();
+			  auto offsets = std::vector<qint64>();
+			  const auto lock = std::lock_guard(schedulerSamplesMutex);
+			  const auto first = std::lower_bound(
+				  schedulerSamples.begin(), schedulerSamples.end(), start,
+				  [](const SchedulerSample &sample, Clock::time_point at) {
+					  return sample.sampledAt < at;
+				  });
+			  for (auto i = first;
+				   i != schedulerSamples.end() && (i->sampledAt <= end); ++i) {
+				  trace.push_back(i->state);
+				  offsets.push_back(
+					  std::chrono::duration_cast<std::chrono::nanoseconds>(
+						  i->sampledAt - start)
+						  .count());
+			  }
+			  return std::pair(std::move(trace), std::move(offsets));
+		  };
 	auto sequence = std::uint64_t(0);
 	auto hasLogged = false;
 	auto lastLogged = Clock::time_point();
@@ -367,7 +778,14 @@ void UiStallWatchdog::run() {
 		const auto current = ++sequence;
 		const auto startTime = QDateTime::currentDateTime();
 		const auto postedAt = Clock::now();
-		QCoreApplication::postEvent(this, new PingEvent(current));
+		const auto schedulerTraceTextSnapshot = [&](Clock::time_point end) {
+			const auto snapshot = schedulerSampleSnapshot(postedAt, end);
+			const auto &trace = snapshot.first;
+			return trace.empty() ? u"none"_q
+								 : QString::fromLatin1(trace.data(),
+													   qsizetype(trace.size()));
+		};
+		QCoreApplication::postEvent(this, new PingEvent(current, postedAt));
 		{
 			const auto lock = std::lock_guard(_mutex);
 			_started = true;
@@ -378,37 +796,38 @@ void UiStallWatchdog::run() {
 		auto replaceLog = false;
 		auto detectedAt = Clock::time_point();
 		auto frames = std::vector<void *>();
-		auto stack = QString();
-		const auto lineForDuration = [&](Clock::duration duration) {
-			const auto milliseconds
-				= std::chrono::duration_cast<std::chrono::milliseconds>(
-					duration);
-			return u"UI stall %1 ms (started %2): %3"_q
-				.arg(milliseconds.count())
-				.arg(startTime.toString(Qt::ISODateWithMs))
-				.arg(stack);
-		};
+		auto rawStack = QString();
+		auto formattedStack = std::shared_ptr<QString>();
+		auto startedAt = QString();
+		auto schedulerTraceText = QString();
+		auto detectedDurationMilliseconds = qint64(0);
 		auto lock = std::unique_lock(_mutex);
 		const auto acknowledged
 			= [&] { return _stopping || (_acknowledgedSequence >= current); };
+		const auto waitUntil = [&](Clock::time_point deadline) {
+			return _condition.wait_until(lock, deadline, acknowledged);
+		};
 		if (_condition.wait_until(lock, postedAt + _countThreshold,
 								  acknowledged)) {
-			if (_stopping) {
+			if (ShouldStopBeforeTraceAttachment(
+					_stopping, _acknowledgedSequence, current)) {
 				return;
 			}
 			const auto duration = _acknowledgedAt - postedAt;
 			if (duration >= _countThreshold) {
+				_stallCount.fetch_add(1, std::memory_order_relaxed);
 				TotalStallCount.fetch_add(1, std::memory_order_relaxed);
 			}
 			if (duration >= _logThreshold) {
 				detectedAt = _acknowledgedAt;
 			}
 		} else {
+			_stallCount.fetch_add(1, std::memory_order_relaxed);
 			TotalStallCount.fetch_add(1, std::memory_order_relaxed);
-			if (!_condition.wait_until(lock, postedAt + _logThreshold,
-									   acknowledged)) {
+			if (!waitUntil(postedAt + _logThreshold)) {
 				detectedAt = Clock::now();
-			} else if (_stopping) {
+			} else if (ShouldStopBeforeTraceAttachment(
+						   _stopping, _acknowledgedSequence, current)) {
 				return;
 			} else if (_acknowledgedAt - postedAt >= _logThreshold) {
 				detectedAt = _acknowledgedAt;
@@ -433,15 +852,16 @@ void UiStallWatchdog::run() {
 					detectedAt = Clock::now();
 					writeLog = true;
 					replaceLog = detectedAt < rateLimitedUntil;
-				} else if (_stopping) {
-					return;
-				} else if (_acknowledgedAt >= rateLimitedUntil) {
-					detectedAt = _acknowledgedAt;
-					writeLog = true;
-				} else if (_acknowledgedAt - postedAt > lastLoggedDuration) {
-					detectedAt = _acknowledgedAt;
-					writeLog = true;
-					replaceLog = true;
+				} else if (_acknowledgedSequence >= current) {
+					if (_acknowledgedAt >= rateLimitedUntil) {
+						detectedAt = _acknowledgedAt;
+						writeLog = true;
+					} else if (_acknowledgedAt - postedAt
+							   > lastLoggedDuration) {
+						detectedAt = _acknowledgedAt;
+						writeLog = true;
+						replaceLog = true;
+					}
 				}
 			}
 			if (writeLog) {
@@ -449,32 +869,128 @@ void UiStallWatchdog::run() {
 				if (_canCaptureStack) {
 					frames = CaptureStack();
 				}
-				stack = FormatRawStack(frames);
-				lock.lock();
-				lock.unlock();
-				const auto loggedDuration = detectedAt - postedAt;
-				_log(lineForDuration(loggedDuration), replaceLog);
+				rawStack = FormatRawStack(frames);
+				formattedStack = std::make_shared<QString>();
+				startedAt = startTime.toString(Qt::ISODateWithMs);
+				schedulerTraceText = schedulerTraceTextSnapshot(detectedAt);
+				detectedDurationMilliseconds
+					= std::chrono::duration_cast<std::chrono::milliseconds>(
+						  detectedAt - postedAt)
+						  .count();
+				const auto reportFrames
+					= std::make_shared<std::vector<void *>>(std::move(frames));
+				const auto reportedStack = formattedStack;
+				enqueueReport([this, startedAt, schedulerTraceText,
+							   detectedDurationMilliseconds, rawStack,
+							   replaceLog, reportFrames, reportedStack] {
+					_log(FormatStallLine(detectedDurationMilliseconds,
+										 startedAt, schedulerTraceText,
+										 rawStack, _captureSchedulerTrace),
+						 replaceLog);
+					if (!reportFrames->empty()) {
+						*reportedStack = FormatStack(*reportFrames);
+						_log(FormatStallLine(detectedDurationMilliseconds,
+											 startedAt, schedulerTraceText,
+											 *reportedStack,
+											 _captureSchedulerTrace),
+							 true);
+					}
+				});
 				lastLogged = Clock::now();
-				lastLoggedDuration = loggedDuration;
+				lastLoggedDuration = detectedAt - postedAt;
 				hasLogged = true;
-				if (!frames.empty()) {
-					stack = FormatStack(frames);
-					_log(lineForDuration(loggedDuration), true);
-				}
 				lock.lock();
 			}
 		}
-		_condition.wait(lock, acknowledged);
+		while (!_stopping && (_acknowledgedSequence < current)) {
+			_condition.wait(lock, acknowledged);
+		}
 		if (_acknowledgedSequence < current) {
+			return;
+		}
+		auto schedulerSampleOffsetsNanoseconds = std::vector<qint64>();
+		if (_captureSchedulerTrace) {
+			const auto [trace, offsets]
+				= schedulerSampleSnapshot(postedAt, _acknowledgedAt);
+			schedulerTraceText
+				= trace.empty() ? u"none"_q
+								: QString::fromLatin1(trace.data(),
+													  qsizetype(trace.size()));
+			schedulerSampleOffsetsNanoseconds = offsets;
+			const auto evidenceLock = std::lock_guard(StallEvidenceMutex);
+			for (auto i = PingAcknowledgementHistory.rbegin();
+				 i != PingAcknowledgementHistory.rend(); ++i) {
+				if ((i->sequence == current)
+					&& (i->postedAtSteadyNanoseconds
+						== std::chrono::duration_cast<std::chrono::nanoseconds>(
+							   postedAt.time_since_epoch())
+							   .count())) {
+					i->schedulerTrace = schedulerTraceText;
+					i->schedulerSampleOffsetsNanoseconds
+						= schedulerSampleOffsetsNanoseconds;
+					i->schedulerTraceComplete = true;
+					break;
+				}
+			}
+		}
+		if (_stopping) {
 			return;
 		}
 		if (writeLog) {
 			const auto completedAt = _acknowledgedAt;
+			schedulerTraceText = schedulerTraceTextSnapshot(completedAt);
 			lock.unlock();
-			const auto duration = completedAt - postedAt;
-			_log(lineForDuration(duration), true);
+			const auto completedDurationMilliseconds
+				= std::chrono::duration_cast<std::chrono::milliseconds>(
+					  completedAt - postedAt)
+					  .count();
+			const auto completedDuration = completedAt - postedAt;
+			if (_captureSchedulerTrace) {
+				const auto evidence = StallEvidence{
+					.startedAt = startedAt,
+					.postedAtSteadyNanoseconds
+					= std::chrono::duration_cast<std::chrono::nanoseconds>(
+						  postedAt.time_since_epoch())
+						  .count(),
+					.durationMilliseconds = completedDurationMilliseconds,
+					.durationNanoseconds
+					= std::chrono::duration_cast<std::chrono::nanoseconds>(
+						  completedDuration)
+						  .count(),
+					.schedulerTrace = schedulerTraceText,
+					.schedulerSampleOffsetsNanoseconds
+					= schedulerSampleOffsetsNanoseconds,
+					.stack = rawStack,
+				};
+				const auto evidenceLock = std::lock_guard(StallEvidenceMutex);
+				StallEvidenceHistory.push_back(evidence);
+				if (StallEvidenceHistory.size() > 64) {
+					StallEvidenceHistory.erase(StallEvidenceHistory.begin());
+				}
+			}
+			enqueueReport([this, startedAt, schedulerTraceText,
+						   completedDurationMilliseconds, rawStack,
+						   reportedStack = formattedStack] {
+				const auto stack
+					= reportedStack->isEmpty() ? rawStack : *reportedStack;
+				if (_captureSchedulerTrace && !reportedStack->isEmpty()) {
+					auto evidenceLock = std::lock_guard(StallEvidenceMutex);
+					for (auto i = StallEvidenceHistory.rbegin();
+						 i != StallEvidenceHistory.rend(); ++i) {
+						if (i->startedAt == startedAt) {
+							i->stack = stack;
+							break;
+						}
+					}
+				}
+				_log(FormatStallLine(completedDurationMilliseconds, startedAt,
+									 schedulerTraceText, stack,
+									 _captureSchedulerTrace),
+					 true);
+			});
 			lastLogged = Clock::now();
-			lastLoggedDuration = duration;
+			lastLoggedDuration = completedDuration;
+			hasLogged = true;
 			lock.lock();
 		}
 		_condition.wait_until(lock, _acknowledgedAt + _pingInterval,

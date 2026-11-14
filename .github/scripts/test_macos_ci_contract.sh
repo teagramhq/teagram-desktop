@@ -1098,40 +1098,252 @@ awk '
 ' "$profile_harness" > "$temp_dir/cache-latency-check.sh"
 [[ -s "$temp_dir/cache-latency-check.sh" ]] \
   || contract_fail 'The cache latency evidence checks were not found.'
+awk '
+  /^work_value_within_budget\(\) \{$/ { copy = 1 }
+  /^main_thread_cpu_work_within_budget\(\) \{$/ { copy = 1 }
+  copy { print }
+  copy && /^}$/ { copy = 0 }
+' "$profile_harness" > "$temp_dir/main-thread-budget-gates.sh"
+[[ -s "$temp_dir/main-thread-budget-gates.sh" ]] \
+  || contract_fail 'The profile work budget predicates were not found.'
+source "$temp_dir/main-thread-budget-gates.sh"
+awk '
+  /^main_thread_work_estimate_within_budget\(\) \{$/ { copy = 1 }
+  copy { print }
+  copy && /^}$/ { exit }
+' "$profile_harness" > "$temp_dir/main-thread-work-gate.sh"
+[[ -s "$temp_dir/main-thread-work-gate.sh" ]] \
+  || contract_fail 'The blocked-time main-thread work budget predicate was not found.'
+source "$temp_dir/main-thread-work-gate.sh"
+startup_offsets=""
+for ((offset = 0; offset <= 100000000; offset += 5000000)); do
+  startup_offsets="${startup_offsets:+$startup_offsets,}$offset"
+done
+chat_switch_offsets=""
+for ((offset = 0; offset <= 225000000; offset += 5000000)); do
+  chat_switch_offsets="${chat_switch_offsets:+$chat_switch_offsets,}$offset"
+done
+callback_offsets=""
+for ((offset = 0; offset <= 200000000; offset += 5000000)); do
+  callback_offsets="${callback_offsets:+$callback_offsets,}$offset"
+done
+sparse_startup_offsets=""
+for ((offset = 0; offset <= 225000000; offset += 12500000)); do
+  sparse_startup_offsets="${sparse_startup_offsets:+$sparse_startup_offsets,}$offset"
+done
+if main_thread_work_estimate_within_budget \
+  0 101000000 "$(printf '%21s' '' | tr ' ' W)" 100000000 \
+  "$startup_offsets"; then
+  contract_fail 'A fully blocked 101 ms window must fail the startup budget.'
+fi
+if ! main_thread_work_estimate_within_budget \
+  18000000 225000000 "$(printf '%46s' '' | tr ' ' R)" 100000000 \
+  "$chat_switch_offsets"; then
+  contract_fail 'A runnable 225 ms window with 18 ms CPU must pass.'
+fi
+if main_thread_work_estimate_within_budget \
+  18000000 225000000 \
+  "$(printf '%15s' '' | tr ' ' R)$(printf '%4s' '' | tr ' ' W)" \
+  100000000 "$sparse_startup_offsets"; then
+  contract_fail 'A 12.5 ms sample gap must fall back to wall time.'
+fi
+six_millisecond_offsets=""
+for ((offset = 0; offset <= 222000000; offset += 6000000)); do
+  six_millisecond_offsets="${six_millisecond_offsets:+$six_millisecond_offsets,}$offset"
+done
+six_millisecond_trace="$(printf '%38s' '' | tr ' ' R)"
+if main_thread_work_estimate_within_budget \
+  18000000 225000000 "$six_millisecond_trace" 100000000 \
+  "$six_millisecond_offsets"; then
+  contract_fail 'A 6 ms sample gap must fall back to wall time.'
+fi
+if main_thread_work_estimate_within_budget \
+  18000000 225000000 RRRW 100000000 0,75000000,150000000,225000000; then
+  contract_fail 'A four-sample 75 ms gap must fall back to wall time.'
+fi
+if main_thread_work_estimate_within_budget 0 101000000 none 100000000 ""; then
+  contract_fail 'A window without scheduler samples must fall back to wall time.'
+fi
+callback_runnable_trace="$(printf '%41s' '' | tr ' ' R)"
+callback_unknown_trace="${callback_runnable_trace:0:20}?${callback_runnable_trace:21}"
+if main_thread_work_estimate_within_budget \
+  12000000 200000000 "$callback_unknown_trace" 50000000 "$callback_offsets"; then
+  contract_fail 'An unknown scheduler state must fall back to wall time.'
+fi
+callback_negative_offsets="-1${callback_offsets#0}"
+if main_thread_work_estimate_within_budget \
+  12000000 200000000 "$callback_runnable_trace" 50000000 \
+  "$callback_negative_offsets"; then
+  contract_fail 'A negative scheduler offset must fall back to wall time.'
+fi
+if main_thread_work_estimate_within_budget \
+	0 200000000 RRR 100000000 0,1000000,2000000; then
+	contract_fail 'A clustered runnable trace must fall back to wall time.'
+fi
+if main_thread_work_estimate_within_budget \
+  0 200000000 RRRRR 100000000 0,5000000,10000000,190000000,200000000; then
+  contract_fail 'A long unobserved middle interval must fall back to wall time.'
+fi
+if main_thread_work_estimate_within_budget \
+  18000000 225000000 \
+  "$(printf '%26s' '' | tr ' ' R)$(printf '%20s' '' | tr ' ' W)" \
+  100000000 "$chat_switch_offsets"; then
+  contract_fail 'A covered trace with a blocked tail must exceed the startup budget.'
+fi
+if ! main_thread_work_estimate_within_budget \
+  17990000 225000000 "$(printf '%46s' '' | tr ' ' R)" 100000000 \
+  "$chat_switch_offsets"; then
+  contract_fail 'A covered runnable window with 17.99 ms CPU must pass.'
+fi
+if main_thread_work_estimate_within_budget \
+  12000000 200000000 "$(printf '%41s' '' | tr ' ' W)" 50000000 \
+  "$callback_offsets"; then
+  contract_fail 'A 200 ms blocked attach-menu callback must fail its 50 ms budget.'
+fi
+if main_thread_work_estimate_within_budget \
+  12000000 200000000 none 50000000 ""; then
+  contract_fail 'An attach-menu callback without scheduler evidence must use wall time.'
+fi
 cat > "$temp_dir/cache-latency.log" <<'EOF'
-Cache access latency regression: cache=cache seeded_directories=125 seeded_files=169 closed_clear_missing_active=1 cache_initialization_ns=585165042 initialization_allowed=1 queued_ops_before_ready=1 queued_ops_passed=1 cache_usable_ns=585252834 under_10s=1 max_main_thread_stall_ns=230059167 under_100ms=0 first_access_ns=86917 under_50ms=1 root_swap_refused=1 direct_fallback_closed=1 root_restored=1 startup_walks=2 main_thread_walks=0.
-Cache access latency regression: cache=media_cache seeded_directories=125 seeded_files=169 closed_clear_missing_active=1 cache_initialization_ns=120678959 initialization_allowed=1 queued_ops_before_ready=1 queued_ops_passed=1 cache_usable_ns=120763125 under_10s=1 max_main_thread_stall_ns=48247625 under_100ms=1 first_access_ns=83292 under_50ms=1 root_swap_refused=1 direct_fallback_closed=1 root_restored=1 startup_walks=2 main_thread_walks=0.
-First messages.getDialogs handler latency regression: seeded_directories=125 seeded_files=169 requests=1 parsed=1 chats=2 dialogs=1 messages=73 documents=73 cache_walks=2 max_handler_ns=9893666 under_50ms=1.
-Cache chat switch latency regression: seeded_directories=125 seeded_files=169 reactions=73 hydrated_documents=292 chat_switches=73 minimized_restore=1 minimized_switch_ns=51000000 minimized_restore_budget_ns=50000000 max_hydration_ns=5210625 max_switch_ns=100964792 max_stall_ns=100964792 under_50ms=0.
+Cache access latency regression: cache=cache seeded_directories=125 seeded_files=169 closed_clear_missing_active=1 cache_initialization_ns=585165042 initialization_allowed=1 queued_ops_before_ready=1 queued_ops_passed=1 cache_usable_ns=585252834 under_10s=1 max_main_thread_work_ns=17990000 max_startup_estimated_work_ns=66903043 max_heartbeat_gap_ns=230059167 max_heartbeat_gap_work_ns=17990000 heartbeat_gap_process_work_ns=117600000 heartbeat_gap_started_at=2026-11-06T00:47:53.000Z startup_heartbeat_gap_count=1 startup_uncovered_heartbeat_gaps=1 startup_heartbeat_gap_coverage_proven=0 startup_stall_count=1 max_startup_stall_ns=225000000 startup_stall_main_thread_work_ns=17990000 startup_stall_process_work_ns=117600000 startup_stall_started_at=2026-11-06T00:47:53.000Z startup_stall_heartbeat_gap_started_at=2026-11-06T00:47:53.000Z startup_stall_scheduler_samples=46 startup_stall_scheduler_running=36 startup_stall_scheduler_waiting=10 startup_stall_scheduler_uninterruptible=0 startup_stall_scheduler_other=0 startup_stall_scheduler_trace=RRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRWWWWWWWWWW startup_stall_stack_captured=1 startup_stall_evidence_matched=1 startup_stall_scheduler_preemption_proven=0 under_100ms=1 first_access_ns=86917 under_50ms=1 root_swap_refused=1 direct_fallback_closed=1 root_restored=1 startup_walks=2 main_thread_walks=0.
+Cache startup watchdog stall: cache=cache started_at=2026-11-06T00:47:53.000Z duration_ms=230 heartbeat_gap_started_at=2026-11-06T00:47:53.000Z scheduler_trace=WWWW stack_captured=1 stack=worker wait regression
+Cache access latency regression: cache=media_cache seeded_directories=125 seeded_files=169 closed_clear_missing_active=1 cache_initialization_ns=120678959 initialization_allowed=1 queued_ops_before_ready=1 queued_ops_passed=1 cache_usable_ns=120763125 under_10s=1 max_main_thread_work_ns=48247625 max_startup_estimated_work_ns=48247625 max_heartbeat_gap_ns=48247625 max_heartbeat_gap_work_ns=48247625 heartbeat_gap_process_work_ns=25000000 heartbeat_gap_started_at=2026-11-06T00:47:53.000Z startup_heartbeat_gap_count=0 startup_uncovered_heartbeat_gaps=0 startup_heartbeat_gap_coverage_proven=1 startup_stall_count=0 max_startup_stall_ns=0 startup_stall_main_thread_work_ns=0 startup_stall_process_work_ns=0 startup_stall_started_at=none startup_stall_heartbeat_gap_started_at=none startup_stall_scheduler_samples=0 startup_stall_scheduler_running=0 startup_stall_scheduler_waiting=0 startup_stall_scheduler_uninterruptible=0 startup_stall_scheduler_other=0 startup_stall_scheduler_trace=none startup_stall_stack_captured=0 startup_stall_evidence_matched=0 startup_stall_scheduler_preemption_proven=0 under_100ms=1 first_access_ns=83292 under_50ms=1 root_swap_refused=1 direct_fallback_closed=1 root_restored=1 startup_walks=2 main_thread_walks=0.
+First messages.getDialogs handler latency regression: seeded_directories=125 seeded_files=169 requests=1 parsed=1 chats=2 dialogs=1 messages=73 documents=73 cache_walks=2 max_handler_ns=9893666 main_thread_cpu_ns=9893666 blocked_estimate_ns=0 estimated_work_ns=9893666 trace=R under_50ms=1.
+Initial history selection: peer_id=281474977760707 wall_ns=135344750 main_thread_work_ns=40000000 blocked_estimate_ns=0 estimated_work_ns=40000000 budget_ns=50000000 trace=R scheduler_preemption_proven=0.
+Cache chat switch latency regression: seeded_directories=125 seeded_files=169 reactions=73 hydrated_documents=292 chat_switches=73 attach_menu_bot_count=20 minimized_restore=1 minimized_switch_ns=45000000 minimized_restore_budget_ns=50000000 max_hydration_ns=5210625 max_hydration_work_ns=4000000 hydration_scheduler_preemption_proven=0 max_switch_ns=45000000 max_switch_work_ns=40000000 max_recurring_switch_work_ns=40000000 max_switch_estimated_work_ns=40000000 max_recurring_switch_estimated_work_ns=40000000 max_switch_index=3 max_switch_peer_id=281474976711707 switch_scheduler_preemption_proven=0 attach_menu_first_hover_ns=12000000 attach_menu_hover_ns=92000000 attach_menu_update_hover_ns=11000000 attach_menu_uncached_peer_ns=20000000 attach_menu_first_hover_callback_cpu_ns=12000000 attach_menu_update_hover_callback_cpu_ns=1000000 attach_menu_uncached_peer_callback_cpu_ns=20000000 attach_menu_first_hover_callback_wall_ns=92000000 attach_menu_update_hover_callback_wall_ns=92000000 attach_menu_uncached_peer_callback_wall_ns=92000000 attach_menu_scheduler_preemption_proven=0 attach_menu_cached=1 attach_menu_invalidated=1 attach_menu_build_deferred=1 attach_menu_uncached_ready=1 attach_menu_uncached_deferred_failures=0 attach_menu_uncached_missing_bot_failures=0 attach_menu_uncached_build_count_failures=0 attach_menu_cache_bound=1 pending_reveal_after_controls_geometry=1 chat_switch_compose_ui_reused=1 field_autocomplete_suggestions_ready=1 bot_commands_unfocused=1 history_chat_mode_invalidation_rebuilt=1 dialog_histories_ready=1 synthetic_histories_ready=1 max_stall_ns=40000000 within_budgets=1.
+Attach-menu callback work: cached_hover_wall_ns=92000000 cached_hover_estimated_work_ns=12000000 first_hover_estimated_work_ns=12000000 invalidation_estimated_work_ns=1000000 uncached_peer_estimated_work_ns=20000000 budget_ns=50000000.
 EOF
 check_cache_latency_evidence() (
   local AUTH_LOG="$1"
   source "$temp_dir/cache-latency-check.sh"
 )
-cache_latency_report="$(check_cache_latency_evidence "$temp_dir/cache-latency.log" 2>/dev/null)" \
-  || contract_fail 'Chat switch and startup-gap timing must be report-only.'
-[[ "$cache_latency_report" == *'max_main_thread_stall_ns=230059167 under_100ms=0'* \
-  && "$cache_latency_report" == *'max_switch_ns=100964792 max_stall_ns=100964792 under_50ms=0'* ]] \
-  || contract_fail 'The report-only timings must appear in the workflow log.'
+if ! check_cache_latency_evidence "$temp_dir/cache-latency.log" >/dev/null 2>&1; then
+  contract_fail 'A 225 ms startup gap with 17.9 ms main-thread CPU must pass without scheduler proof.'
+fi
+cp "$temp_dir/cache-latency.log" "$temp_dir/cache-latency-responsive.log"
+sed -e 's/startup_stall_count=1/startup_stall_count=0/' \
+  -e 's/max_startup_stall_ns=225000000/max_startup_stall_ns=0/' \
+  -e 's/startup_stall_main_thread_work_ns=17990000/startup_stall_main_thread_work_ns=0/' \
+  -e 's/startup_stall_process_work_ns=117600000/startup_stall_process_work_ns=0/' \
+  -e 's/startup_stall_started_at=2026-11-06T00:47:53.000Z/startup_stall_started_at=none/' \
+  -e 's/startup_stall_heartbeat_gap_started_at=2026-11-06T00:47:53.000Z/startup_stall_heartbeat_gap_started_at=none/' \
+  -e 's/startup_stall_scheduler_samples=46/startup_stall_scheduler_samples=0/' \
+  -e 's/startup_stall_scheduler_running=36/startup_stall_scheduler_running=0/' \
+  -e 's/startup_stall_scheduler_waiting=10/startup_stall_scheduler_waiting=0/' \
+  -e 's/startup_stall_scheduler_trace=RRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRWWWWWWWWWW/startup_stall_scheduler_trace=none/' \
+  -e 's/startup_stall_stack_captured=1/startup_stall_stack_captured=0/' \
+  -e 's/startup_stall_evidence_matched=1/startup_stall_evidence_matched=0/' \
+  -e 's/max_startup_estimated_work_ns=66903043/max_startup_estimated_work_ns=230059167/' \
+  -e '/^Cache startup watchdog stall:/d' \
+  "$temp_dir/cache-latency-responsive.log" > "$temp_dir/cache-latency-no-watchdog-evidence.log"
+if check_cache_latency_evidence "$temp_dir/cache-latency-no-watchdog-evidence.log" >/dev/null 2>&1; then
+  contract_fail 'A long startup wall gap without trace samples must fall back to wall time and fail.'
+fi
+sed -e 's/heartbeat_gap_process_work_ns=117600000/heartbeat_gap_process_work_ns=200000000/' \
+  -e 's/startup_stall_process_work_ns=117600000/startup_stall_process_work_ns=200000000/' \
+  "$temp_dir/cache-latency.log" > "$temp_dir/cache-latency-high-process-work.log"
+if ! check_cache_latency_evidence "$temp_dir/cache-latency-high-process-work.log" >/dev/null 2>&1; then
+  contract_fail 'Process CPU and scheduler diagnostics must not override bounded startup main-thread CPU.'
+fi
+sed 's/max_startup_estimated_work_ns=66903043/max_startup_estimated_work_ns=100000000/' \
+  "$temp_dir/cache-latency.log" > "$temp_dir/cache-latency-slow-startup.log"
+if check_cache_latency_evidence "$temp_dir/cache-latency-slow-startup.log" >/dev/null 2>&1; then
+  contract_fail 'The main-thread startup work budget must reject 100 ms or more.'
+fi
+sed -e 's/max_switch_ns=135344750/max_switch_ns=227000000/' \
+  -e 's/max_recurring_switch_estimated_work_ns=40000000/max_recurring_switch_estimated_work_ns=50000000/' \
+  "$temp_dir/cache-latency-responsive.log" > "$temp_dir/cache-latency-slow-switch.log"
+if check_cache_latency_evidence "$temp_dir/cache-latency-slow-switch.log" >/dev/null 2>&1; then
+  contract_fail 'The recurring chat-switch CPU budget must reject 50 ms or more.'
+fi
+sed -e 's/max_switch_work_ns=40000000/max_switch_work_ns=52107000/' \
+  -e 's/max_switch_estimated_work_ns=40000000/max_switch_estimated_work_ns=52107000/' \
+  "$temp_dir/cache-latency-responsive.log" > "$temp_dir/cache-latency-slow-max-switch.log"
+if check_cache_latency_evidence "$temp_dir/cache-latency-slow-max-switch.log" >/dev/null 2>&1; then
+  contract_fail 'The maximum chat-switch CPU budget must reject 52 ms despite scheduler proof.'
+fi
+sed -e 's/max_switch_ns=135344750/max_switch_ns=227000000/' \
+  -e 's/max_recurring_switch_work_ns=40000000/max_recurring_switch_work_ns=45500000/' \
+  -e 's/max_switch_estimated_work_ns=40000000/max_switch_estimated_work_ns=45500000/' \
+  -e 's/max_recurring_switch_estimated_work_ns=40000000/max_recurring_switch_estimated_work_ns=45500000/' \
+  "$temp_dir/cache-latency-responsive.log" > "$temp_dir/cache-latency-long-wall-switch.log"
+if ! check_cache_latency_evidence "$temp_dir/cache-latency-long-wall-switch.log" >/dev/null 2>&1; then
+  contract_fail 'A 227 ms chat switch with 45.5 ms main-thread CPU must pass without scheduler proof.'
+fi
+sed '/^Initial history selection:/s/estimated_work_ns=40000000/estimated_work_ns=52107000/' \
+  "$temp_dir/cache-latency-responsive.log" > "$temp_dir/cache-latency-initial-selection-over-budget.log"
+if check_cache_latency_evidence "$temp_dir/cache-latency-initial-selection-over-budget.log" >/dev/null 2>&1; then
+	contract_fail 'The initial history selection must reject 52 ms of main-thread work even with scheduler proof.'
+fi
+sed '/^Initial history selection:/ { s/wall_ns=135344750/wall_ns=49000000/; s/blocked_estimate_ns=0/blocked_estimate_ns=-1/; s/estimated_work_ns=40000000/estimated_work_ns=49000000/; s/trace=R/trace=none/; }' \
+  "$temp_dir/cache-latency-responsive.log" > "$temp_dir/cache-latency-initial-selection-unmeasured.log"
+if ! check_cache_latency_evidence "$temp_dir/cache-latency-initial-selection-unmeasured.log" >/dev/null 2>&1; then
+	contract_fail 'An unmeasured initial selection with wall time below 50 ms must pass.'
+fi
+sed '/^Initial history selection:/s/wall_ns=49000000/wall_ns=50000000/; s/estimated_work_ns=49000000/estimated_work_ns=50000000/' \
+  "$temp_dir/cache-latency-initial-selection-unmeasured.log" > "$temp_dir/cache-latency-initial-selection-unmeasured-over-budget.log"
+if check_cache_latency_evidence "$temp_dir/cache-latency-initial-selection-unmeasured-over-budget.log" >/dev/null 2>&1; then
+	contract_fail 'An unmeasured initial selection at the 50 ms wall budget must fail.'
+fi
+sed 's/max_hydration_ns=5210625/max_hydration_ns=92000000/' \
+  "$temp_dir/cache-latency-responsive.log" > "$temp_dir/cache-latency-long-wall-hydration.log"
+if ! check_cache_latency_evidence "$temp_dir/cache-latency-long-wall-hydration.log" >/dev/null 2>&1; then
+  contract_fail 'A long hydration wall time with bounded main-thread CPU must pass without scheduler proof.'
+fi
+sed 's/attach_menu_first_hover_callback_cpu_ns=12000000/attach_menu_first_hover_callback_cpu_ns=50000000/' \
+  "$temp_dir/cache-latency-responsive.log" > "$temp_dir/cache-latency-slow-first-hover.log"
+if check_cache_latency_evidence "$temp_dir/cache-latency-slow-first-hover.log" >/dev/null 2>&1; then
+  contract_fail 'First-hover attach-menu callback must reject 50 ms or more.'
+fi
+sed 's/attach_menu_update_hover_callback_cpu_ns=1000000/attach_menu_update_hover_callback_cpu_ns=50000000/' \
+  "$temp_dir/cache-latency-responsive.log" > "$temp_dir/cache-latency-slow-update-hover.log"
+if check_cache_latency_evidence "$temp_dir/cache-latency-slow-update-hover.log" >/dev/null 2>&1; then
+  contract_fail 'Updated attach-menu callback must reject 50 ms or more.'
+fi
+sed 's/attach_menu_uncached_peer_callback_cpu_ns=20000000/attach_menu_uncached_peer_callback_cpu_ns=50000000/' \
+  "$temp_dir/cache-latency-responsive.log" > "$temp_dir/cache-latency-slow-uncached-hover.log"
+if check_cache_latency_evidence "$temp_dir/cache-latency-slow-uncached-hover.log" >/dev/null 2>&1; then
+  contract_fail 'Uncached attach-menu callback must reject 50 ms or more.'
+fi
+sed '/^Attach-menu callback work:/s/cached_hover_estimated_work_ns=12000000/cached_hover_estimated_work_ns=200000000/' \
+  "$temp_dir/cache-latency-responsive.log" > "$temp_dir/cache-latency-blocked-cached-hover.log"
+if check_cache_latency_evidence "$temp_dir/cache-latency-blocked-cached-hover.log" >/dev/null 2>&1; then
+  contract_fail 'A blocked cached-hover callback must fail its estimated-work budget.'
+fi
+sed '/^Attach-menu callback work:/s/first_hover_estimated_work_ns=12000000/first_hover_estimated_work_ns=200000000/' \
+  "$temp_dir/cache-latency-responsive.log" > "$temp_dir/cache-latency-blocked-first-hover.log"
+if check_cache_latency_evidence "$temp_dir/cache-latency-blocked-first-hover.log" >/dev/null 2>&1; then
+  contract_fail 'A blocked first-hover callback must fail its estimated-work budget.'
+fi
+sed '/^Attach-menu callback work:/s/invalidation_estimated_work_ns=1000000/invalidation_estimated_work_ns=200000000/' \
+  "$temp_dir/cache-latency-responsive.log" > "$temp_dir/cache-latency-blocked-invalidation-hover.log"
+if check_cache_latency_evidence "$temp_dir/cache-latency-blocked-invalidation-hover.log" >/dev/null 2>&1; then
+  contract_fail 'A blocked invalidation callback must fail its estimated-work budget.'
+fi
+sed '/^Attach-menu callback work:/s/uncached_peer_estimated_work_ns=20000000/uncached_peer_estimated_work_ns=200000000/' \
+  "$temp_dir/cache-latency-responsive.log" > "$temp_dir/cache-latency-blocked-uncached-hover.log"
+if check_cache_latency_evidence "$temp_dir/cache-latency-blocked-uncached-hover.log" >/dev/null 2>&1; then
+  contract_fail 'A blocked uncached-peer callback must fail its estimated-work budget.'
+fi
 for field in reactions=73 hydrated_documents=292 chat_switches=73; do
   sed "s/$field/${field%%=*}=0/" \
-    "$temp_dir/cache-latency.log" > "$temp_dir/cache-latency-incomplete-switch.log"
+    "$temp_dir/cache-latency-responsive.log" > "$temp_dir/cache-latency-incomplete-switch.log"
   if check_cache_latency_evidence "$temp_dir/cache-latency-incomplete-switch.log" >/dev/null 2>&1; then
     contract_fail "Incomplete $field must remain a gate."
   fi
 done
 sed 's/minimized_restore=1/minimized_restore=0/' \
-  "$temp_dir/cache-latency.log" > "$temp_dir/cache-latency-unrestored.log"
+  "$temp_dir/cache-latency-responsive.log" > "$temp_dir/cache-latency-unrestored.log"
 if check_cache_latency_evidence "$temp_dir/cache-latency-unrestored.log" >/dev/null 2>&1; then
   contract_fail 'The minimized window must be restored.'
 fi
-sed 's/max_handler_ns=9893666 under_50ms=1/max_handler_ns=9893666 under_50ms=0/' \
-  "$temp_dir/cache-latency.log" > "$temp_dir/cache-latency-bad-dialogs.log"
+sed 's/max_handler_ns=9893666 main_thread_cpu_ns=9893666 blocked_estimate_ns=0 estimated_work_ns=9893666 trace=R under_50ms=1/max_handler_ns=9893666 main_thread_cpu_ns=9893666 blocked_estimate_ns=0 estimated_work_ns=9893666 trace=R under_50ms=0/' \
+  "$temp_dir/cache-latency-responsive.log" > "$temp_dir/cache-latency-bad-dialogs.log"
 if check_cache_latency_evidence "$temp_dir/cache-latency-bad-dialogs.log" >/dev/null 2>&1; then
   contract_fail 'The first getDialogs timing must remain a gate.'
 fi
 sed 's/root_swap_refused=1/root_swap_refused=0/' \
-  "$temp_dir/cache-latency.log" > "$temp_dir/cache-latency-bad-protection.log"
+  "$temp_dir/cache-latency-responsive.log" > "$temp_dir/cache-latency-bad-protection.log"
 if check_cache_latency_evidence "$temp_dir/cache-latency-bad-protection.log" >/dev/null 2>&1; then
   contract_fail 'The cache root-swap protection must remain a gate.'
 fi
@@ -1139,7 +1351,10 @@ for cache_evidence_field in \
   queued_ops_before_ready \
   queued_ops_passed \
   cache_usable_ns \
-  under_10s; do
+  under_10s \
+  startup_heartbeat_gap_count \
+  startup_uncovered_heartbeat_gaps \
+  startup_heartbeat_gap_coverage_proven; do
   grep -Fq "$cache_evidence_field" "$profile_harness" \
     || contract_fail "$profile_harness must match cache evidence field $cache_evidence_field."
 done
@@ -1163,18 +1378,132 @@ grep -Fq 'bash "$PROFILE_GUARD" "$FAKE_APP"' \
   Telegram/build/test_mac_lifecycle_case_runner.sh \
   || contract_fail 'The lifecycle runner self-test must invoke the profile harness without a case argument.'
 native_harness='Telegram/SourceFiles/tests/account_lifecycle_regression.cpp'
+history_widget='Telegram/SourceFiles/history/history_widget.cpp'
+attach_menu_builder='Telegram/SourceFiles/inline_bots/bot_attach_web_view.cpp'
+awk '
+  /RunCacheChatSwitchLatencyRegression\(/ { copy = 1 }
+  copy && /^struct FirstDialogsHandlerRegressionResult/ { exit }
+  copy { print }
+' "$native_harness" > "$temp_dir/cache-chat-switch-regression.cpp"
+grep -Fq 'attachMenuHoverNanoseconds' "$temp_dir/cache-chat-switch-regression.cpp" \
+  && grep -Fq 'QEvent::Enter' "$temp_dir/cache-chat-switch-regression.cpp" \
+  && grep -Fq 'setAttachBotsForRegressionTest' "$temp_dir/cache-chat-switch-regression.cpp" \
+  && grep -Fq 'showPeerHistoryMeasured(attachHistory)' "$temp_dir/cache-chat-switch-regression.cpp" \
+  && grep -Fq 'maxChatSwitchIndex' "$temp_dir/cache-chat-switch-regression.cpp" \
+  && grep -Fq 'maxChatSwitchPeerId' "$temp_dir/cache-chat-switch-regression.cpp" \
+  && grep -Fq 'RecentSchedulerSamplesForTesting' "$temp_dir/cache-chat-switch-regression.cpp" \
+  && grep -Fq 'SchedulerTraceForInterval' "$temp_dir/cache-chat-switch-regression.cpp" \
+  || contract_fail 'The cache regression must measure attach-menu hover and identify the slowest peer switch.'
+grep -Fq 'schedulerTraceComplete = true' Telegram/SourceFiles/core/ui_stall_watchdog.cpp \
+	&& grep -Fq 'schedulerSampleOffsetsNanoseconds' Telegram/SourceFiles/core/ui_stall_watchdog.h \
+  || contract_fail 'The watchdog must retain completed per-ack scheduler samples for chat-switch windows.'
+grep -Fq 'processWorkNanoseconds' "$native_harness" \
+  && grep -Fq 'kMaxStartupHeartbeatProcessWorkNanoseconds' "$native_harness" \
+  && grep -Fq 'mainThreadWorkNanoseconds' "$native_harness" \
+  && grep -Fq 'matchedEvidenceStarts' "$native_harness" \
+  && grep -Fq 'startupHeartbeatGaps.push_back' "$native_harness" \
+  && grep -Fq 'RecentPingAcknowledgementsForTesting' "$native_harness" \
+  && grep -Fq 'HeartbeatGapHasSuccessfulWatchdogCoverage' "$native_harness" \
+  && grep -Fq 'CountUncoveredStartupHeartbeatGaps' "$native_harness" \
+  && grep -Fq 'unobservedAppWait' "$native_harness" \
+  && grep -Fq 'corroboratedStartupStalls' "$native_harness" \
+  && grep -Fq 'AllMainThreadWorkIntervalsHaveSchedulerProof' "$native_harness" \
+  && grep -Fq 'StartupWatchdogStallEvidenceRegressionPasses' "$native_harness" \
+  && grep -Fq 'Cache startup watchdog stall:' "$native_harness" \
+  && grep -Fq 'startup_stall_scheduler_preemption_proven' "$native_harness" \
+  || contract_fail 'The cache regression must retain startup stall evidence as diagnostics.'
+awk '
+  /for \(auto i = 0; i != 10; \+\+i\)/ { copy = 1 }
+  copy && /result.attachMenuCacheBounded/ { exit }
+  copy { print }
+' "$native_harness" > "$temp_dir/uncached-peer-switches.cpp"
+grep -Fq 'showPeerHistoryMeasured(history);' \
+  "$temp_dir/uncached-peer-switches.cpp" \
+  && grep -Fq 'peerBuildCallbackCpuNanoseconds < 0' \
+    "$temp_dir/uncached-peer-switches.cpp" \
+  && grep -Fq 'result.attachMenuUncachedPeerCallbackCpuNanoseconds = -1;' \
+    "$temp_dir/uncached-peer-switches.cpp" \
+  || contract_fail 'Uncached peer switches must measure work and fail the CPU aggregate on any unavailable sample.'
+grep -Fq 'attachMenuFirstHoverNanoseconds' "$native_harness" \
+  && grep -Fq 'attachMenuFirstHoverCallbackCpuNanoseconds' "$native_harness" \
+  && grep -Fq 'attachMenuInvalidationCallbackCpuNanoseconds' "$native_harness" \
+  && grep -Fq 'attachMenuUncachedPeerCallbackCpuNanoseconds' "$native_harness" \
+  && grep -Fq 'kAttachMenuRegressionBotCount = 20' "$native_harness" \
+  && grep -Fq 'attachMenuBuildDeferredUntilHover' "$native_harness" \
+  && grep -Fq 'buildDeferredUntilEnter' "$native_harness" \
+  && grep -Fq 'lastAttachBotId' "$native_harness" \
+  && grep -Fq 'attachMenuInvalidationRebuilt' "$native_harness" \
+  && grep -Fq 'attachMenuContainsBotForRegressionTest' "$native_harness" \
+  && grep -Fq 'attachMenuCacheSizeForRegressionTest() <= 8' "$native_harness" \
+  || contract_fail 'The attach-menu regression must defer and gate first hover, uncached peers, bot invalidation, and bounded caching.'
+grep -Fq 'ThreadCpuTimeNanosecondsForRegressionTest' "$history_widget" \
+  && grep -Fq 'ThreadCpuTimeNanosecondsForRegressionTest' "$attach_menu_builder" \
+  && grep -Fq 'ProcessCpuTimeNanosecondsForRegressionTest' "$history_widget" \
+  && grep -Fq 'ProcessCpuTimeNanosecondsForRegressionTest' "$attach_menu_builder" \
+  || contract_fail 'Attach-menu construction callbacks must be measured with the main-thread CPU clock.'
+grep -Fq 'MainThreadCpuWorkWithinBudget' "$native_harness" \
+  && grep -Fq 'MainThreadEstimatedWorkWithinBudget' "$native_harness" \
+  && grep -Fq 'AccumulateMainThreadWorkEstimate' "$native_harness" \
+  && grep -Fq 'MainThreadBlockedWorkBudgetRegressionPasses' "$native_harness" \
+  && grep -Fq 'EstimateMainThreadWork' "$native_harness" \
+  && grep -Fq 'for (const auto &callback : attachMenuCallbacks)' "$native_harness" \
+  && grep -Fq 'Attach-menu callback work:' "$native_harness" \
+  && ! grep -Fq 'ChatSwitchSchedulerProofRegressionPasses' "$native_harness" \
+  && grep -Fq 'attachMenuFirstHoverCallbackWallNanoseconds' "$native_harness" \
+  && grep -Fq 'attachMenuUncachedPeerCallbackWallNanoseconds' "$native_harness" \
+  && grep -Fq 'slowAttachMenuCallbacks.push_back' "$native_harness" \
+  && grep -Fq 'attachMenuHoverEstimatedWorkNanoseconds' "$native_harness" \
+  && grep -Fq 'premiumBuildCallbackCpuNanoseconds' "$native_harness" \
+  || contract_fail 'Every attach-menu callback must use the CPU-plus-blocked estimate with wall times as diagnostics.'
+grep -Fq 'slowHydrationCallbacks.push_back' "$native_harness" \
+  && grep -Fq 'hydrationSchedulerPreemptionProven' "$native_harness" \
+  && grep -Fq 'maxHydrationMainThreadWorkNanoseconds' "$native_harness" \
+  && grep -Fq 'MainThreadCpuWorkWithinBudget' "$native_harness" \
+  || contract_fail 'Reaction hydration must be bounded by main-thread CPU.'
+if grep -E -q 'attach_menu_callback_latency_is_allowed|cache_stall_is_runner_scheduling' "$profile_harness"; then
+  contract_fail 'The profile guard must not use wall time or scheduler proof as pass conditions.'
+fi
+for work_budget_field in \
+  max_startup_estimated_work_ns \
+  initial_history_selection_work_ns \
+  max_hydration_work_ns \
+  max_switch_work_ns \
+  max_recurring_switch_work_ns \
+  max_switch_estimated_work_ns \
+  max_recurring_switch_estimated_work_ns \
+  attach_menu_first_hover_callback_cpu_ns \
+  attach_menu_update_hover_callback_cpu_ns \
+  attach_menu_uncached_peer_callback_cpu_ns \
+  cached_hover_estimated_work_ns \
+  first_hover_estimated_work_ns \
+  invalidation_estimated_work_ns \
+  uncached_peer_estimated_work_ns; do
+  grep -Fq "$work_budget_field" "$profile_harness" \
+    || contract_fail "The profile guard must gate $work_budget_field."
+done
+if [[ $(grep -c 'work_value_within_budget' "$profile_harness") -lt 4 ]]; then
+  contract_fail 'The profile guard must apply the estimated-work budget to startup and chat-switch gates.'
+fi
+awk '
+  /void HistoryWidget::activateCachedAttachBotsMenuForCurrentPeer\(/ { copy = 1 }
+  copy && /^void HistoryWidget::touchAttachBotsMenuCache\(/ { exit }
+  copy { print }
+' Telegram/SourceFiles/history/history_widget.cpp > "$temp_dir/activate-attach-menu.cpp"
+if grep -Fq 'refreshAttachBotsMenu();' "$temp_dir/activate-attach-menu.cpp"; then
+  contract_fail 'Switching to an uncached peer must not build its attach menu before hover or click.'
+fi
+grep -Fq 'std::vector<AttachWebViewBot> bots' \
+  Telegram/SourceFiles/inline_bots/bot_attach_web_view.cpp \
+  && grep -Fq 'menuBots.push_back(bot)' \
+    Telegram/SourceFiles/inline_bots/bot_attach_web_view.cpp \
+  || contract_fail 'Deferred attach-menu rows must own bot records across updates.'
 mac_platform='Telegram/SourceFiles/platform/mac/specific_mac.mm'
 grep -Fq "kMaxMinimizedRestoreNanoseconds = qint64(50'000'000)" \
   "$native_harness" \
   || contract_fail 'The minimized restore regression must retain its 50 ms budget.'
-grep -Fq 'result.maxChatSwitchNanoseconds, result.minimizedSwitchNanoseconds' \
-  "$native_harness" \
-  || contract_fail 'The minimized restore sample must contribute to the max switch report.'
-if grep -Fq '&& (maxMainThreadStallNanoseconds <' "$native_harness" \
-  || grep -Fq '< kMaxMinimizedRestoreNanoseconds' "$native_harness" \
-  || grep -Fq '&& (result.maxStallNanoseconds <' "$native_harness"; then
-  contract_fail 'Chat switch and startup-gap timing must not fail the cache case.'
-fi
+grep -Fq 'showPeerHistoryMeasured(firstHistory)' "$native_harness" \
+	&& grep -Fq 'result.minimizedSwitchNanoseconds' "$native_harness" \
+  || contract_fail 'The minimized restore and chat switches must use the measured switch path.'
 grep -Fq '&& (mediaCache || chatSwitch.passed)' "$native_harness" \
   || contract_fail 'The chat switch completion and restore checks must remain a gate.'
 grep -Fq 'completed && !timedOut' "$native_harness" \

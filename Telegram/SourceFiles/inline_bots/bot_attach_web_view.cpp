@@ -7,6 +7,10 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "inline_bots/bot_attach_web_view.h"
 
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+#include "tests/account_lifecycle_regression.h"
+#endif
+
 #include "api/api_blocked_peers.h"
 #include "api/api_common.h"
 #include "api/api_sending.h"
@@ -93,7 +97,13 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "styles/style_layers.h"
 #include "styles/style_menu_icons.h"
 
+#include <QtCore/QDateTime>
+#include <QtCore/QElapsedTimer>
+
 #include <QSvgRenderer>
+#include <QTimer>
+
+#include <chrono>
 
 namespace InlineBots {
 namespace {
@@ -717,6 +727,9 @@ BotAction::BotAction(
 , _height(_st.itemPadding.top()
 		+ _st.itemStyle.font->height
 		+ _st.itemPadding.bottom()) {
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+	_dummyAction->setData(QString::number(_bot.user->id.value));
+#endif
 	setAcceptBoth(false);
 	fitToMenuWidth();
 	setActionTriggered(std::move(callback));
@@ -753,7 +766,7 @@ void BotAction::paint(Painter &p) {
 }
 
 void BotAction::prepare() {
-	_text.setMarkedText(_st.itemStyle, { _bot.name });
+	_text.setText(_st.itemStyle, _bot.name, kPlainTextOptions);
 	const auto textWidth = _text.maxWidth();
 	const auto &padding = _st.itemPadding;
 
@@ -819,6 +832,142 @@ void BotAction::handleKeyPress(not_null<QKeyEvent*> e) {
 		setClicked(Ui::Menu::TriggeredSource::Keyboard);
 	}
 }
+
+template <typename Callback>
+void MeasureAttachMenuBuildStep(
+	Fn<void(AttachBotsMenuBuildStepTiming)> buildStepMeasured,
+	Callback &&callback) {
+	if (!buildStepMeasured) {
+		callback();
+		return;
+	}
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+	const auto threadStartedAt
+		= Tests::ThreadCpuTimeNanosecondsForRegressionTest();
+	const auto processStartedAt
+		= Tests::ProcessCpuTimeNanosecondsForRegressionTest();
+	const auto startedAt = QDateTime::currentDateTime();
+	auto timer = QElapsedTimer();
+	timer.start();
+	const auto startedAtSteadyNanoseconds
+		= std::chrono::duration_cast<std::chrono::nanoseconds>(
+			  std::chrono::steady_clock::now().time_since_epoch())
+			  .count();
+	callback();
+	const auto wallNanoseconds = timer.nsecsElapsed();
+	const auto threadFinishedAt
+		= Tests::ThreadCpuTimeNanosecondsForRegressionTest();
+	const auto processFinishedAt
+		= Tests::ProcessCpuTimeNanosecondsForRegressionTest();
+	const auto elapsedCpu
+		= [](std::optional<qint64> started, std::optional<qint64> finished) {
+			  return started && finished && (*finished >= *started)
+						 ? (*finished - *started)
+						 : qint64(-1);
+		  };
+	buildStepMeasured({
+		.startedAt = startedAt,
+		.startedAtSteadyNanoseconds = startedAtSteadyNanoseconds,
+		.wallNanoseconds = wallNanoseconds,
+		.mainThreadCpuNanoseconds
+		= elapsedCpu(threadStartedAt, threadFinishedAt),
+		.processCpuNanoseconds
+		= elapsedCpu(processStartedAt, processFinishedAt),
+	});
+#else
+	const auto startedAt = QDateTime::currentDateTime();
+	auto timer = QElapsedTimer();
+	timer.start();
+	const auto startedAtSteadyNanoseconds
+		= std::chrono::duration_cast<std::chrono::nanoseconds>(
+			  std::chrono::steady_clock::now().time_since_epoch())
+			  .count();
+	callback();
+	const auto elapsed = timer.nsecsElapsed();
+	buildStepMeasured({
+		.startedAt = startedAt,
+		.startedAtSteadyNanoseconds = startedAtSteadyNanoseconds,
+		.wallNanoseconds = elapsed,
+		.mainThreadCpuNanoseconds = elapsed,
+	});
+#endif
+}
+
+void AddAttachBotMenuAction(
+	not_null<Ui::DropdownMenu *> menu,
+	not_null<Window::SessionController *> controller,
+	Fn<Api::SendAction()> actionFactory, const AttachWebViewBot &bot,
+	Fn<void(AttachBotsMenuBuildStepTiming)> buildStepMeasured) {
+	MeasureAttachMenuBuildStep(buildStepMeasured, [&] {
+		const auto bots = &controller->session().attachWebView();
+		const auto callback = [=] {
+			bots->open({
+				.bot = bot.user,
+				.context = {
+					.controller = controller,
+					.action = actionFactory(),
+				},
+				.source = InlineBots::WebViewSourceAttachMenu(),
+			});
+		};
+		auto action
+			= base::make_unique_q<BotAction>(menu->menu(), controller->uiShow(),
+											 menu->menu()->st(), bot, callback);
+		action->forceShown()
+			| rpl::on_next(
+				[=](bool shown) {
+					if (shown) {
+						menu->setAutoHiding(false);
+					} else {
+						menu->hideAnimated();
+						menu->setAutoHiding(true);
+					}
+				},
+				action->lifetime());
+		menu->addAction(std::move(action));
+	});
+}
+
+class AttachBotsMenuPopulation final : public QObject {
+  public:
+	AttachBotsMenuPopulation(
+		not_null<Ui::DropdownMenu *> menu,
+		not_null<Window::SessionController *> controller,
+		Fn<Api::SendAction()> actionFactory, std::vector<AttachWebViewBot> bots,
+		Fn<void()> buildComplete,
+		Fn<void(AttachBotsMenuBuildStepTiming)> buildStepMeasured)
+		: QObject(menu), _menu(menu), _controller(controller),
+		  _actionFactory(std::move(actionFactory)), _bots(std::move(bots)),
+		  _buildComplete(std::move(buildComplete)),
+		  _buildStepMeasured(std::move(buildStepMeasured)) {}
+
+	void start() {
+		QTimer::singleShot(0, this, [=] { addNext(); });
+	}
+
+  private:
+	void addNext() {
+		AddAttachBotMenuAction(_menu, _controller, _actionFactory,
+							   _bots[_position++], _buildStepMeasured);
+		if (_position == int(_bots.size())) {
+			if (_buildComplete) {
+				MeasureAttachMenuBuildStep(_buildStepMeasured,
+										   [&] { _buildComplete(); });
+			}
+			deleteLater();
+		} else {
+			QTimer::singleShot(0, this, [=] { addNext(); });
+		}
+	}
+
+	const not_null<Ui::DropdownMenu *> _menu;
+	const not_null<Window::SessionController *> _controller;
+	const Fn<Api::SendAction()> _actionFactory;
+	const std::vector<AttachWebViewBot> _bots;
+	const Fn<void()> _buildComplete;
+	const Fn<void(AttachBotsMenuBuildStepTiming)> _buildStepMeasured;
+	int _position = 0;
+};
 
 } // namespace
 
@@ -2480,6 +2629,14 @@ int AttachWebView::unavailableToastCountForRegressionTest() const {
 	return _unavailableToastsCountForRegressionTest;
 }
 
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+void AttachWebView::setAttachBotsForRegressionTest(
+	std::vector<AttachWebViewBot> bots) {
+	_attachBots = std::move(bots);
+	_attachBotsUpdates.fire({});
+}
+#endif
+
 void AttachWebView::completePendingResolveForRegressionTest(
 	not_null<PeerData *> peer) {
 	if (const auto done = base::take(_pendingResolveForRegressionTest)) {
@@ -3056,17 +3213,15 @@ void ChooseAndSendLocation(
 }
 
 std::unique_ptr<Ui::DropdownMenu> MakeAttachBotsMenu(
-		not_null<QWidget*> parent,
-		not_null<Window::SessionController*> controller,
-		not_null<PeerData*> peer,
-		Fn<Api::SendAction()> actionFactory,
-		Fn<SendMenu::Details()> sendMenuDetails,
-		Fn<void(bool)> attach,
-		Fn<TextWithTags()> composeFieldText,
-		Fn<void()> composeFieldMigrated) {
-	auto result = std::make_unique<Ui::DropdownMenu>(
-		parent,
-		st::dropdownMenuWithIcons);
+	not_null<QWidget *> parent,
+	not_null<Window::SessionController *> controller, not_null<PeerData *> peer,
+	Fn<Api::SendAction()> actionFactory,
+	Fn<SendMenu::Details()> sendMenuDetails, Fn<void(bool)> attach,
+	Fn<TextWithTags()> composeFieldText, Fn<void()> composeFieldMigrated,
+	AttachBotsMenuBuildMode buildMode, Fn<void()> buildComplete,
+	Fn<void(AttachBotsMenuBuildStepTiming)> buildStepMeasured) {
+	auto result
+		= std::make_unique<Ui::DropdownMenu>(parent, st::dropdownMenuWithIcons);
 	const auto bots = &peer->session().attachWebView();
 	const auto raw = result.get();
 	auto minimal = 0;
@@ -3154,45 +3309,46 @@ std::unique_ptr<Ui::DropdownMenu> MakeAttachBotsMenu(
 	}
 	const auto addBots = Data::CanSend(peer, ChatRestriction::SendInline, false)
 		&& !peer->starsPerMessageChecked();
+	auto menuBots = std::vector<AttachWebViewBot>();
 	for (const auto &bot : bots->attachBots()) {
 		if (!addBots
 			|| !bot.inAttachMenu
 			|| !PeerMatchesTypes(peer, bot.user, bot.types)) {
 			continue;
 		}
-		const auto callback = [=] {
-			bots->open({
-				.bot = bot.user,
-				.context = {
-					.controller = controller,
-					.action = actionFactory(),
-				},
-				.source = InlineBots::WebViewSourceAttachMenu(),
-			});
-		};
-		auto action = base::make_unique_q<BotAction>(
-			raw->menu(),
-			controller->uiShow(),
-			raw->menu()->st(),
-			bot,
-			callback);
-		action->forceShown(
-		) | rpl::on_next([=](bool shown) {
-			if (shown) {
-				raw->setAutoHiding(false);
-			} else {
-				raw->hideAnimated();
-				raw->setAutoHiding(true);
-			}
-		}, action->lifetime());
-		raw->addAction(std::move(action));
+		menuBots.push_back(bot);
 	}
-	const auto actions = raw->actions().size();
+	const auto actions = raw->actions().size() + menuBots.size();
 	const auto onclick = ChatHelpers::ShowPanelOnClick();
 	if (!actions) {
 		return nullptr;
 	} else if (actions <= minimal && !onclick) {
 		return nullptr;
+	}
+	if (buildMode == AttachBotsMenuBuildMode::Incremental) {
+		if (!menuBots.empty()) {
+			auto population = new AttachBotsMenuPopulation(
+				raw, controller, std::move(actionFactory), std::move(menuBots),
+				std::move(buildComplete), std::move(buildStepMeasured));
+			population->start();
+		} else if (buildComplete) {
+			QTimer::singleShot(
+				0, raw,
+				[buildComplete = std::move(buildComplete),
+				 buildStepMeasured = std::move(buildStepMeasured)] {
+					MeasureAttachMenuBuildStep(buildStepMeasured,
+											   [&] { buildComplete(); });
+				});
+		}
+	} else {
+		for (const auto &bot : menuBots) {
+			AddAttachBotMenuAction(raw, controller, actionFactory, bot,
+								   buildStepMeasured);
+		}
+		if (buildComplete) {
+			MeasureAttachMenuBuildStep(buildStepMeasured,
+									   [&] { buildComplete(); });
+		}
 	}
 	return result;
 }
