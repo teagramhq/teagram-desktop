@@ -42,6 +42,12 @@ if [[ "${TDESKTOP_FONT_STARTUP_REGRESSION:-}" == 1 ]]; then
     printf 'Font fallback regression: emoji=Apple Color Emoji arabic=Vazirmatn UI NL wall_ns=1000000 result=PASS\\n'
     exit 0
 fi
+if [[ "${TDESKTOP_FONT_STARTUP_QUIT_REGRESSION:-}" == 1 ]]; then
+    printf 'Font shutdown regression: teardown=deferred\\n'
+    printf 'Font shutdown regression: worker_started=1 quit_observed=1 resolver_cancelled=1 result=PASS\\n'
+    printf 'Font shutdown regression: teardown=complete\\n'
+    exit 0
+fi
 if [[ "${TDESKTOP_MAC_SEATBELT_FORCE_COMPILE_FAILURE:-}" == 1 ]]; then
     exit 1
 fi
@@ -104,6 +110,25 @@ def run_font_startup_fixture(
         executable.write_text('''#!/bin/bash
 count_file="$HOME/font-startup-count"
 mode="$FONT_TEST_MODE"
+if [[ "${TDESKTOP_FONT_STARTUP_QUIT_REGRESSION:-}" == 1 ]]; then
+    if [[ "$FONT_SHUTDOWN_TEST_MODE" == shutdown-missing-worker ]]; then
+        printf 'Font shutdown regression: teardown=deferred\\n'
+        printf 'Font shutdown regression: worker_started=0 quit_observed=1 resolver_cancelled=1 result=FAIL\\n'
+        printf 'Font shutdown regression: teardown=complete\\n'
+    elif [[ "$FONT_SHUTDOWN_TEST_MODE" == shutdown-order ]]; then
+        printf 'Font shutdown regression: teardown=complete\\n'
+        printf 'Font shutdown regression: teardown=deferred\\n'
+        printf 'Font shutdown regression: worker_started=1 quit_observed=1 resolver_cancelled=1 result=PASS\\n'
+    elif [[ "$FONT_SHUTDOWN_TEST_MODE" == shutdown-missing-teardown ]]; then
+        printf 'Font shutdown regression: teardown=deferred\\n'
+        printf 'Font shutdown regression: worker_started=1 quit_observed=1 resolver_cancelled=1 result=PASS\\n'
+    else
+        printf 'Font shutdown regression: teardown=deferred\\n'
+        printf 'Font shutdown regression: worker_started=1 quit_observed=1 resolver_cancelled=1 result=PASS\\n'
+        printf 'Font shutdown regression: teardown=complete\\n'
+    fi
+    exit 0
+fi
 if [[ -f "$count_file" ]]; then
     wall_ns="$FONT_WARM_NS"
     splash_wall_ns="$FONT_SPLASH_WARM_NS"
@@ -217,6 +242,8 @@ assert 'Font-code startup stall gate=PASS sample=cold' in font_startup_output
 assert 'Font-code startup stall gate=PASS sample=warm' in font_startup_output
 assert 'fallback=PASS font_stall_gate=PASS' \
     in font_startup_output
+assert 'Font shutdown teardown=PASS worker_active=1 order=PASS' \
+    in font_startup_output
 font_startup_failure = run_font_startup_fixture(50_000_000, 100_000_000, 1)
 assert 'StartFonts warm exceeded the 100ms budget' in font_startup_failure
 font_startup_cold_failure = run_font_startup_fixture(100_000_000, 50_000_000, 1)
@@ -278,4 +305,16 @@ font_startup_missing_custom_fonts = run_font_startup_fixture(
     50_000_000, 50_000_000, 1, mode='missing-custom-fonts')
 assert 'bundled fonts were not preloaded before app initialization' \
     in font_startup_missing_custom_fonts
+font_startup_shutdown_missing_worker = run_font_startup_fixture(
+    50_000_000, 50_000_000, 1, mode='shutdown-missing-worker')
+assert 'font shutdown regression did not observe an active worker and quit' \
+    in font_startup_shutdown_missing_worker
+font_startup_shutdown_order = run_font_startup_fixture(
+    50_000_000, 50_000_000, 1, mode='shutdown-order')
+assert 'font shutdown teardown was not deferred until after resolver unwind' \
+    in font_startup_shutdown_order
+font_startup_shutdown_missing_teardown = run_font_startup_fixture(
+    50_000_000, 50_000_000, 1, mode='shutdown-missing-teardown')
+assert 'font shutdown teardown was not deferred until after resolver unwind' \
+    in font_startup_shutdown_missing_teardown
 print('macOS font startup timing and failure guards: PASS')

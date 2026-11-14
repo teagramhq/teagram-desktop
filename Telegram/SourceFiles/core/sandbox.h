@@ -63,6 +63,10 @@ public:
 	// it and then drains explicitly. No-op without the -testagent switch.
 	void setPostponedCallsDeferred(bool deferred);
 
+#ifdef Q_OS_MAC
+	void setFontMetricsResolutionActive(bool active);
+#endif // Q_OS_MAC
+
 	bool notify(QObject *receiver, QEvent *e) override;
 
 	template <typename Callable>
@@ -169,6 +173,8 @@ private:
 	bool _fontDatabaseWarmupDone = false;
 	bool _fontDatabaseWarmupSucceeded = false;
 	bool _launchAfterFontDatabaseWarmup = false;
+	bool _fontMetricsResolutionActive = false;
+	bool _closeApplicationPending = false;
 	std::unique_ptr<QWindow> _fontStartupWindow;
 	std::thread _fontDatabaseWarmupThread;
 #endif // Q_OS_MAC

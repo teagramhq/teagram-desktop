@@ -14,6 +14,15 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <QtGui/QRawFont>
 #include <QtGui/QTextLayout>
 
+#include <cstdio>
+
+namespace style::internal::testing {
+
+[[nodiscard]] bool ResolveDeferredShapedMetricsWithActiveWorkerQuitForTests(
+	bool *workerStarted, bool *quitObserved, bool *resolverCancelled);
+
+} // namespace style::internal::testing
+
 namespace {
 
 QString FontFamilyForCharacter(QString text, uint character) {
@@ -52,4 +61,19 @@ int RunFontFallbackRegression() {
 			.arg(wallNs)
 			.arg(passed ? u"PASS"_q : u"FAIL"_q));
 	return passed ? 0 : 1;
+}
+
+bool RunFontShutdownRegression() {
+	auto workerStarted = false;
+	auto quitObserved = false;
+	auto resolverCancelled = false;
+	const auto passed = style::internal::testing::
+		ResolveDeferredShapedMetricsWithActiveWorkerQuitForTests(
+			&workerStarted, &quitObserved, &resolverCancelled);
+	fprintf(stderr,
+			"Font shutdown regression: worker_started=%d quit_observed=%d "
+			"resolver_cancelled=%d result=%s\n",
+			workerStarted ? 1 : 0, quitObserved ? 1 : 0,
+			resolverCancelled ? 1 : 0, passed ? "PASS" : "FAIL");
+	return passed;
 }

@@ -1463,6 +1463,52 @@ fi
 printf 'authenticated_cache_regression=PASS roots=2 cache_directory_symlinks=2 cache_file_symlinks=2 cleanup_initial_symlink=1 cleanup_worker_symlink=1 download_history=PASS\n'
 }
 
+run_font_shutdown_regression() {
+	local font_home="$TEST_HOME/font-startup"
+	local shutdown_log="$TEST_HOME/font-startup-shutdown.log"
+	local font_profile_log="$font_home/Library/Application Support/Teagram/log.txt"
+	: > "$font_profile_log"
+	if ! env -u TDESKTOP_FONT_STARTUP_REGRESSION \
+		HOME="$font_home" TMPDIR="$TEST_TMP_BASE" \
+		TDESKTOP_MAC_PROFILE_TEST_HOME="$font_home" \
+		TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST=1 \
+		TDESKTOP_FONT_STARTUP_QUIT_REGRESSION=1 \
+		FONT_SHUTDOWN_TEST_MODE="${FONT_TEST_MODE:-pass}" \
+		"$APP" -noupdate -debug >"$shutdown_log" 2>&1; then
+		cat "$shutdown_log" >&2
+		if [[ -f "$font_profile_log" ]]; then
+			cat "$font_profile_log" >&2
+		fi
+		echo "font shutdown regression launch failed" >&2
+		return 1
+	fi
+	if ! grep -E -q 'Font shutdown regression: worker_started=1 quit_observed=1 resolver_cancelled=1 result=PASS' \
+		"$shutdown_log"; then
+		cat "$shutdown_log" >&2
+		echo "font shutdown regression did not observe an active worker and quit" >&2
+		return 1
+	fi
+	local deferred_position
+	deferred_position="$(grep -F -n 'Font shutdown regression: teardown=deferred' \
+		"$shutdown_log" | tail -n 1 | cut -d: -f1 || true)"
+	local resolver_position
+	resolver_position="$(grep -F -n 'Font shutdown regression: worker_started=1' \
+		"$shutdown_log" | tail -n 1 | cut -d: -f1 || true)"
+	local teardown_position
+	teardown_position="$(grep -F -n 'Font shutdown regression: teardown=complete' \
+		"$shutdown_log" | tail -n 1 | cut -d: -f1 || true)"
+	if [[ ! "$deferred_position" =~ ^[0-9]+$ ]] \
+		|| [[ ! "$resolver_position" =~ ^[0-9]+$ ]] \
+		|| [[ ! "$teardown_position" =~ ^[0-9]+$ ]] \
+		|| (( deferred_position >= resolver_position )) \
+		|| (( resolver_position >= teardown_position )); then
+		cat "$shutdown_log" >&2
+		echo "font shutdown teardown was not deferred until after resolver unwind" >&2
+		return 1
+	fi
+	printf 'Font shutdown teardown=PASS worker_active=1 order=PASS\n'
+}
+
 run_font_startup_regression() {
 	local font_home="$TEST_HOME/font-startup"
 	local font_profile_log="$font_home/Library/Application Support/Teagram/log.txt"
@@ -1647,6 +1693,7 @@ run_font_startup_regression() {
 		"$exposure_timeout_wall_ns"
 	printf 'StartFonts startup regression: cold_wall_ns=%s warm_wall_ns=%s fallback=PASS font_stall_gate=PASS\n' \
 		"$cold_wall_ns" "$warm_wall_ns"
+	run_font_shutdown_regression
 }
 
 run_authenticated_lifecycle_regression() {

@@ -300,10 +300,12 @@ void Application::run() {
 		= qEnvironmentVariableIsSet("TDESKTOP_DESKTOP_SCALE_CHECK");
 	const auto fontStartupRegression
 		= qEnvironmentVariableIsSet("TDESKTOP_FONT_STARTUP_REGRESSION");
+	const auto fontShutdownRegression
+		= qEnvironmentVariableIsSet("TDESKTOP_FONT_STARTUP_QUIT_REGRESSION");
 	const auto headlessRegression
 		= qEnvironmentVariableIsSet("TDESKTOP_SIGNUP_UI_REGRESSION")
 		  || authLifecycleRegression || customEmojiUiSmoke || desktopScaleCheck
-		  || fontStartupRegression;
+		  || fontStartupRegression || fontShutdownRegression;
 	const auto windowedApplication = !headlessRegression
 									 || authLifecycleRegression
 									 || customEmojiUiSmoke || desktopScaleCheck;
@@ -368,7 +370,21 @@ void Application::run() {
 #endif // Q_OS_MAC
 	style::StartManager(cScale());
 #if defined(Q_OS_MAC)
-	if (!style::internal::ResolveDeferredShapedMetrics()) {
+	auto &sandbox = Core::Sandbox::Instance();
+	sandbox.setFontMetricsResolutionActive(true);
+#if defined(TDESKTOP_LIFECYCLE_REGRESSION)
+	if (fontShutdownRegression) {
+		const auto passed = RunFontShutdownRegression();
+		sandbox.setFontMetricsResolutionActive(false);
+		if (!passed) {
+			LOG(("Font shutdown regression failed."));
+		}
+		return;
+	}
+#endif // TDESKTOP_LIFECYCLE_REGRESSION
+	const auto resolved = style::internal::ResolveDeferredShapedMetrics();
+	sandbox.setFontMetricsResolutionActive(false);
+	if (!resolved) {
 		return;
 	}
 #endif // Q_OS_MAC

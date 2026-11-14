@@ -106,6 +106,12 @@ printf '15.0\n'
 EOF
 cat > "$FAKE_APP" <<'EOF'
 #!/usr/bin/env bash
+if [[ "${TDESKTOP_FONT_STARTUP_QUIT_REGRESSION:-}" == 1 ]]; then
+	printf 'Font shutdown regression: teardown=deferred\n'
+	printf 'Font shutdown regression: worker_started=1 quit_observed=1 resolver_cancelled=1 result=PASS\n'
+	printf 'Font shutdown regression: teardown=complete\n'
+	exit 0
+fi
 if [[ "${TDESKTOP_FONT_STARTUP_REGRESSION:-}" == 1 ]]; then
 	count_file="$HOME/font-startup-count"
 	if [[ -f "$count_file" ]]; then

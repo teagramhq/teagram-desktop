@@ -333,7 +333,17 @@ int Sandbox::start() {
 		return 0;
 	}
 	_started = true;
-	return exec();
+	const auto result = exec();
+#ifdef Q_OS_MAC
+	if (_closeApplicationPending) {
+		closeApplication();
+		if (qEnvironmentVariableIsSet(
+				"TDESKTOP_FONT_STARTUP_QUIT_REGRESSION")) {
+			fprintf(stderr, "Font shutdown regression: teardown=complete\n");
+		}
+	}
+#endif // Q_OS_MAC
+	return result;
 }
 
 int Sandbox::stopRunningInstance() {
@@ -1068,9 +1078,27 @@ MTP::ProxyData Sandbox::sandboxProxy() const {
 }
 
 void Sandbox::closeApplication() {
-	if (CurrentLaunchState() == LaunchState::QuitProcessed) {
+#ifdef Q_OS_MAC
+	if (_fontMetricsResolutionActive) {
+		_closeApplicationPending = true;
+		SetLaunchState(LaunchState::QuitProcessed);
+		if (qEnvironmentVariableIsSet(
+				"TDESKTOP_FONT_STARTUP_QUIT_REGRESSION")) {
+			fprintf(stderr, "Font shutdown regression: teardown=deferred\n");
+		}
 		return;
 	}
+#endif // Q_OS_MAC
+	if (CurrentLaunchState() == LaunchState::QuitProcessed
+#ifdef Q_OS_MAC
+		&& !_closeApplicationPending
+#endif // Q_OS_MAC
+	) {
+		return;
+	}
+#ifdef Q_OS_MAC
+	_closeApplicationPending = false;
+#endif // Q_OS_MAC
 	SetLaunchState(LaunchState::QuitProcessed);
 
 	_application = nullptr;
@@ -1085,6 +1113,12 @@ void Sandbox::closeApplication() {
 
 	_updateChecker = nullptr;
 }
+
+#ifdef Q_OS_MAC
+void Sandbox::setFontMetricsResolutionActive(bool active) {
+	_fontMetricsResolutionActive = active;
+}
+#endif // Q_OS_MAC
 
 uint64 Sandbox::execExternal(const QString &cmd) {
 	DEBUG_LOG(("Sandbox Info: executing external command '%1'").arg(cmd));
