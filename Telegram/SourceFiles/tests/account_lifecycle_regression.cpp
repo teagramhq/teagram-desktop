@@ -11744,9 +11744,9 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 				  && commandAutocompleteWasDeferred && startCommandsShown;
 			historyWidget->hideFieldAutocompleteForRegressionTest();
 			historyWidget->setDraftTextForRegressionTest(QString());
+			historyWidget->clearFieldFocusForRegressionTest();
 			historyWidget->resetFieldAutocompleteForRegressionTest();
 			showPeerHistoryMeasured(firstHistory);
-			settleHistoryUnfocused();
 		}
 	}
 	const auto autocompleteBuildsBeforeFocus
@@ -11767,6 +11767,15 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 				   && historyWidget->fieldFocusedForRegressionTest();
 		},
 		1000);
+	const auto initialHistoryTransitionSettled = WaitForRegressionCondition(
+		[&] {
+			return historyWidget
+				->historyTransitionFinishedForRegressionTest();
+		},
+		1500);
+	result.chatSwitchTransitionsSettled
+		= result.chatSwitchTransitionsSettled
+		  && initialHistoryTransitionSettled;
 	const auto autocompleteBuildsAfterFocus
 		= historyWidget->fieldAutocompleteBuildCountForRegressionTest();
 	const auto autocompletePeerMatchesAfterFocus
