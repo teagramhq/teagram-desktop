@@ -551,9 +551,8 @@ void Sandbox::startFontDatabaseWarmup() {
 	if (quitRegression) {
 		// Hold the worker until the real quit path has run, so that the
 		// enumeration is still in flight while the process tears down.
-		connect(this, &QCoreApplication::aboutToQuit, [=] {
-			_fontStartupQuitObserved = true;
-		});
+		connect(this, &QCoreApplication::aboutToQuit,
+				[=] { _fontStartupQuitObserved = true; });
 	}
 	try {
 		_fontDatabaseWarmupThread = std::thread([this, quitRegression] {
