@@ -32,6 +32,16 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <utility>
 #include <vector>
 
+namespace style::internal::testing {
+
+[[nodiscard]] bool ResolveDeferredShapedMetricsWithTestHooks(
+	int workerStartFailures,
+	bool cancel,
+	int retryDelay,
+	int *workerStartAttempts);
+
+} // namespace style::internal::testing
+
 namespace {
 
 const auto kPublicUsernamePolicy = Data::details::UsernamePolicy{
@@ -156,16 +166,49 @@ TEST_CASE(CustomGposWidthsStayShapedAfterWorkerRetries) {
 	CHECK(!style::internal::RawFixedMetricWidth(font, u"..."_q).has_value());
 
 	auto eventProcessed = false;
-	style::internal::SetMetricsWorkerStartFailuresForTests(2);
+	auto workerStartAttempts = 0;
 	style::internal::SetShapedMetricsDeferred(true);
 	auto owned = style::internal::OwnedFont(u"Vazirmatn UI NL"_q, 0, 16);
 	CHECK_EQ(owned->spacew, 0);
 	CHECK_EQ(owned->elidew, 0);
 	QTimer::singleShot(1, [&] { eventProcessed = true; });
-	CHECK(style::internal::ResolveDeferredShapedMetrics());
+	CHECK(style::internal::testing::ResolveDeferredShapedMetricsWithTestHooks(
+		2,
+		false,
+		1,
+		&workerStartAttempts));
 	style::internal::SetShapedMetricsDeferred(false);
 
 	CHECK(eventProcessed);
+	CHECK_EQ(workerStartAttempts, 3);
+	const auto &metrics = owned->metrics();
+	CHECK_EQ(owned->spacew, int(std::ceil(metrics.horizontalAdvance(u" "_q))));
+	CHECK_EQ(owned->elidew,
+			 int(std::ceil(metrics.horizontalAdvance(u"..."_q))));
+}
+
+TEST_CASE(DeferredMetricsWorkerStartRetriesAreBounded) {
+	const auto application
+		= qobject_cast<QApplication *>(QCoreApplication::instance());
+	CHECK(application != nullptr);
+	if (!application) {
+		return;
+	}
+
+	auto fixture = UsernameInputFixture();
+	auto workerStartAttempts = 0;
+	style::internal::SetShapedMetricsDeferred(true);
+	auto owned = style::internal::OwnedFont(u"Vazirmatn UI NL"_q, 0, 16);
+	CHECK_EQ(owned->spacew, 0);
+	CHECK_EQ(owned->elidew, 0);
+	CHECK(style::internal::testing::ResolveDeferredShapedMetricsWithTestHooks(
+		100,
+		false,
+		1,
+		&workerStartAttempts));
+	style::internal::SetShapedMetricsDeferred(false);
+
+	CHECK_EQ(workerStartAttempts, 20);
 	const auto &metrics = owned->metrics();
 	CHECK_EQ(owned->spacew, int(std::ceil(metrics.horizontalAdvance(u" "_q))));
 	CHECK_EQ(owned->elidew,
@@ -181,17 +224,20 @@ TEST_CASE(DeferredMetricsCancellationWithoutWorkerReturnsCleanly) {
 	}
 
 	auto fixture = UsernameInputFixture();
-	style::internal::SetMetricsWorkerStartFailuresForTests(100);
-	style::internal::SetMetricsResolutionCancelledForTests(true);
+	auto workerStartAttempts = 0;
 	style::internal::SetShapedMetricsDeferred(true);
 	auto owned = style::internal::OwnedFont(u"Vazirmatn UI NL"_q, 0, 16);
 	CHECK_EQ(owned->spacew, 0);
-	const auto resolved = style::internal::ResolveDeferredShapedMetrics();
-	style::internal::SetMetricsResolutionCancelledForTests(false);
-	style::internal::SetMetricsWorkerStartFailuresForTests(0);
+	const auto resolved
+		= style::internal::testing::ResolveDeferredShapedMetricsWithTestHooks(
+			100,
+			true,
+			100,
+			&workerStartAttempts);
 	style::internal::SetShapedMetricsDeferred(false);
 
 	CHECK(!resolved);
+	CHECK_EQ(workerStartAttempts, 1);
 }
 
 TEST_CASE(UsernameInputStandaloneEventDispatch) {
