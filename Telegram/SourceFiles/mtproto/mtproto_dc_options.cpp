@@ -244,28 +244,22 @@ t6N/byY9Nw9p21Og3AoXSL2q/2IJ1WRUhebgAdGVMlV1fkuOQoEzR7EdpqtQD9Cs\n\
 
 } // namespace
 
-bool SameCustomServerEndpoint(
-		const CustomServer &left,
-		const CustomServer &right) {
-	return left.hostname == right.hostname
-		&& left.ip == right.ip
-		&& left.port == right.port
-		&& left.ipv6 == right.ipv6
-		&& left.webSocketEndpoint == right.webSocketEndpoint
-		&& left.webSocketOnly == right.webSocketOnly;
+bool SameCustomServerEndpoint(const CustomServer &left,
+							  const CustomServer &right) {
+	return left.hostname == right.hostname && left.ip == right.ip
+		   && left.port == right.port && left.ipv6 == right.ipv6
+		   && left.webSocketEndpoint == right.webSocketEndpoint
+		   && left.webSocketOnly == right.webSocketOnly;
 }
 
 // Whether two pins name the same server: the same endpoint identity and
 // the same key bytes. The fingerprint alone would do in practice, but a
 // pin decision should not rest on a digest.
-bool SameCustomServerPin(
-		const CustomServer &a,
-		const CustomServer &b) {
+bool SameCustomServerPin(const CustomServer &a, const CustomServer &b) {
 	if (!SameCustomServerEndpoint(a, b)) {
 		return false;
 	}
-	if (a.dcId != b.dcId
-		|| a.serverSelection != b.serverSelection
+	if (a.dcId != b.dcId || a.serverSelection != b.serverSelection
 		|| a.discoveryPolicy != b.discoveryPolicy
 		|| a.discoveryOrigin != b.discoveryOrigin) {
 		return false;

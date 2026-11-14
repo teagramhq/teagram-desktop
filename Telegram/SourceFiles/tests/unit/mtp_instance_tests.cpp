@@ -190,8 +190,8 @@ TEST_CASE(AuthorizedKeyMismatchUsesTheIdentityChangeFlow) {
 TEST_CASE(ServerEndpointRefreshRequiresTheMainDcSession) {
 	const auto mainDcId = MTP::DcId(2);
 	CHECK(MTP::IsMainDcServerEndpointRefresh(mainDcId, mainDcId));
-	CHECK(!MTP::IsMainDcServerEndpointRefresh(
-		MTP::downloadDcId(mainDcId, 0), mainDcId));
+	CHECK(!MTP::IsMainDcServerEndpointRefresh(MTP::downloadDcId(mainDcId, 0),
+											  mainDcId));
 	CHECK(!MTP::IsMainDcServerEndpointRefresh(
 		MTP::details::uploadDcId(mainDcId, 0), mainDcId));
 }

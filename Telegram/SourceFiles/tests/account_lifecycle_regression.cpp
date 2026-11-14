@@ -3166,7 +3166,8 @@ class LocalEndpointRefreshDiscoveryStub final {
 		|| AccountLifecycleRegressionAccess::endpointRefreshRetryScheduled(
 			*account)
 		|| !MTP::SameCustomServerPin(moved, mtp.dcOptions().customServer())) {
-		return fail("an unchanged endpoint paused or changed the active account");
+		return fail(
+			"an unchanged endpoint paused or changed the active account");
 	}
 	discovery.deferVerifierReply();
 	if (!discovery.restoreOriginalPin(account, moved, original)) {

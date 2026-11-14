@@ -45,9 +45,8 @@ enum class Environment : uchar;
 		&& error.type() == u"CLIENT_SERVER_ENROLLMENT_PAUSED"_q;
 }
 
-[[nodiscard]] inline bool IsMainDcServerEndpointRefresh(
-		ShiftedDcId shiftedDcId,
-		DcId mainDcId) {
+[[nodiscard]] inline bool IsMainDcServerEndpointRefresh(ShiftedDcId shiftedDcId,
+														DcId mainDcId) {
 	return shiftedDcId == mainDcId;
 }
 

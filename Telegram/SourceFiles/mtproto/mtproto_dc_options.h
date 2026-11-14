@@ -75,9 +75,8 @@ BuildCustomServerFromDiscovery(const ServerSelectionCheck &selection,
 [[nodiscard]] bool SameCustomServerPin(
 	const CustomServer &left,
 	const CustomServer &right);
-[[nodiscard]] bool SameCustomServerEndpoint(
-	const CustomServer &left,
-	const CustomServer &right);
+[[nodiscard]] bool SameCustomServerEndpoint(const CustomServer &left,
+											const CustomServer &right);
 
 enum class DcType {
 	Regular,
