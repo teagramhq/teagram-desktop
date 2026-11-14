@@ -568,9 +568,9 @@ TEST_CASE(UiStallWatchdogLogsMainThreadStack) {
 			CHECK(matchingAcknowledgement->schedulerTraceComplete);
 			CHECK_EQ(matchingAcknowledgement->schedulerTrace,
 					 evidence.back().schedulerTrace);
-			CHECK_EQ(matchingAcknowledgement->schedulerSampleOffsetsNanoseconds
-						 .size(),
-					 evidence.back().schedulerSampleOffsetsNanoseconds.size());
+			CHECK(matchingAcknowledgement->schedulerSampleOffsetsNanoseconds
+					  .size()
+				  == evidence.back().schedulerSampleOffsetsNanoseconds.size());
 			CHECK(std::equal(
 				matchingAcknowledgement->schedulerSampleOffsetsNanoseconds
 					.begin(),
@@ -640,11 +640,11 @@ TEST_CASE(UiStallWatchdogTraceSnapshotIsStableAfterPublication) {
 		samples, start, end);
 
 	CHECK(completed.trace == u"RWR"_q);
-	CHECK_EQ(completed.sampleOffsetsNanoseconds.size(), std::size_t(3));
+	CHECK(completed.sampleOffsetsNanoseconds.size() == 3);
 	CHECK_EQ(completed.trace.size(),
 			 qsizetype(completed.sampleOffsetsNanoseconds.size()));
 	CHECK(later.trace == u"RWRU"_q);
-	CHECK_EQ(later.sampleOffsetsNanoseconds.size(), std::size_t(4));
+	CHECK(later.sampleOffsetsNanoseconds.size() == 4);
 	CHECK_EQ(later.trace.size(),
 			 qsizetype(later.sampleOffsetsNanoseconds.size()));
 	CHECK_EQ(completed.trace, u"RWR"_q);
