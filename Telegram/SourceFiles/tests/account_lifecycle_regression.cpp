@@ -11744,9 +11744,9 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 				  && commandAutocompleteWasDeferred && startCommandsShown;
 			historyWidget->hideFieldAutocompleteForRegressionTest();
 			historyWidget->setDraftTextForRegressionTest(QString());
+			historyWidget->resetFieldAutocompleteForRegressionTest();
 			showPeerHistoryMeasured(firstHistory);
 			settleHistoryUnfocused();
-			historyWidget->resetFieldAutocompleteForRegressionTest();
 		}
 	}
 	const auto autocompleteBuildsBeforeFocus
