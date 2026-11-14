@@ -11769,13 +11769,11 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		1000);
 	const auto initialHistoryTransitionSettled = WaitForRegressionCondition(
 		[&] {
-			return historyWidget
-				->historyTransitionFinishedForRegressionTest();
+			return historyWidget->historyTransitionFinishedForRegressionTest();
 		},
 		1500);
-	result.chatSwitchTransitionsSettled
-		= result.chatSwitchTransitionsSettled
-		  && initialHistoryTransitionSettled;
+	result.chatSwitchTransitionsSettled = result.chatSwitchTransitionsSettled
+										  && initialHistoryTransitionSettled;
 	const auto autocompleteBuildsAfterFocus
 		= historyWidget->fieldAutocompleteBuildCountForRegressionTest();
 	const auto autocompletePeerMatchesAfterFocus
