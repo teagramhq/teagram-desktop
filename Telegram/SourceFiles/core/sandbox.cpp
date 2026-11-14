@@ -552,8 +552,7 @@ void Sandbox::startFontDatabaseWarmup() {
 			};
 			prewarmFontMetrics(QFont().family());
 			prewarmFontMetrics(u"Open Sans"_q);
-			if (qEnvironmentVariableIsSet(
-					"TDESKTOP_FONT_STARTUP_REGRESSION")) {
+			if (qEnvironmentVariableIsSet("TDESKTOP_FONT_STARTUP_REGRESSION")) {
 				fprintf(stderr,
 						"Font database metrics warmup regression: ready=1\n");
 			}
