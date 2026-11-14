@@ -159,6 +159,7 @@ PRIVATE
     tests/unit/mtproto_dc_options_tests.cpp
     tests/unit/mtproto_dump_to_text_tests.cpp
     tests/unit/mtp_instance_tests.cpp
+    mtproto/mtp_instance.h
     tests/unit/passport_credentials_secret_tests.cpp
     tests/unit/persistent_key_rejection_tests.cpp
     tests/unit/server_discovery_tests.cpp
