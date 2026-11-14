@@ -880,8 +880,8 @@ TEST_CASE(SessionRequestsEndpointRefreshOnlyForTransportFailure) {
 		= MTP::Instance(MTP::Instance::Mode::Normal, MTP::Instance::Fields());
 	const auto makeSession = [&] {
 		auto data = std::make_shared<MTP::details::SessionData>(
-			not_null<MTP::Session *>(
-				reinterpret_cast<MTP::Session *>(quintptr(1))));
+			not_null<MTP::details::Session *>(
+				reinterpret_cast<MTP::details::Session *>(quintptr(1))));
 		return MTP::details::SessionPrivateTestAccess::Create(data, &instance);
 	};
 	const auto makeConnection = [] {
