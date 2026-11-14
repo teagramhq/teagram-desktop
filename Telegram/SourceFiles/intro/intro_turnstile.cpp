@@ -101,6 +101,17 @@ ParseTurnstileAction(QStringView action) {
 	return true;
 }
 
+[[nodiscard]] QString TurnstileErrorCodeForLog(const QJsonValue &value) {
+	if (!value.isString()) {
+		return u"unavailable"_q;
+	}
+	const auto code = value.toString();
+	if (code.size() > 64 || !IsPrintableAscii(code)) {
+		return u"unavailable"_q;
+	}
+	return code;
+}
+
 [[nodiscard]] std::optional<QJsonObject>
 ParsePayloadObject(const QString &payload) {
 	auto error = QJsonParseError();
@@ -221,8 +232,13 @@ TurnstileMessageResult ParseTurnstileMessage(std::string_view bytes,
 	const auto eventName = envelope[0].toString();
 	const auto payload = envelope[1].toString();
 	if (eventName == u"turnstile_error"_q) {
+		const auto object = ParsePayloadObject(payload);
 		return TurnstileMessage{
 			.type = TurnstileMessageType::Error,
+			.errorCode = TurnstileErrorCodeForLog(
+				object ? object->value(u"code"_q) : QJsonValue()),
+			.cloudflareErrorCode = TurnstileErrorCodeForLog(
+				object ? object->value(u"cloudflare_code"_q) : QJsonValue()),
 		};
 	} else if (eventName != u"turnstile_token"_q) {
 		return reject(TurnstileMessageRejection::UnknownEvent);
