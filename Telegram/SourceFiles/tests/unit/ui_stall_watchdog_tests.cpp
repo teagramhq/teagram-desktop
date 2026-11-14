@@ -112,9 +112,10 @@ TEST_CASE(UiStallWatchdogAttachesTraceWhenStoppedAfterAcknowledgement) {
 			if (attached->schedulerSampleOffsetsNanoseconds.empty()) {
 				CHECK(attached->schedulerTrace == u"none"_q);
 			} else {
-				CHECK_EQ(attached->schedulerTrace.size(),
-						 qsizetype(attached->schedulerSampleOffsetsNanoseconds
-									   .size()));
+				CHECK_EQ(
+					attached->schedulerTrace.size(),
+					qsizetype(
+						attached->schedulerSampleOffsetsNanoseconds.size()));
 			}
 		}
 	}
