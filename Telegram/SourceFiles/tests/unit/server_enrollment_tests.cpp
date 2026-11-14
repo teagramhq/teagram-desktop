@@ -797,6 +797,23 @@ TEST_CASE(EndpointRefreshIdentityAllowsEndpointChangesOnly) {
 	CHECK(!SameCustomServerEndpointRefreshIdentity(original, candidate));
 }
 
+TEST_CASE(EndpointRefreshDetectsAnUnchangedEndpoint) {
+	const auto original = MakeEndpointRefreshPin("100.124.236.66");
+	auto candidate = original;
+	candidate.serverSelection += "/other-selection";
+	CHECK(SameCustomServerEndpoint(original, candidate));
+
+	candidate = original;
+	candidate.port += 1;
+	CHECK(!SameCustomServerEndpoint(original, candidate));
+	candidate = original;
+	candidate.webSocketEndpoint = "wss://transport.example.com/apiws";
+	CHECK(!SameCustomServerEndpoint(original, candidate));
+	candidate = original;
+	candidate.webSocketOnly = true;
+	CHECK(!SameCustomServerEndpoint(original, candidate));
+}
+
 TEST_CASE(EndpointRefreshPreservesAuthorizationForSameServerIdentity) {
 	auto options = DcOptions(Environment::Production);
 	const auto original = MakeEndpointRefreshPin("100.124.236.66");

@@ -270,6 +270,39 @@ class AccountLifecycleRegressionAccess {
 	static void cancelEndpointRefresh(Main::Account &account) {
 		account.cancelServerEndpointRefresh();
 	}
+	[[nodiscard]] static bool discoverCurrentEndpoint(Main::Account &account) {
+		if (!account._mtp) {
+			return false;
+		}
+		const auto pin = account._mtp->dcOptions().customServer();
+		if (!pin.key
+			|| !account._endpointRefresh.begin(
+				account.serverEndpointRefreshEligibility(pin), pin)) {
+			return false;
+		}
+		if (!account._serverEndpointRefreshDiscovery) {
+			account._serverEndpointRefreshDiscovery = std::make_unique<
+				Intro::details::ServerEndpointRefreshDiscovery>();
+		}
+		auto result = MTP::ServerDiscoveryResult();
+		result.status = MTP::ServerDiscoveryResponseStatus::Valid;
+		result.endpoint = QString::fromStdString(
+							  (pin.hostname.empty() ? pin.ip : pin.hostname))
+						  + u":"_q + QString::number(pin.port);
+		result.webSocketEndpoint
+			= QString::fromStdString(pin.webSocketEndpoint);
+		result.webSocketOnly = pin.webSocketOnly;
+		result.dcId = pin.dcId;
+		result.key = *pin.key;
+		result.policy = pin.discoveryPolicy;
+		result.origin = QString::fromStdString(pin.discoveryOrigin);
+		account.serverEndpointRefreshDiscovered(std::move(result));
+		return true;
+	}
+	[[nodiscard]] static bool
+	endpointRefreshPending(const Main::Account &account) {
+		return account._endpointRefresh.hasOriginal();
+	}
 };
 
 namespace {
@@ -3124,6 +3157,16 @@ class LocalEndpointRefreshDiscoveryStub final {
 		  && !failureCount && !mtp.hasCallback(acceptedRequestId);
 	if (!completed) {
 		return fail("the accepted request callback did not complete");
+	}
+	if (!AccountLifecycleRegressionAccess::discoverCurrentEndpoint(*account)
+		|| !mtp.isServerEnrollmentNetworkAllowed()
+		|| AccountLifecycleRegressionAccess::endpointVerificationPending(
+			*account)
+		|| AccountLifecycleRegressionAccess::endpointRefreshPending(*account)
+		|| AccountLifecycleRegressionAccess::endpointRefreshRetryScheduled(
+			*account)
+		|| !MTP::SameCustomServerPin(moved, mtp.dcOptions().customServer())) {
+		return fail("an unchanged endpoint paused or changed the active account");
 	}
 	discovery.deferVerifierReply();
 	if (!discovery.restoreOriginalPin(account, moved, original)) {

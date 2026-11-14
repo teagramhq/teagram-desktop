@@ -45,6 +45,12 @@ enum class Environment : uchar;
 		&& error.type() == u"CLIENT_SERVER_ENROLLMENT_PAUSED"_q;
 }
 
+[[nodiscard]] inline bool IsMainDcServerEndpointRefresh(
+		ShiftedDcId shiftedDcId,
+		DcId mainDcId) {
+	return shiftedDcId == mainDcId;
+}
+
 // A pinned endpoint failure together with the session that reported
 // it. The report is retired only by a successful connection of that
 // same session: any other session of the DC reaching ConnectedState

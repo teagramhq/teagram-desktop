@@ -516,7 +516,7 @@ void Instance::Private::pauseForServerEnrollment(
 
 void Instance::Private::requestServerEndpointRefresh(ShiftedDcId shiftedDcId) {
 	if (!networkAllowed() || isEndpointVerifier() || !hasMainDcId()
-		|| BareDcId(shiftedDcId) != BareDcId(mainDcId())) {
+		|| !IsMainDcServerEndpointRefresh(shiftedDcId, mainDcId())) {
 		return;
 	}
 	const auto pin = dcOptions().customServer();

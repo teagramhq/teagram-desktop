@@ -1311,6 +1311,11 @@ void Account::serverEndpointRefreshDiscovered(
 		}
 		return;
 	}
+	if (MTP::SameCustomServerEndpoint(current, *candidate)) {
+		_serverEndpointRefreshFailures = 0;
+		cancelServerEndpointRefresh();
+		return;
+	}
 	const auto key = [&] {
 		for (const auto &stored : _mtp->getKeysForWrite()) {
 			if (stored && stored->dcId() == original.dcId

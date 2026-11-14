@@ -10,6 +10,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "api/api_updates.h"
 #include "data/data_pts_waiter.h"
 #include "mtproto/details/mtproto_rsa_public_key.h"
+#include "mtproto/facade.h"
 #include "mtproto/mtp_instance.h"
 #include "mtproto/mtproto_dc_options.h"
 
@@ -184,6 +185,15 @@ TEST_CASE(AuthorizedKeyMismatchUsesTheIdentityChangeFlow) {
 	CHECK(!MTP::ShouldShowPinnedServerIdentityChange(mismatch, false, true));
 	CHECK(!MTP::ShouldShowPinnedServerIdentityChange(mismatch, true, false));
 	CHECK(!MTP::ShouldShowPinnedServerIdentityChange(dcMismatch, true, true));
+}
+
+TEST_CASE(ServerEndpointRefreshRequiresTheMainDcSession) {
+	const auto mainDcId = MTP::DcId(2);
+	CHECK(MTP::IsMainDcServerEndpointRefresh(mainDcId, mainDcId));
+	CHECK(!MTP::IsMainDcServerEndpointRefresh(
+		MTP::downloadDcId(mainDcId, 0), mainDcId));
+	CHECK(!MTP::IsMainDcServerEndpointRefresh(
+		MTP::details::uploadDcId(mainDcId, 0), mainDcId));
 }
 
 // The clear side: only the reporting session's own successful
