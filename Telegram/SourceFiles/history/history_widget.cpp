@@ -6911,6 +6911,10 @@ void HistoryWidget::resetFieldAutocompleteForRegressionTest() {
 	_fieldAutocompleteBuildCountForRegressionTest = 0;
 }
 
+void HistoryWidget::initFieldAutocompleteForRegressionTest() {
+	initFieldAutocomplete();
+}
+
 bool HistoryWidget::clickBotMenuForRegressionTest() {
 	if (_field->hasFocus() || !_botMenu.button || _botMenu.button->isHidden()) {
 		return false;

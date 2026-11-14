@@ -307,6 +307,7 @@ public:
 	void setDraftTextForRegressionTest(const QString &text);
 	[[nodiscard]] QString draftTextForRegressionTest() const;
 	[[nodiscard]] TextWithTags draftWithTagsForRegressionTest() const;
+	void initFieldAutocompleteForRegressionTest();
 	void resetFieldAutocompleteForRegressionTest();
 	[[nodiscard]] bool clickBotMenuForRegressionTest();
 	[[nodiscard]] bool clickBotCommandStartForRegressionTest();

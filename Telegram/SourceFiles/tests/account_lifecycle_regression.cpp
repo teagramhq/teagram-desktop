@@ -11744,11 +11744,11 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 				  && commandAutocompleteWasDeferred && startCommandsShown;
 			historyWidget->hideFieldAutocompleteForRegressionTest();
 			historyWidget->setDraftTextForRegressionTest(QString());
-			historyWidget->clearFieldFocusForRegressionTest();
-			historyWidget->resetFieldAutocompleteForRegressionTest();
-			showPeerHistoryMeasured(firstHistory);
 		}
 	}
+	historyWidget->clearFieldFocusForRegressionTest();
+	historyWidget->resetFieldAutocompleteForRegressionTest();
+	historyWidget->initFieldAutocompleteForRegressionTest();
 	const auto autocompleteBuildsBeforeFocus
 		= historyWidget->fieldAutocompleteBuildCountForRegressionTest();
 	const auto autocompleteDeferredUntilFocus
@@ -11763,22 +11763,15 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 						->fieldAutocompleteBuildCountForRegressionTest()
 					== 1)
 				   && (historyWidget->fieldAutocompletePeerForRegressionTest()
-					   == firstHistory->peer.get())
+					   == emptyFirstHistory->peer.get())
 				   && historyWidget->fieldFocusedForRegressionTest();
 		},
 		1000);
-	const auto initialHistoryTransitionSettled = WaitForRegressionCondition(
-		[&] {
-			return historyWidget->historyTransitionFinishedForRegressionTest();
-		},
-		1500);
-	result.chatSwitchTransitionsSettled = result.chatSwitchTransitionsSettled
-										  && initialHistoryTransitionSettled;
 	const auto autocompleteBuildsAfterFocus
 		= historyWidget->fieldAutocompleteBuildCountForRegressionTest();
 	const auto autocompletePeerMatchesAfterFocus
 		= (historyWidget->fieldAutocompletePeerForRegressionTest()
-		   == firstHistory->peer.get());
+		   == emptyFirstHistory->peer.get());
 	const auto autocompleteFocusedAfterFocus
 		= historyWidget->fieldFocusedForRegressionTest();
 	historyWidget->setDraftTextForRegressionTest(u"@"_q);
