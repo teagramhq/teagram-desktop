@@ -3129,8 +3129,8 @@ class LocalEndpointRefreshDiscoveryStub final {
 		|| !mtp.hasCallback(acceptedRequestId) || callbackCount != 0
 		|| !MTP::SameCustomServerPin(original, mtp.dcOptions().customServer())
 		|| !storedKeyIsRetained() || !pausedRequestIsRefused()) {
-		return fail(
-			"rediscovering the original endpoint skipped its proof while paused");
+		return fail("rediscovering the original endpoint skipped its proof "
+					"while paused");
 	}
 	if (!retryRefresh()) {
 		return fail("the retry did not wait for a second proof");
