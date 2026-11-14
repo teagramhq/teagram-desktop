@@ -576,7 +576,8 @@ TEST_CASE(UiStallWatchdogLogsMainThreadStack) {
 					.begin(),
 				matchingAcknowledgement->schedulerSampleOffsetsNanoseconds
 					.end(),
-				evidence.back().schedulerSampleOffsetsNanoseconds.begin()));
+				evidence.back().schedulerSampleOffsetsNanoseconds.begin(),
+				evidence.back().schedulerSampleOffsetsNanoseconds.end()));
 		}
 		if (!schedulerTraceProvesRunnable) {
 			const auto &offsets
