@@ -90,6 +90,17 @@ constexpr auto kFontStartupSplashExposureTimeout = 1000;
 #endif // Q_OS_MAC
 
 #ifdef Q_OS_MAC
+void HoldWorkerUntilQuit(const std::atomic_bool &quitObserved) {
+	using Clock = std::chrono::steady_clock;
+	const auto deadline = Clock::now() + std::chrono::seconds(10);
+	while (!quitObserved && Clock::now() < deadline) {
+		std::this_thread::sleep_for(std::chrono::milliseconds(1));
+	}
+	const auto observed = quitObserved.load() ? 1 : 0;
+	fprintf(stderr, "Font shutdown regression: quit_observed=%d ", observed);
+	fprintf(stderr, "enumeration=in_flight\n");
+}
+
 class FontStartupSplash final : public QWindow {
   public:
 	explicit FontStartupSplash(std::function<void()> onShown)
@@ -540,32 +551,14 @@ void Sandbox::startFontDatabaseWarmup() {
 	if (quitRegression) {
 		// Hold the worker until the real quit path has run, so that the
 		// enumeration is still in flight while the process tears down.
-		connect(
-			this,
-			&QCoreApplication::aboutToQuit,
-			this,
-			[this] {
-				_fontStartupQuitObserved.store(
-					true,
-					std::memory_order_release);
-			},
-			Qt::DirectConnection);
+		connect(this, &QCoreApplication::aboutToQuit, [=] {
+			_fontStartupQuitObserved = true;
+		});
 	}
 	try {
 		_fontDatabaseWarmupThread = std::thread([this, quitRegression] {
 			if (quitRegression) {
-				const auto deadline = std::chrono::steady_clock::now()
-					+ std::chrono::seconds(10);
-				while (!_fontStartupQuitObserved.load(
-						std::memory_order_acquire)
-					&& std::chrono::steady_clock::now() < deadline) {
-					std::this_thread::sleep_for(std::chrono::milliseconds(1));
-				}
-				fprintf(stderr,
-						"Font shutdown regression: quit_observed=%d "
-						"enumeration=in_flight\n",
-						_fontStartupQuitObserved.load(
-							std::memory_order_acquire) ? 1 : 0);
+				HoldWorkerUntilQuit(_fontStartupQuitObserved);
 			}
 			const auto openSansLoaded = style::internal::PreloadCustomFonts();
 			{
