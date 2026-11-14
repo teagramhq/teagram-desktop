@@ -1174,7 +1174,7 @@ void Instance::Private::configLoadDone(const MTPConfig &result) {
 		}
 		const auto verification = CheckEndpointVerificationConfig(
 			mtpIsTrue(data.vtest_mode()), _config->dcOptions().isTestMode(),
-			hasMain, hasMain ? mainDcId() : DcId(0), advertised,
+			hasMain, DcId(data.vthis_dc().v), advertised,
 			_config->dcOptions().customServer());
 		if (verification.failure) {
 			onPinnedServerFailure(mainDcId(), *verification.failure);

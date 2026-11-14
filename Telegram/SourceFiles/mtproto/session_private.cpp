@@ -2957,11 +2957,16 @@ void SessionPrivate::onError(
 	}
 }
 
-void SessionPrivate::handleError(
-		int errorCode,
-		ConnectionErrorInfo context) {
+void SessionPrivate::handleError(int errorCode, ConnectionErrorInfo context) {
 	destroyAllConnections();
 	_waitForConnectedTimer.cancel();
+	if (errorCode == AbstractConnection::kErrorCodeOther) {
+		const auto instance = _instance;
+		const auto shiftedDcId = _shiftedDcId;
+		InvokeQueued(instance, [=] {
+			instance->requestServerEndpointRefresh(shiftedDcId);
+		});
+	}
 
 	if (errorCode == -404) {
 		if (usesPermanentAuthKey()) {

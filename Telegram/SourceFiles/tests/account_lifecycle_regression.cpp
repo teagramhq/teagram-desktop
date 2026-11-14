@@ -2144,7 +2144,8 @@ void AppendEndpointRefreshTlString(QByteArray &target,
 	}
 }
 
-QByteArray EndpointRefreshVerifierConfig(bool authenticates) {
+QByteArray EndpointRefreshVerifierConfig(bool authenticates,
+										 uint32 thisDc = 2) {
 	constexpr auto kBoolFalse = uint32(0xbc799737);
 	constexpr auto kBoolTrue = uint32(0x997275b5);
 	auto result = QByteArray();
@@ -2153,7 +2154,7 @@ QByteArray EndpointRefreshVerifierConfig(bool authenticates) {
 	AppendEndpointRefreshInt(result, uint32(base::unixtime::now()));
 	AppendEndpointRefreshInt(result, uint32(base::unixtime::now() + 3600));
 	AppendEndpointRefreshInt(result, authenticates ? kBoolFalse : kBoolTrue);
-	AppendEndpointRefreshInt(result, 2);
+	AppendEndpointRefreshInt(result, thisDc);
 	AppendEndpointRefreshInt(result, 0x1cb5c415);
 	AppendEndpointRefreshInt(result, 1);
 	AppendEndpointRefreshInt(result, 0x18b7a10d);
@@ -2577,6 +2578,14 @@ class LocalEndpointRefreshDiscoveryStub final {
 		}
 	}
 
+	void replyToPendingVerifierConfigWithWrongDc() {
+		_autoReply = false;
+		if (const auto connection = _verifierConnection.lock()) {
+			reply(connection, true, nullptr, 3);
+			_verifierConnection.reset();
+		}
+	}
+
 	void reportConnectionState() const {
 		for (auto i = 0; i != int(_connections.size()); ++i) {
 			const auto &connection = _connections[i];
@@ -2824,7 +2833,8 @@ class LocalEndpointRefreshDiscoveryStub final {
 	}
 
 	void reply(const std::shared_ptr<Connection> &connection,
-			   bool authenticates, MTP::AuthKeyPtr encryptionKey = nullptr) {
+			   bool authenticates, MTP::AuthKeyPtr encryptionKey = nullptr,
+			   uint32 thisDc = 2) {
 		if (!connection->pending || !connection->socket
 			|| connection->socket->state() != QAbstractSocket::ConnectedState
 			|| !_verifierAuthKey) {
@@ -2838,7 +2848,7 @@ class LocalEndpointRefreshDiscoveryStub final {
 		auto body = QByteArray();
 		AppendEndpointRefreshInt(body, 0xf35c6d01);
 		AppendEndpointRefreshLong(body, pending.requestId);
-		body += EndpointRefreshVerifierConfig(authenticates);
+		body += EndpointRefreshVerifierConfig(authenticates, thisDc);
 		sendEncryptedResponse(connection, pending.serverSalt, pending.sessionId,
 							  body, encryptionKey, _verifierAuthKey->keyId());
 	}
@@ -2981,7 +2991,6 @@ class LocalEndpointRefreshDiscoveryStub final {
 		return fail("the original request was not accepted");
 	}
 	const auto requestRefresh = [&] {
-		mtp.requestServerEndpointRefresh(original.dcId);
 		const auto reached = WaitForRegressionCondition([&] {
 			return AccountLifecycleRegressionAccess::
 					   endpointVerificationPending(*account)
@@ -3023,6 +3032,16 @@ class LocalEndpointRefreshDiscoveryStub final {
 				   && key->equals(storedAuthKey);
 		});
 	};
+	const auto retryRefresh = [&] {
+		AccountLifecycleRegressionAccess::cancelEndpointRefresh(*account);
+		mtp.resume();
+		return mtp.isServerEnrollmentNetworkAllowed() && requestRefresh()
+			   && !mtp.isServerEnrollmentNetworkAllowed()
+			   && mtp.hasCallback(acceptedRequestId) && callbackCount == 0
+			   && AccountLifecycleRegressionAccess::verifierUsesStoredFileKey(
+				   *account, storedAuthKey)
+			   && pausedRequestIsRefused();
+	};
 	auto verificationTimeout = QElapsedTimer();
 	verificationTimeout.start();
 	if (!requestRefresh() || mtp.isServerEnrollmentNetworkAllowed()
@@ -3048,15 +3067,23 @@ class LocalEndpointRefreshDiscoveryStub final {
 		|| !storedKeyIsRetained() || !pausedRequestIsRefused()) {
 		return fail("an undecryptable proof changed the pin, key, or requests");
 	}
-	AccountLifecycleRegressionAccess::cancelEndpointRefresh(*account);
-	mtp.resume();
-	if (!mtp.isServerEnrollmentNetworkAllowed() || !requestRefresh()
+	if (!retryRefresh()) {
+		return fail("the retry did not wait for a second proof");
+	}
+	discovery.replyToPendingVerifierConfigWithWrongDc();
+	if (!WaitForRegressionCondition([&] {
+			return !AccountLifecycleRegressionAccess::
+				endpointVerificationPending(*account);
+		})
 		|| mtp.isServerEnrollmentNetworkAllowed()
 		|| !mtp.hasCallback(acceptedRequestId) || callbackCount != 0
-		|| !AccountLifecycleRegressionAccess::verifierUsesStoredFileKey(
-			*account, storedAuthKey)
-		|| !pausedRequestIsRefused()) {
-		return fail("the retry did not wait for a second proof");
+		|| !MTP::SameCustomServerPin(original, mtp.dcOptions().customServer())
+		|| !storedKeyIsRetained() || !pausedRequestIsRefused()) {
+		return fail(
+			"a config naming another dc changed the pin or resumed requests");
+	}
+	if (!retryRefresh()) {
+		return fail("the account did not retry after refusing the other dc");
 	}
 	discovery.replyToPendingVerifierConfig(true);
 	if (!WaitForRegressionCondition([&] {
