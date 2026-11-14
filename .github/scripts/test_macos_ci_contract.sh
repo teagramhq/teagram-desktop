@@ -1179,6 +1179,27 @@ if ! awk '
 ' Telegram/SourceFiles/core/sandbox.cpp; then
   contract_fail 'System and bundled font metrics must be prewarmed before application startup.'
 fi
+if ! awk '
+  /^void Sandbox::readClients\(\)/ { in_read = 1 }
+  in_read && /if \(_applicationRunActive\)/ { active = NR }
+  in_read && /_clientReadPending = true/ { pending = NR }
+  in_read && /i->second\.append\(i->first->readAll\(\)\)/ { read = NR }
+  in_read && /^void Sandbox::removeClients/ { in_read = 0 }
+  END { exit !(active && pending > active && read > pending) }
+' Telegram/SourceFiles/core/sandbox.cpp; then
+  contract_fail 'Local IPC commands must wait until application startup finishes.'
+fi
+if ! awk '
+  /^void Sandbox::launchApplication\(\)/ { in_launch = 1 }
+  in_launch && /_applicationRunActive = false/ { inactive = NR }
+  in_launch && /if \(_clientReadPending\)/ { pending = NR }
+  in_launch && /_clientReadPending = false/ { clear = NR }
+  in_launch && /readClients\(\)/ { drain = NR }
+  in_launch && /^void Sandbox::startFontDatabaseWarmup/ { in_launch = 0 }
+  END { exit !(inactive && pending > inactive && clear > pending && drain > clear) }
+' Telegram/SourceFiles/core/sandbox.cpp; then
+  contract_fail 'Deferred local IPC commands must be processed after application startup.'
+fi
 grep -Fq 'bash "$PROFILE_GUARD" "$FAKE_APP"' \
   Telegram/build/test_mac_lifecycle_case_runner.sh \
   || contract_fail 'The lifecycle runner self-test must invoke the profile harness without a case argument.'

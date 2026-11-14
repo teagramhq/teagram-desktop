@@ -146,6 +146,8 @@ elif [[ "$mode" == harfbuzz-stall ]]; then
     printf 'UI stall 182 ms (started 2026-11-13T00:00:00): QTextEngine::shape <- QFontMetricsF::horizontalAdvance\\n'
 elif [[ "$mode" == qrawfont-stall ]]; then
     printf 'UI stall 120 ms (started 2026-11-13T00:00:00): QRawFont::fromFont <- glyphIndexesForString\\n'
+elif [[ "$mode" == system-menu-stall ]]; then
+    printf 'UI stall 229 ms (started 2026-11-13T00:00:00): TOpenTypeMorph::AddShapingGlyphs <- __CTFont <- NSMenuBarRepresentation::layoutMenuBarIfNeeded\\n'
 elif [[ "$mode" == media-stall ]]; then
     printf 'UI stall 155 ms (started 2026-11-13T00:00:00): Core::Application::mediaDevices() <- AVCapture defaults\\n'
 fi
@@ -266,6 +268,10 @@ font_startup_qrawfont_stall = run_font_startup_fixture(
     50_000_000, 50_000_000, 1, mode='qrawfont-stall')
 assert 'Font-code startup cold produced a main-thread stall' \
     in font_startup_qrawfont_stall
+font_startup_system_menu_stall = run_font_startup_fixture(
+    50_000_000, 50_000_000, 0, mode='system-menu-stall')
+assert 'Font-code startup stall gate=PASS sample=cold' \
+    in font_startup_system_menu_stall
 font_startup_media_stall = run_font_startup_fixture(
     50_000_000, 50_000_000, 0, mode='media-stall')
 assert 'Font-code startup stall gate=PASS sample=cold' in font_startup_media_stall

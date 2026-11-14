@@ -520,6 +520,10 @@ void Sandbox::launchApplication() {
 			_fontStartupWindow->close();
 			_fontStartupWindow.reset();
 		}
+		if (_clientReadPending) {
+			_clientReadPending = false;
+			readClients();
+		}
 #endif // Q_OS_MAC
 	});
 }
@@ -839,6 +843,12 @@ void Sandbox::newInstanceConnected() {
 }
 
 void Sandbox::readClients() {
+#ifdef Q_OS_MAC
+	if (_applicationRunActive) {
+		_clientReadPending = true;
+		return;
+	}
+#endif // Q_OS_MAC
 	// This method can be called before Application is constructed.
 	QList<QUrl> startUrls;
 	for (LocalClients::iterator i = _localClients.begin(), e = _localClients.end(); i != e; ++i) {

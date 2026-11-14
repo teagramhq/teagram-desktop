@@ -170,6 +170,7 @@ private:
 	bool _fontDatabaseWarmupSucceeded = false;
 	bool _launchAfterFontDatabaseWarmup = false;
 	bool _applicationRunActive = false;
+	bool _clientReadPending = false;
 	bool _closeApplicationPending = false;
 	std::unique_ptr<QWindow> _fontStartupWindow;
 	std::thread _fontDatabaseWarmupThread;
