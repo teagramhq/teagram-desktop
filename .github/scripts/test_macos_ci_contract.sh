@@ -1139,8 +1139,8 @@ all_first_command="$(awk '
 [[ "$all_first_command" == 'run_font_startup_regression' ]] \
   || contract_fail "$profile_harness must run the font-startup regression before any all-case app launches."
 application_source='Telegram/SourceFiles/core/application.cpp'
-emoji_init_line="$(rg -n -F 'Ui::Emoji::Init();' "$application_source" | head -n 1 | cut -d: -f1)"
-font_fallback_exit_line="$(rg -n -F \
+emoji_init_line="$(grep -n -F 'Ui::Emoji::Init();' "$application_source" | head -n 1 | cut -d: -f1)"
+font_fallback_exit_line="$(grep -n -F \
 	'QCoreApplication::exit(RunFontFallbackRegression());' "$application_source" \
 	| head -n 1 | cut -d: -f1)"
 [[ "$emoji_init_line" =~ ^[0-9]+$ \
