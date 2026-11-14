@@ -11102,15 +11102,8 @@ EstimateMainThreadWork(qint64 mainThreadCpuNanoseconds, qint64 wallNanoseconds,
 	if (samples < 4) {
 		return {-1, wallNanoseconds};
 	}
-	constexpr auto kMaximumEdgeGapNanoseconds = qint64(5'000'000);
-	constexpr auto kMaximumEstimatorSampleGapNanoseconds = qint64(25'000'000);
-	const auto expectedSampleIntervalNanoseconds
-		= wallNanoseconds / (samples - 1);
-	const auto maximumSampleGapNanoseconds
-		= std::min(kMaximumEstimatorSampleGapNanoseconds,
-				   std::max(kMaximumEdgeGapNanoseconds,
-							expectedSampleIntervalNanoseconds
-								+ expectedSampleIntervalNanoseconds / 2));
+	constexpr auto kMaximumSampleGapNanoseconds = qint64(5'000'000);
+	constexpr auto kMaximumEdgeGapNanoseconds = kMaximumSampleGapNanoseconds;
 	if ((firstOffset > kMaximumEdgeGapNanoseconds)
 		|| (wallNanoseconds - lastOffset > kMaximumEdgeGapNanoseconds)) {
 		return {-1, wallNanoseconds};
@@ -11121,7 +11114,7 @@ EstimateMainThreadWork(qint64 mainThreadCpuNanoseconds, qint64 wallNanoseconds,
 		if ((offset < 0) || (offset > wallNanoseconds)) {
 			continue;
 		}
-		if ((offset - priorInWindowOffset) > maximumSampleGapNanoseconds) {
+		if ((offset - priorInWindowOffset) > kMaximumSampleGapNanoseconds) {
 			return {-1, wallNanoseconds};
 		}
 		priorInWindowOffset = offset;
@@ -11216,6 +11209,15 @@ void AccumulateMainThreadWorkEstimate(qint64 &aggregateNanoseconds,
 		= QString(15, QChar(u'R')) + QString(4, QChar(u'W'));
 	const auto sparseStartup = EstimateMainThreadWork(
 		18'000'000, 225'000'000, sparseStartupTrace, sparseStartupOffsets);
+	auto sixMillisecondGapOffsets = std::vector<qint64>();
+	for (auto offset = qint64(0); offset <= 222'000'000;
+		 offset += 6'000'000) {
+		sixMillisecondGapOffsets.push_back(offset);
+	}
+	const auto sixMillisecondGap = EstimateMainThreadWork(
+		18'000'000, 225'000'000,
+		QString(int(sixMillisecondGapOffsets.size()), QChar(u'R')),
+		sixMillisecondGapOffsets);
 	const auto sparseBlockedTailOffsets = std::vector<qint64>{
 		0,
 		75'000'000,
@@ -11352,11 +11354,17 @@ void AccumulateMainThreadWorkEstimate(qint64 &aggregateNanoseconds,
 		   && (uncoveredMiddle.estimatedWorkNanoseconds == 200'000'000)
 		   && !Core::UiStallWatchdog::SchedulerTraceCoversDuration(
 			   u"RRR"_q, {0, 1'000'000, 2'000'000}, 200'000'000)
-		   && (sparseStartup.blockedNanoseconds == 47'368'421)
-		   && (sparseStartup.estimatedWorkNanoseconds == 65'368'421)
-		   && MainThreadWorkEstimateWithinBudget(
+		   && (sparseStartup.blockedNanoseconds == -1)
+		   && (sparseStartup.estimatedWorkNanoseconds == 225'000'000)
+		   && !MainThreadWorkEstimateWithinBudget(
 			   18'000'000, 225'000'000, sparseStartupTrace,
 			   sparseStartupOffsets, 100'000'000)
+		   && (sixMillisecondGap.blockedNanoseconds == -1)
+		   && (sixMillisecondGap.estimatedWorkNanoseconds == 225'000'000)
+		   && !MainThreadWorkEstimateWithinBudget(
+			   18'000'000, 225'000'000,
+			   QString(int(sixMillisecondGapOffsets.size()), QChar(u'R')),
+			   sixMillisecondGapOffsets, 100'000'000)
 		   && (sparseBlockedTail.blockedNanoseconds == -1)
 		   && (sparseBlockedTail.estimatedWorkNanoseconds == 225'000'000)
 		   && !MainThreadWorkEstimateWithinBudget(
@@ -11383,10 +11391,10 @@ void AccumulateMainThreadWorkEstimate(qint64 &aggregateNanoseconds,
 		   && (capturedWindowEstimate.estimatedWorkNanoseconds == 18'000'000)
 		   && !sparseStartupCapture.capturePending
 		   && (sparseStartupCapture.trace == sparseStartupTrace)
-		   && (sparseStartupCaptureEstimate.blockedNanoseconds == 47'368'421)
+		   && (sparseStartupCaptureEstimate.blockedNanoseconds == -1)
 		   && (sparseStartupCaptureEstimate.estimatedWorkNanoseconds
-			   == 65'368'421)
-		   && MainThreadWorkEstimateWithinBudget(
+			   == sparseStartupWindow.durationNanoseconds)
+		   && !MainThreadWorkEstimateWithinBudget(
 			   18'000'000, sparseStartupWindow.durationNanoseconds,
 			   sparseStartupCapture.trace,
 			   sparseStartupCapture.sampleOffsetsNanoseconds, 100'000'000)
@@ -11697,10 +11705,10 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 	}
 	showPeerHistoryMeasured(firstHistory);
 	settleHistoryUnfocused();
+	showPeerHistoryMeasured(secondHistory);
 	historyWidget->clearFieldFocusForRegressionTest();
 	historyWidget->resetFieldAutocompleteForRegressionTest();
 	historyWidget->initFieldAutocompleteForRegressionTest();
-	showPeerHistoryMeasured(secondHistory);
 	const auto autocompleteBuildsBeforeFocus
 		= historyWidget->fieldAutocompleteBuildCountForRegressionTest();
 	const auto autocompleteDeferredUntilFocus

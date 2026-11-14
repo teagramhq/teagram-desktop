@@ -1060,11 +1060,21 @@ if ! main_thread_work_estimate_within_budget \
   "$chat_switch_offsets"; then
   contract_fail 'A runnable 225 ms window with 18 ms CPU must pass.'
 fi
-if ! main_thread_work_estimate_within_budget \
+if main_thread_work_estimate_within_budget \
   18000000 225000000 \
   "$(printf '%15s' '' | tr ' ' R)$(printf '%4s' '' | tr ' ' W)" \
   100000000 "$sparse_startup_offsets"; then
-  contract_fail 'A covered 19-sample window must estimate blocked-time share.'
+  contract_fail 'A 12.5 ms sample gap must fall back to wall time.'
+fi
+six_millisecond_offsets=""
+for ((offset = 0; offset <= 222000000; offset += 6000000)); do
+  six_millisecond_offsets="${six_millisecond_offsets:+$six_millisecond_offsets,}$offset"
+done
+six_millisecond_trace="$(printf '%38s' '' | tr ' ' R)"
+if main_thread_work_estimate_within_budget \
+  18000000 225000000 "$six_millisecond_trace" 100000000 \
+  "$six_millisecond_offsets"; then
+  contract_fail 'A 6 ms sample gap must fall back to wall time.'
 fi
 if main_thread_work_estimate_within_budget \
   18000000 225000000 RRRW 100000000 0,75000000,150000000,225000000; then
