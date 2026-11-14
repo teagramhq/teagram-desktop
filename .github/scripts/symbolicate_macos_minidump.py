@@ -142,26 +142,46 @@ def symbolicate(report, executable):
         "Faulting module: %s base=%#x"
         % (module["name"], module["base"])
     )
+    addresses = [
+        frame["address"]
+        for frame in report["frames"]
+        if frame["module"] and frame["module"]["base"] == module["base"]
+    ]
+    symbols = {}
+    symbolication_error = None
+    if addresses:
+        try:
+            result = subprocess.run(
+                [
+                    "atos", "-o", str(image), "-arch", "arm64",
+                    "-l", hex(module["base"]),
+                    *[hex(address) for address in addresses],
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            descriptions = result.stdout.splitlines()
+            if len(descriptions) != len(addresses):
+                raise RuntimeError(
+                    "atos returned %d descriptions for %d addresses"
+                    % (len(descriptions), len(addresses)))
+            symbols = dict(zip(addresses, descriptions))
+        except (OSError, subprocess.CalledProcessError,
+                subprocess.TimeoutExpired, RuntimeError) as error:
+            symbolication_error = error
+
     for index, frame in enumerate(report["frames"]):
         owner = frame["module"]
         address = frame["address"]
         if owner and owner["base"] == module["base"]:
-            try:
-                result = subprocess.run(
-                    [
-                        "atos", "-o", str(image), "-arch", "arm64",
-                        "-l", hex(module["base"]), hex(address),
-                    ],
-                    check=True,
-                    capture_output=True,
-                    text=True,
-                    timeout=10,
-                )
-                description = result.stdout.strip()
-            except (OSError, subprocess.CalledProcessError,
-                    subprocess.TimeoutExpired) as error:
-                description = "%s+%#x (atos unavailable: %s)" % (
-                    owner["name"], address - owner["base"], error)
+            description = symbols.get(address, "").strip()
+            if not description:
+                description = "%s+%#x" % (
+                    owner["name"], address - owner["base"])
+                if symbolication_error:
+                    description += " (atos unavailable: %s)" % symbolication_error
         elif owner:
             description = "%s+%#x" % (owner["name"], address - owner["base"])
         else:
@@ -180,7 +200,9 @@ def test_symbolicate_uses_executable(report):
         def fake_run(args, **kwargs):
             calls.append((args, kwargs))
             return subprocess.CompletedProcess(
-                args, 0, stdout="Teagram::test_frame()\n", stderr="")
+                args, 0,
+                stdout="Teagram::test_fault()\nTeagram::test_caller()\n",
+                stderr="")
 
         output = io.StringIO()
         subprocess.run = fake_run
@@ -190,13 +212,21 @@ def test_symbolicate_uses_executable(report):
         finally:
             subprocess.run = original_run
 
-        assert len(calls) == 2
-        for args, kwargs in calls:
-            assert args[0] == "atos"
-            assert args[1] == "-o"
-            assert args[2] == str(executable)
-            assert kwargs["timeout"] == 10
-        assert output.getvalue().count("Teagram::test_frame()") == 2
+        assert len(calls) == 1
+        args, kwargs = calls[0]
+        assert args[:7] == [
+            "atos", "-o", str(executable), "-arch", "arm64", "-l",
+            hex(report["module"]["base"]),
+        ]
+        assert args[7:] == [
+            hex(frame["address"])
+            for frame in report["frames"]
+            if frame["module"]
+            and frame["module"]["base"] == report["module"]["base"]
+        ]
+        assert kwargs["timeout"] == 10
+        assert "Teagram::test_fault()" in output.getvalue()
+        assert "Teagram::test_caller()" in output.getvalue()
 
 
 def build_fixture():

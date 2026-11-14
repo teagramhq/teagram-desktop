@@ -38,6 +38,7 @@ if [[ "${TDESKTOP_FONT_STARTUP_REGRESSION:-}" == 1 ]]; then
         printf 'Font startup splash regression: visible=1 wall_ns=30000000\\n'
     fi
     printf 'Font database warmup regression: started=1\\n'
+    printf 'Font database metrics warmup regression: ready=1\\n'
     printf 'Font database warmup regression: ready=1 custom-fonts=1\\n'
     printf 'Font fallback regression: emoji=Apple Color Emoji arabic=Vazirmatn UI NL wall_ns=1000000 result=PASS\\n'
     exit 0
@@ -168,6 +169,9 @@ if [[ "$mode" != missing-splash && "$mode" != exposure-timeout \
 fi
 if [[ "$mode" != warmup-before-splash ]]; then
     printf 'Font database warmup regression: started=1\\n'
+fi
+if [[ "$mode" != warmup-not-ready && "$mode" != missing-metrics ]]; then
+    printf 'Font database metrics warmup regression: ready=1\\n'
 fi
 if [[ "$mode" != missing-timing ]]; then
     printf 'StartFonts startup regression: wall_ns=%s\\n' "$wall_ns"
@@ -308,6 +312,10 @@ font_startup_warmup_not_ready = run_font_startup_fixture(
     50_000_000, 50_000_000, 1, mode='warmup-not-ready')
 assert 'font database warmup did not finish before app initialization' \
     in font_startup_warmup_not_ready
+font_startup_missing_metrics = run_font_startup_fixture(
+    50_000_000, 50_000_000, 1, mode='missing-metrics')
+assert 'font metrics were not prewarmed off the UI thread: cold' \
+    in font_startup_missing_metrics
 font_startup_missing_custom_fonts = run_font_startup_fixture(
     50_000_000, 50_000_000, 1, mode='missing-custom-fonts')
 assert 'bundled fonts were not preloaded before app initialization' \

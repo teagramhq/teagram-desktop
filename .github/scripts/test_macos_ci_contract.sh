@@ -1168,6 +1168,17 @@ if ! awk '
 ' Telegram/SourceFiles/core/sandbox.cpp; then
   contract_fail 'The UI stall watchdog must start before the font splash.'
 fi
+if ! awk '
+  /^void Sandbox::startFontDatabaseWarmup\(\)/ { in_warmup = 1 }
+  in_warmup && /prewarmFontMetrics\(QFont\(\)\.family\(\)\)/ { system_font = NR }
+  in_warmup && /prewarmFontMetrics\(u"Open Sans"_q\)/ { bundled_font = NR }
+  in_warmup && /QFontMetricsF\(font\)/ { metrics = NR }
+  in_warmup && /QMetaObject::invokeMethod\(/ { callback = NR }
+  in_warmup && /^void Sandbox::setupScreenScale\(\)/ { in_warmup = 0 }
+  END { exit !(system_font && bundled_font && metrics && callback && system_font < callback && bundled_font < callback && metrics < callback) }
+' Telegram/SourceFiles/core/sandbox.cpp; then
+  contract_fail 'System and bundled font metrics must be prewarmed before application startup.'
+fi
 grep -Fq 'bash "$PROFILE_GUARD" "$FAKE_APP"' \
   Telegram/build/test_mac_lifecycle_case_runner.sh \
   || contract_fail 'The lifecycle runner self-test must invoke the profile harness without a case argument.'

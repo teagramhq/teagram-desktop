@@ -127,6 +127,7 @@ if [[ "${TDESKTOP_FONT_STARTUP_REGRESSION:-}" == 1 ]]; then
 		printf 'Font startup splash regression: visible=1 wall_ns=30000000\n'
 	fi
 	printf 'Font database warmup regression: started=1\n'
+	printf 'Font database metrics warmup regression: ready=1\n'
 	printf 'Font database warmup regression: ready=1 custom-fonts=1\n'
 	printf 'Font fallback regression: emoji=Apple Color Emoji arabic=Vazirmatn UI NL wall_ns=1000000 result=PASS\n'
 	exit 0

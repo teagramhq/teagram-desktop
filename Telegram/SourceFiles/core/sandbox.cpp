@@ -53,7 +53,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <QtCore/QTimer>
 #include <QtGui/QBackingStore>
 #include <QtGui/QExposeEvent>
+#include <QtGui/QFont>
 #include <QtGui/QFontDatabase>
+#include <QtGui/QFontMetrics>
 #include <QtGui/QImage>
 #include <QtGui/QPalette>
 #include <QtGui/QPainter>
@@ -538,6 +540,22 @@ void Sandbox::startFontDatabaseWarmup() {
 				const auto families = QFontDatabase::families();
 #endif // Qt < 6.0.0
 				Q_UNUSED(families);
+			}
+			const auto prewarmFontMetrics = [](QString family) {
+				auto font = QFont(std::move(family));
+				font.setPixelSize(16);
+				const auto metrics = QFontMetricsF(font);
+				static_cast<void>(metrics.ascent());
+				static_cast<void>(metrics.height());
+				static_cast<void>(metrics.tightBoundingRect(
+					u"bdfghijklpqtyBDFGHIJKLPQTY1234567890[]{}()"_q));
+			};
+			prewarmFontMetrics(QFont().family());
+			prewarmFontMetrics(u"Open Sans"_q);
+			if (qEnvironmentVariableIsSet(
+					"TDESKTOP_FONT_STARTUP_REGRESSION")) {
+				fprintf(stderr,
+						"Font database metrics warmup regression: ready=1\n");
 			}
 			QMetaObject::invokeMethod(
 				this,

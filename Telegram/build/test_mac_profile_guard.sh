@@ -1622,6 +1622,12 @@ run_font_startup_regression() {
 			return 1
 		fi
 		printf 'Font database warmup before app run=PASS sample=%s\n' "$sample"
+		if ! grep -F -q 'Font database metrics warmup regression: ready=1' \
+			"$sample_log"; then
+			cat "$sample_log" >&2
+			echo "font metrics were not prewarmed off the UI thread: $sample" >&2
+			return 1
+		fi
 		if ! grep -F -q 'Font database warmup regression: ready=1 custom-fonts=1' \
 			"$sample_log" "$font_profile_log" 2>/dev/null; then
 			cat "$sample_log" >&2
@@ -1724,6 +1730,12 @@ run_font_startup_regression() {
 			cat "$font_profile_log" >&2
 		fi
 		echo "font startup did not continue after the exposure timeout" >&2
+		return 1
+	fi
+	if ! grep -F -q 'Font database metrics warmup regression: ready=1' \
+		"$exposure_timeout_log"; then
+		cat "$exposure_timeout_log" >&2
+		echo 'font metrics were not prewarmed after the exposure timeout' >&2
 		return 1
 	fi
 	printf 'Font database warmup fallback=PASS sample=occluded wall_ns=%s\n' \
