@@ -11210,8 +11210,7 @@ void AccumulateMainThreadWorkEstimate(qint64 &aggregateNanoseconds,
 	const auto sparseStartup = EstimateMainThreadWork(
 		18'000'000, 225'000'000, sparseStartupTrace, sparseStartupOffsets);
 	auto sixMillisecondGapOffsets = std::vector<qint64>();
-	for (auto offset = qint64(0); offset <= 222'000'000;
-		 offset += 6'000'000) {
+	for (auto offset = qint64(0); offset <= 222'000'000; offset += 6'000'000) {
 		sixMillisecondGapOffsets.push_back(offset);
 	}
 	const auto sixMillisecondGap = EstimateMainThreadWork(
