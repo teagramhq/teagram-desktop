@@ -11103,12 +11103,14 @@ EstimateMainThreadWork(qint64 mainThreadCpuNanoseconds, qint64 wallNanoseconds,
 		return {-1, wallNanoseconds};
 	}
 	constexpr auto kMaximumEdgeGapNanoseconds = qint64(5'000'000);
+	constexpr auto kMaximumEstimatorSampleGapNanoseconds = qint64(25'000'000);
 	const auto expectedSampleIntervalNanoseconds
 		= wallNanoseconds / (samples - 1);
 	const auto maximumSampleGapNanoseconds
-		= std::max(kMaximumEdgeGapNanoseconds,
-				   expectedSampleIntervalNanoseconds
-					   + expectedSampleIntervalNanoseconds / 2);
+		= std::min(kMaximumEstimatorSampleGapNanoseconds,
+				   std::max(kMaximumEdgeGapNanoseconds,
+							expectedSampleIntervalNanoseconds
+								+ expectedSampleIntervalNanoseconds / 2));
 	if ((firstOffset > kMaximumEdgeGapNanoseconds)
 		|| (wallNanoseconds - lastOffset > kMaximumEdgeGapNanoseconds)) {
 		return {-1, wallNanoseconds};
@@ -11214,6 +11216,14 @@ void AccumulateMainThreadWorkEstimate(qint64 &aggregateNanoseconds,
 		= QString(15, QChar(u'R')) + QString(4, QChar(u'W'));
 	const auto sparseStartup = EstimateMainThreadWork(
 		18'000'000, 225'000'000, sparseStartupTrace, sparseStartupOffsets);
+	const auto sparseBlockedTailOffsets = std::vector<qint64>{
+		0,
+		75'000'000,
+		150'000'000,
+		225'000'000,
+	};
+	const auto sparseBlockedTail = EstimateMainThreadWork(
+		18'000'000, 225'000'000, u"RRRW"_q, sparseBlockedTailOffsets);
 	const auto noSamples
 		= EstimateMainThreadWork(0, 101'000'000, u"none"_q, {});
 	const auto noInWindowSamples
@@ -11347,6 +11357,11 @@ void AccumulateMainThreadWorkEstimate(qint64 &aggregateNanoseconds,
 		   && MainThreadWorkEstimateWithinBudget(
 			   18'000'000, 225'000'000, sparseStartupTrace,
 			   sparseStartupOffsets, 100'000'000)
+		   && (sparseBlockedTail.blockedNanoseconds == -1)
+		   && (sparseBlockedTail.estimatedWorkNanoseconds == 225'000'000)
+		   && !MainThreadWorkEstimateWithinBudget(
+			   18'000'000, 225'000'000, u"RRRW"_q, sparseBlockedTailOffsets,
+			   100'000'000)
 		   && !MainThreadWorkEstimateWithinBudget(
 			   52'107'000, 227'000'000,
 			   QString(int(slowSwitchOffsets.size()), QChar(u'R')),

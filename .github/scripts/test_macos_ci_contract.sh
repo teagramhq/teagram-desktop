@@ -1066,6 +1066,10 @@ if ! main_thread_work_estimate_within_budget \
   100000000 "$sparse_startup_offsets"; then
   contract_fail 'A covered 19-sample window must estimate blocked-time share.'
 fi
+if main_thread_work_estimate_within_budget \
+  18000000 225000000 RRRW 100000000 0,75000000,150000000,225000000; then
+  contract_fail 'A four-sample 75 ms gap must fall back to wall time.'
+fi
 if main_thread_work_estimate_within_budget 0 101000000 none 100000000 ""; then
   contract_fail 'A window without scheduler samples must fall back to wall time.'
 fi

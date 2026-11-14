@@ -148,6 +148,8 @@ main_thread_work_estimate_within_budget() {
 			local maximum_sample_gap_ns="$((expected_sample_interval_ns + expected_sample_interval_ns / 2))"
 			if (( maximum_sample_gap_ns < 5000000 )); then
 				maximum_sample_gap_ns=5000000
+			elif (( maximum_sample_gap_ns > 25000000 )); then
+				maximum_sample_gap_ns=25000000
 			fi
 			if (( first_in_window_offset > 5000000 )) \
 				|| (( wall_ns - last_in_window_offset > 5000000 )); then
