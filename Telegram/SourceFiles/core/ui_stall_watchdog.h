@@ -56,7 +56,7 @@ class UiStallWatchdog final : public QObject {
 		char state = '?';
 	};
 
-		explicit UiStallWatchdog(
+	explicit UiStallWatchdog(
 		std::function<void(const QString &, bool update)> log);
 	UiStallWatchdog(std::function<void(const QString &, bool update)> log,
 					Settings settings);

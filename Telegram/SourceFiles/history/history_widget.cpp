@@ -1283,12 +1283,12 @@ void HistoryWidget::refreshTabbedPanel() {
 	} else if (_tabbedPanel && !_tabbedPanel->isSelectorStolen()) {
 		return;
 	}
-		if (_tabbedPanel) {
-			if (controller()->hasTabbedSelectorOwnership()) {
-				controller()->tabbedSelector()->setParent(_tabbedPanel.get());
-				return;
-			}
-				setTabbedPanel(nullptr);
+	if (_tabbedPanel) {
+		if (controller()->hasTabbedSelectorOwnership()) {
+			controller()->tabbedSelector()->setParent(_tabbedPanel.get());
+			return;
+		}
+		setTabbedPanel(nullptr);
 	}
 	if (controller()->hasTabbedSelectorOwnership()) {
 		createTabbedPanel();
@@ -3301,7 +3301,7 @@ void HistoryWidget::showHistory(
 		if (_autocomplete) {
 			_autocomplete->setCurrentPeer(_peer);
 		}
-				checkCharsCount();
+		checkCharsCount();
 		_send->finishAnimating();
 
 		updateControlsGeometry();
@@ -7482,7 +7482,7 @@ bool HistoryWidget::returnTabbedSelector() {
 	} else {
 		createTabbedPanel();
 	}
-		moveFieldControls();
+	moveFieldControls();
 	return true;
 }
 

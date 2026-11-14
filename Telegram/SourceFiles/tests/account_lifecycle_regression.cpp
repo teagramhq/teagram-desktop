@@ -11979,14 +11979,13 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 						  ->updateControlsGeometryStartsPendingRevealForRegressionTest(
 							  revealProbeItem);
 			}
-                        std::fprintf(
-                            stderr,
-                            "Pending reveal controls geometry: "
-                            "target_available=%d "
-                            "started=%d.\n",
-                            revealProbeHasView,
-                            result.pendingRevealStartedAfterControlsGeometry);
-                        showPeerHistoryMeasured(emptyFirstHistory);
+			std::fprintf(stderr,
+						 "Pending reveal controls geometry: "
+						 "target_available=%d "
+						 "started=%d.\n",
+						 revealProbeHasView,
+						 result.pendingRevealStartedAfterControlsGeometry);
+			showPeerHistoryMeasured(emptyFirstHistory);
 			settleHistoryUnfocused();
 			historyWidget->resetFieldAutocompleteForRegressionTest();
 			commandAutocompleteWasDeferred
@@ -12515,15 +12514,14 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		Core::App().settings().setAdaptiveForWide(true);
 		controller->adaptive().setChatLayout(
 			Window::Adaptive::ChatLayout::Wide);
-                const auto layoutWidth =
-                    firstHistory->layoutWidthForRegressionTest();
-                if (layoutWidth > 0 && controller->adaptive().isChatWide()) {
-                  firstHistory->resizeToWidth(layoutWidth, true);
-                }
-                result.historyChatModeInitiallyWide =
-                    (layoutWidth > 0) && controller->adaptive().isChatWide() &&
-                    firstHistory->layoutChatWideForRegressionTest();
-                result.historyChatModeResizeCountBefore
+		const auto layoutWidth = firstHistory->layoutWidthForRegressionTest();
+		if (layoutWidth > 0 && controller->adaptive().isChatWide()) {
+			firstHistory->resizeToWidth(layoutWidth, true);
+		}
+		result.historyChatModeInitiallyWide
+			= (layoutWidth > 0) && controller->adaptive().isChatWide()
+			  && firstHistory->layoutChatWideForRegressionTest();
+		result.historyChatModeResizeCountBefore
 			= firstHistory->layoutFullResizeCountForRegressionTest();
 		controller->showPeerHistory(secondHistory);
 		const auto switchedToSecondHistory = WaitForRegressionCondition(
@@ -12572,50 +12570,50 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		controller->adaptive().setChatLayout(originalChatLayout);
 		QCoreApplication::processEvents();
 	}
-        auto chatSwitchSchedulerTimeline =
-            Core::UiStallWatchdog::RecentSchedulerSamplesForTesting();
-        const auto chatSwitchSamplingSettled = [&] {
-          chatSwitchSchedulerTimeline =
-              Core::UiStallWatchdog::RecentSchedulerSamplesForTesting();
-          for (const auto &window : chatSwitchWindows) {
-			  if ((window.durationNanoseconds >= kMaxChatSwitchNanoseconds)
-				  && SchedulerTraceForInterval(window,
-											   chatSwitchSchedulerTimeline)
-						 .capturePending) {
-				  return false;
-			  }
-		  }
-          return true;
-        };
-		const auto chatSwitchSamplingCompleted
-			= chatSwitchSamplingSettled()
-			  || WaitForRegressionCondition(chatSwitchSamplingSettled, 1000);
-		if (!chatSwitchSamplingCompleted) {
-			std::fprintf(stderr, "Chat switch scheduler capture did not "
-								 "complete within 1000 ms.\n");
+	auto chatSwitchSchedulerTimeline
+		= Core::UiStallWatchdog::RecentSchedulerSamplesForTesting();
+	const auto chatSwitchSamplingSettled = [&] {
+		chatSwitchSchedulerTimeline
+			= Core::UiStallWatchdog::RecentSchedulerSamplesForTesting();
+		for (const auto &window : chatSwitchWindows) {
+			if ((window.durationNanoseconds >= kMaxChatSwitchNanoseconds)
+				&& SchedulerTraceForInterval(window,
+											 chatSwitchSchedulerTimeline)
+					   .capturePending) {
+				return false;
+			}
 		}
-        chatSwitchSchedulerTimeline =
-            Core::UiStallWatchdog::RecentSchedulerSamplesForTesting();
-        auto chatSwitchSchedulerSamples = std::vector<SchedulerTraceWindow>();
+		return true;
+	};
+	const auto chatSwitchSamplingCompleted
+		= chatSwitchSamplingSettled()
+		  || WaitForRegressionCondition(chatSwitchSamplingSettled, 1000);
+	if (!chatSwitchSamplingCompleted) {
+		std::fprintf(stderr, "Chat switch scheduler capture did not "
+							 "complete within 1000 ms.\n");
+	}
+	chatSwitchSchedulerTimeline
+		= Core::UiStallWatchdog::RecentSchedulerSamplesForTesting();
+	auto chatSwitchSchedulerSamples = std::vector<SchedulerTraceWindow>();
 	chatSwitchSchedulerSamples.reserve(chatSwitchWindows.size());
 	result.chatSwitchWorkWithinBudget
 		= chatSwitchCpuClockAvailable && !chatSwitchWindows.empty();
 	for (auto i = 0U; i != chatSwitchWindows.size(); ++i) {
-          const auto schedulerSamples = SchedulerTraceForInterval(
-              chatSwitchWindows[i], chatSwitchSchedulerTimeline);
-          chatSwitchSchedulerSamples.push_back(schedulerSamples);
-          const auto &schedulerTrace = schedulerSamples.trace;
-          const auto &schedulerSampleOffsetsNanoseconds =
-              schedulerSamples.sampleOffsetsNanoseconds;
-          const auto estimate = EstimateMainThreadWork(
-              chatSwitchWindows[i].mainThreadWorkNanoseconds,
-              chatSwitchWindows[i].durationNanoseconds, schedulerTrace,
-              schedulerSampleOffsetsNanoseconds);
-          if (i > 0) {
-            result.maxChatSwitchEstimatedWorkNanoseconds =
-                std::max(result.maxChatSwitchEstimatedWorkNanoseconds,
-                         estimate.estimatedWorkNanoseconds);
-          }
+		const auto schedulerSamples = SchedulerTraceForInterval(
+			chatSwitchWindows[i], chatSwitchSchedulerTimeline);
+		chatSwitchSchedulerSamples.push_back(schedulerSamples);
+		const auto &schedulerTrace = schedulerSamples.trace;
+		const auto &schedulerSampleOffsetsNanoseconds
+			= schedulerSamples.sampleOffsetsNanoseconds;
+		const auto estimate = EstimateMainThreadWork(
+			chatSwitchWindows[i].mainThreadWorkNanoseconds,
+			chatSwitchWindows[i].durationNanoseconds, schedulerTrace,
+			schedulerSampleOffsetsNanoseconds);
+		if (i > 0) {
+			result.maxChatSwitchEstimatedWorkNanoseconds
+				= std::max(result.maxChatSwitchEstimatedWorkNanoseconds,
+						   estimate.estimatedWorkNanoseconds);
+		}
 		if (i == 0) {
 			result.initialHistorySelectionBlockedNanoseconds
 				= estimate.blockedNanoseconds;
@@ -12737,33 +12735,32 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 			  kMaxSchedulerProofOtherThreadWorkNanoseconds);
 	const auto schedulerEvidenceRecords
 		= Core::UiStallWatchdog::RecentStallEvidenceForTesting();
-        const auto attachMenuSchedulerTimeline =
-            Core::UiStallWatchdog::RecentSchedulerSamplesForTesting();
-        auto attachMenuWorkSeen = std::array<bool, 4>();
+	const auto attachMenuSchedulerTimeline
+		= Core::UiStallWatchdog::RecentSchedulerSamplesForTesting();
+	auto attachMenuWorkSeen = std::array<bool, 4>();
 	for (const auto &callback : attachMenuCallbacks) {
-          const auto schedulerSamples =
-              SchedulerTraceForInterval(callback, attachMenuSchedulerTimeline);
-          const auto estimate = EstimateMainThreadWork(
-              callback.mainThreadWorkNanoseconds, callback.durationNanoseconds,
-              schedulerSamples.trace,
-              schedulerSamples.sampleOffsetsNanoseconds);
-          qint64 *destination = nullptr;
-          bool *seen = nullptr;
-          if (callback.label == u"first hover callback"_q) {
-            destination = &result.attachMenuFirstHoverEstimatedWorkNanoseconds;
-            seen = &attachMenuWorkSeen[0];
-          } else if (callback.label == u"cached hover callback"_q) {
-            destination = &result.attachMenuHoverEstimatedWorkNanoseconds;
-            seen = &attachMenuWorkSeen[1];
-          } else if (callback.label == u"invalidation hover callback"_q) {
-            destination =
-                &result.attachMenuInvalidationEstimatedWorkNanoseconds;
-            seen = &attachMenuWorkSeen[2];
-          } else if (callback.label.startsWith(u"uncached peer "_q)) {
-            destination =
-                &result.attachMenuUncachedPeerEstimatedWorkNanoseconds;
-            seen = &attachMenuWorkSeen[3];
-          }
+		const auto schedulerSamples
+			= SchedulerTraceForInterval(callback, attachMenuSchedulerTimeline);
+		const auto estimate = EstimateMainThreadWork(
+			callback.mainThreadWorkNanoseconds, callback.durationNanoseconds,
+			schedulerSamples.trace, schedulerSamples.sampleOffsetsNanoseconds);
+		qint64 *destination = nullptr;
+		bool *seen = nullptr;
+		if (callback.label == u"first hover callback"_q) {
+			destination = &result.attachMenuFirstHoverEstimatedWorkNanoseconds;
+			seen = &attachMenuWorkSeen[0];
+		} else if (callback.label == u"cached hover callback"_q) {
+			destination = &result.attachMenuHoverEstimatedWorkNanoseconds;
+			seen = &attachMenuWorkSeen[1];
+		} else if (callback.label == u"invalidation hover callback"_q) {
+			destination
+				= &result.attachMenuInvalidationEstimatedWorkNanoseconds;
+			seen = &attachMenuWorkSeen[2];
+		} else if (callback.label.startsWith(u"uncached peer "_q)) {
+			destination
+				= &result.attachMenuUncachedPeerEstimatedWorkNanoseconds;
+			seen = &attachMenuWorkSeen[3];
+		}
 		if (destination && seen) {
 			if (!*seen) {
 				*destination = estimate.estimatedWorkNanoseconds;
