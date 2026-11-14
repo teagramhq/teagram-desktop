@@ -3120,6 +3120,18 @@ class LocalEndpointRefreshDiscoveryStub final {
 		|| !storedKeyIsRetained() || !pausedRequestIsRefused()) {
 		return fail("an undecryptable proof changed the pin, key, or requests");
 	}
+	AccountLifecycleRegressionAccess::cancelEndpointRefresh(*account);
+	if (!AccountLifecycleRegressionAccess::discoverCurrentEndpoint(*account)
+		|| !AccountLifecycleRegressionAccess::endpointVerificationPending(
+			*account)
+		|| !AccountLifecycleRegressionAccess::endpointRefreshPending(*account)
+		|| mtp.isServerEnrollmentNetworkAllowed()
+		|| !mtp.hasCallback(acceptedRequestId) || callbackCount != 0
+		|| !MTP::SameCustomServerPin(original, mtp.dcOptions().customServer())
+		|| !storedKeyIsRetained() || !pausedRequestIsRefused()) {
+		return fail(
+			"rediscovering the original endpoint skipped its proof while paused");
+	}
 	if (!retryRefresh()) {
 		return fail("the retry did not wait for a second proof");
 	}

@@ -1311,7 +1311,8 @@ void Account::serverEndpointRefreshDiscovered(
 		}
 		return;
 	}
-	if (MTP::SameCustomServerEndpoint(current, *candidate)) {
+	if (MTP::SameCustomServerEndpoint(current, *candidate)
+		&& _mtp->isServerEnrollmentNetworkAllowed()) {
 		_serverEndpointRefreshFailures = 0;
 		cancelServerEndpointRefresh();
 		return;
