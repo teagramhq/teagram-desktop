@@ -12523,7 +12523,7 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		originalChatLayoutCaptured = true;
 	}
 	if (originalChatLayoutCaptured) {
-		auto *mainWindowWidget = window->widget();
+		const auto mainWindowWidget = window->widget();
 		const auto originalWindowSize = mainWindowWidget->size();
 		Core::App().settings().setAdaptiveForWide(false);
 		controller->adaptive().setChatLayout(
