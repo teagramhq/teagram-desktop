@@ -11481,8 +11481,10 @@ struct CacheChatSwitchRegressionResult final {
 	bool chatSwitchComposeUiReused = false;
 	bool historyChatModeInitiallyWide = false;
 	bool historyChatModeChangedWhileHidden = false;
+	bool historyChatModeLayoutWideAfter = false;
 	int historyChatModeResizeCountBefore = -1;
 	int historyChatModeResizeCountAfter = -1;
+	bool chatSwitchTransitionsSettled = true;
 	bool initialHistorySelectionSchedulerPreemptionProven = false;
 	bool dialogHistoriesReady = false;
 	bool syntheticHistoriesReady = false;
@@ -11543,6 +11545,24 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		return result;
 	}
 	historyWidget->clearFieldFocusForRegressionTest();
+	historyWidget->setDraftTextForRegressionTest(QString());
+	historyWidget->hideFieldAutocompleteForRegressionTest();
+	historyWidget->resetFieldAutocompleteForRegressionTest();
+	const auto settleHistoryUnfocused = [&] {
+		const auto settled = WaitForRegressionCondition(
+			[&] {
+				return historyWidget
+					->historyTransitionFinishedForRegressionTest();
+			},
+			1500);
+		result.chatSwitchTransitionsSettled
+			= result.chatSwitchTransitionsSettled && settled;
+		QCoreApplication::processEvents();
+		historyWidget->clearFieldFocusForRegressionTest();
+		QCoreApplication::processEvents();
+		historyWidget->clearFieldFocusForRegressionTest();
+		return settled;
+	};
 	auto chatSwitchWindows = std::vector<MainThreadWorkInterval>();
 	auto chatSwitchCpuClockAvailable = true;
 	auto chatSwitchProcessCpuClockAvailable = true;
@@ -11615,27 +11635,35 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		return wallDurationNanoseconds;
 	};
 	showPeerHistoryMeasured(emptyFirstHistory);
-	QCoreApplication::processEvents();
+	settleHistoryUnfocused();
 	constexpr auto kWarmupChatSwitches = 8;
 	for (auto i = 0; i != kWarmupChatSwitches; ++i) {
 		const auto target = (i % 2) ? firstHistory : secondHistory;
 		showPeerHistoryMeasured(target);
-		QCoreApplication::processEvents();
+		settleHistoryUnfocused();
 	}
 	for (const auto &target : {emptyFirstHistory, emptySecondHistory}) {
 		showPeerHistoryMeasured(target);
-		QCoreApplication::processEvents();
+		settleHistoryUnfocused();
 	}
 	showPeerHistoryMeasured(firstHistory);
-	QCoreApplication::processEvents();
-	const auto autocompleteBuildsBeforeFocus
-		= historyWidget->fieldAutocompleteBuildCountForRegressionTest();
-	const auto autocompleteDeferredUntilFocus
-		= (autocompleteBuildsBeforeFocus == 0);
+	settleHistoryUnfocused();
+	historyWidget->setDraftTextForRegressionTest(QString());
+	historyWidget->hideFieldAutocompleteForRegressionTest();
+	historyWidget->resetFieldAutocompleteForRegressionTest();
 	const auto commandBotId = UserId(1081);
 	const auto commandBot = data.processUsers(MTP_vector<MTPUser>({
 		RegressionBotUser(commandBotId),
 	}));
+	auto startedBotHistory = false;
+	auto menuButtonVisible = false;
+	auto menuAutocompleteWasDeferred = false;
+	auto menuClickedUnfocused = false;
+	auto menuCommandsShown = false;
+	auto commandStartVisible = false;
+	auto commandAutocompleteWasDeferred = false;
+	auto startClickedUnfocused = false;
+	auto startCommandsShown = false;
 	if (commandBot && commandBot->botInfo) {
 		commandBot->botInfo->commands.push_back({
 			.command = u"help"_q,
@@ -11651,77 +11679,122 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 			RegressionPlainTextMessage(10'810'001, session.userPeerId(),
 									   peerFromUser(commandBotId), u"/start"_q),
 		}));
-		const auto startedBotHistory
-			= !commandBotHistory->isEmpty()
-			  && (commandBotHistory->lastMessage() != nullptr)
-			  && commandBotHistory->isReadyFor(ShowAtTheEndMsgId);
+		startedBotHistory = !commandBotHistory->isEmpty()
+							&& (commandBotHistory->lastMessage() != nullptr)
+							&& commandBotHistory->isReadyFor(ShowAtTheEndMsgId);
 		if (startedBotHistory) {
-			historyWidget->clearFieldFocusForRegressionTest();
-			historyWidget->resetFieldAutocompleteForRegressionTest();
 			showPeerHistoryMeasured(commandBotHistory);
-			QCoreApplication::processEvents();
-			historyWidget->clearFieldFocusForRegressionTest();
-			const auto menuAutocompleteWasDeferred
+			settleHistoryUnfocused();
+			historyWidget->resetFieldAutocompleteForRegressionTest();
+			menuAutocompleteWasDeferred
 				= (historyWidget->fieldAutocompletePeerForRegressionTest()
 				   == nullptr)
+				  && !historyWidget->fieldFocusedForRegressionTest()
 				  && (historyWidget
 						  ->fieldAutocompleteBuildCountForRegressionTest()
 					  == 0);
-			const auto menuClickedUnfocused
-				= historyWidget->clickBotMenuForRegressionTest();
-			QCoreApplication::processEvents();
-			const auto menuCommandsShown
+			menuButtonVisible = WaitForRegressionCondition(
+				[&] {
+					return historyWidget
+						->botMenuButtonVisibleForRegressionTest();
+				},
+				1000);
+			menuClickedUnfocused
+				= menuButtonVisible
+				  && historyWidget->clickBotMenuForRegressionTest();
+			menuCommandsShown
 				= menuClickedUnfocused
-				  && historyWidget
-						 ->fieldAutocompleteSuggestionsReadyForRegressionTest();
+				  && WaitForRegressionCondition(
+					  [&] {
+						  return historyWidget
+							  ->fieldAutocompleteSuggestionsReadyForRegressionTest();
+					  },
+					  1000);
 			historyWidget->hideFieldAutocompleteForRegressionTest();
 			historyWidget->setDraftTextForRegressionTest(QString());
-			historyWidget->resetFieldAutocompleteForRegressionTest();
 			showPeerHistoryMeasured(emptyFirstHistory);
-			QCoreApplication::processEvents();
-			historyWidget->clearFieldFocusForRegressionTest();
-			const auto commandAutocompleteWasDeferred
+			settleHistoryUnfocused();
+			historyWidget->resetFieldAutocompleteForRegressionTest();
+			commandAutocompleteWasDeferred
 				= (historyWidget->fieldAutocompletePeerForRegressionTest()
 				   == nullptr)
+				  && !historyWidget->fieldFocusedForRegressionTest()
 				  && (historyWidget
 						  ->fieldAutocompleteBuildCountForRegressionTest()
 					  == 0);
-			const auto startClickedUnfocused
-				= historyWidget->clickBotCommandStartForRegressionTest();
-			QCoreApplication::processEvents();
-			const auto startCommandsShown
+			commandStartVisible = WaitForRegressionCondition(
+				[&] {
+					return historyWidget
+						->botCommandStartVisibleForRegressionTest();
+				},
+				1000);
+			startClickedUnfocused
+				= commandStartVisible
+				  && historyWidget->clickBotCommandStartForRegressionTest();
+			startCommandsShown
 				= startClickedUnfocused
-				  && historyWidget
-						 ->fieldAutocompleteSuggestionsReadyForRegressionTest();
+				  && WaitForRegressionCondition(
+					  [&] {
+						  return historyWidget
+							  ->fieldAutocompleteSuggestionsReadyForRegressionTest();
+					  },
+					  1000);
 			result.botCommandsShownWhileFieldUnfocused
 				= menuAutocompleteWasDeferred && menuCommandsShown
 				  && commandAutocompleteWasDeferred && startCommandsShown;
 			historyWidget->hideFieldAutocompleteForRegressionTest();
 			historyWidget->setDraftTextForRegressionTest(QString());
-			historyWidget->resetFieldAutocompleteForRegressionTest();
 			showPeerHistoryMeasured(firstHistory);
-			QCoreApplication::processEvents();
+			settleHistoryUnfocused();
+			historyWidget->resetFieldAutocompleteForRegressionTest();
 		}
 	}
+	const auto autocompleteBuildsBeforeFocus
+		= historyWidget->fieldAutocompleteBuildCountForRegressionTest();
+	const auto autocompleteDeferredUntilFocus
+		= (autocompleteBuildsBeforeFocus == 0)
+		  && (historyWidget->fieldAutocompletePeerForRegressionTest()
+			  == nullptr)
+		  && !historyWidget->fieldFocusedForRegressionTest();
 	historyWidget->focusFieldForRegressionTest();
-	QCoreApplication::processEvents();
+	WaitForRegressionCondition(
+		[&] {
+			return (historyWidget
+						->fieldAutocompleteBuildCountForRegressionTest()
+					== 1)
+				   && (historyWidget->fieldAutocompletePeerForRegressionTest()
+					   == firstHistory->peer.get())
+				   && historyWidget->fieldFocusedForRegressionTest();
+		},
+		1000);
 	const auto autocompleteBuildsAfterFocus
 		= historyWidget->fieldAutocompleteBuildCountForRegressionTest();
 	const auto autocompletePeerMatchesAfterFocus
 		= (historyWidget->fieldAutocompletePeerForRegressionTest()
 		   == firstHistory->peer.get());
+	const auto autocompleteFocusedAfterFocus
+		= historyWidget->fieldFocusedForRegressionTest();
 	historyWidget->setDraftTextForRegressionTest(u"@"_q);
-	QCoreApplication::processEvents();
-	result.fieldAutocompleteSuggestionsReady
-		= historyWidget->fieldAutocompleteSuggestionsReadyForRegressionTest();
+	result.fieldAutocompleteSuggestionsReady = WaitForRegressionCondition(
+		[&] {
+			return historyWidget
+				->fieldAutocompleteSuggestionsReadyForRegressionTest();
+		},
+		1000);
 	historyWidget->setDraftTextForRegressionTest(QString());
 	historyWidget->hideFieldAutocompleteForRegressionTest();
 	const auto tabbedPanelBuildsBeforeSwitch
 		= historyWidget->tabbedPanelBuildCountForRegressionTest();
 	showPeerHistoryMeasured(secondHistory);
-	QCoreApplication::processEvents();
+	settleHistoryUnfocused();
 	showPeerHistoryMeasured(firstHistory);
-	QCoreApplication::processEvents();
+	settleHistoryUnfocused();
+	WaitForRegressionCondition(
+		[&] {
+			return historyWidget->fieldAutocompletePeerForRegressionTest()
+				   == firstHistory->peer.get();
+		},
+		1000);
 	const auto autocompleteBuildsAfterSwitch
 		= historyWidget->fieldAutocompleteBuildCountForRegressionTest();
 	const auto autocompletePeerMatches
@@ -11731,28 +11804,51 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		= historyWidget->tabbedPanelBuildCountForRegressionTest();
 	result.chatSwitchComposeUiReused
 		= autocompleteDeferredUntilFocus && (autocompleteBuildsAfterFocus == 1)
-		  && autocompletePeerMatchesAfterFocus
+		  && autocompletePeerMatchesAfterFocus && autocompleteFocusedAfterFocus
 		  && (autocompleteBuildsAfterSwitch == autocompleteBuildsAfterFocus)
-		  && autocompletePeerMatches
-		  && (tabbedPanelBuildsAfterSwitch == tabbedPanelBuildsBeforeSwitch);
+		  && autocompletePeerMatches && result.chatSwitchTransitionsSettled;
 	std::fprintf(
 		stderr,
 		"Chat switch compose UI reuse: autocomplete_builds_before_focus=%d "
 		"autocomplete_deferred_until_focus=%d "
 		"autocomplete_builds_after_focus=%d "
 		"autocomplete_builds_after=%d autocomplete_peer_matches=%d "
-		"tabbed_panel_builds_before=%d tabbed_panel_builds_after=%d.\n",
+		"autocomplete_focused_after_focus=%d "
+		"tabbed_panel_builds_before=%d tabbed_panel_builds_after=%d "
+		"transitions_settled=%d.\n",
 		autocompleteBuildsBeforeFocus, autocompleteDeferredUntilFocus,
 		autocompleteBuildsAfterFocus, autocompleteBuildsAfterSwitch,
-		autocompletePeerMatches, tabbedPanelBuildsBeforeSwitch,
-		tabbedPanelBuildsAfterSwitch);
-	if (const auto unread = firstHistory->firstUnreadMessage();
-		unread && unread->data()->mainView()) {
+		autocompletePeerMatches, autocompleteFocusedAfterFocus,
+		tabbedPanelBuildsBeforeSwitch, tabbedPanelBuildsAfterSwitch,
+		result.chatSwitchTransitionsSettled);
+	std::fprintf(
+		stderr,
+		"Bot command controls while field unfocused: started_history=%d "
+		"menu_button_visible=%d menu_autocomplete_deferred=%d "
+		"menu_clicked=%d menu_suggestions_shown=%d "
+		"start_button_visible=%d start_autocomplete_deferred=%d "
+		"start_clicked=%d start_suggestions_shown=%d.\n",
+		startedBotHistory, menuButtonVisible, menuAutocompleteWasDeferred,
+		menuClickedUnfocused, menuCommandsShown, commandStartVisible,
+		commandAutocompleteWasDeferred, startClickedUnfocused,
+		startCommandsShown);
+	const auto revealProbeItem
+		= firstHistory->firstUnreadMessage()
+			  ? firstHistory->firstUnreadMessage()->data()
+			  : firstHistory->lastMessage();
+	const auto revealProbeHasView
+		= revealProbeItem && revealProbeItem->mainView();
+	if (revealProbeHasView) {
 		result.pendingRevealStartedAfterControlsGeometry
 			= historyWidget
 				  ->updateControlsGeometryStartsPendingRevealForRegressionTest(
-					  unread->data());
+					  revealProbeItem);
 	}
+	std::fprintf(stderr,
+				 "Pending reveal controls geometry: target_available=%d "
+				 "started=%d.\n",
+				 revealProbeHasView,
+				 result.pendingRevealStartedAfterControlsGeometry);
 	auto slowAttachMenuCallbacks = std::vector<MainThreadWorkInterval>();
 	auto attachMenuCallbacks = std::vector<MainThreadWorkInterval>();
 	const auto collectSlowAttachMenuCallbacks = [&](const QString &label) {
@@ -12242,24 +12338,55 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 			originalWindowSize.height());
 		QCoreApplication::processEvents();
 		Core::App().settings().setAdaptiveForWide(true);
-		QCoreApplication::processEvents();
-		result.historyChatModeInitiallyWide
-			= controller->adaptive().isChatWide();
+		result.historyChatModeInitiallyWide = WaitForRegressionCondition(
+			[&] {
+				return controller->adaptive().isChatWide()
+					   && firstHistory->layoutChatWideForRegressionTest();
+			},
+			1500);
 		result.historyChatModeResizeCountBefore
 			= firstHistory->layoutFullResizeCountForRegressionTest();
 		controller->showPeerHistory(secondHistory);
-		QCoreApplication::processEvents();
+		const auto switchedToSecondHistory = WaitForRegressionCondition(
+			[&] {
+				return historyWidget
+					->historyTransitionFinishedForRegressionTest();
+			},
+			1500);
+		result.chatSwitchTransitionsSettled
+			= result.chatSwitchTransitionsSettled && switchedToSecondHistory;
 		Core::App().settings().setAdaptiveForWide(false);
-		QCoreApplication::processEvents();
+		const auto changedToNormalWhileSecondHistoryVisible
+			= WaitForRegressionCondition(
+				[&] { return !controller->adaptive().isChatWide(); }, 1500);
 		result.historyChatModeChangedWhileHidden
-			= result.historyChatModeInitiallyWide
-			  && !controller->adaptive().isChatWide();
+			= result.historyChatModeInitiallyWide && switchedToSecondHistory
+			  && changedToNormalWhileSecondHistoryVisible
+			  && firstHistory->layoutChatWideForRegressionTest()
+			  && (firstHistory->layoutFullResizeCountForRegressionTest()
+				  == result.historyChatModeResizeCountBefore);
 		controller->showPeerHistory(firstHistory);
-		QCoreApplication::processEvents();
+		const auto returnedToFirstHistoryAndResized
+			= WaitForRegressionCondition(
+				[&] {
+					return historyWidget
+							   ->historyTransitionFinishedForRegressionTest()
+						   && !firstHistory->layoutChatWideForRegressionTest()
+						   && (firstHistory
+								   ->layoutFullResizeCountForRegressionTest()
+							   > result.historyChatModeResizeCountBefore);
+				},
+				1500);
+		result.chatSwitchTransitionsSettled
+			= result.chatSwitchTransitionsSettled
+			  && returnedToFirstHistoryAndResized;
 		result.historyChatModeResizeCountAfter
 			= firstHistory->layoutFullResizeCountForRegressionTest();
+		result.historyChatModeLayoutWideAfter
+			= firstHistory->layoutChatWideForRegressionTest();
 		result.historyChatModeInvalidationRebuilt
 			= result.historyChatModeChangedWhileHidden
+			  && returnedToFirstHistoryAndResized
 			  && (result.historyChatModeResizeCountAfter
 				  > result.historyChatModeResizeCountBefore);
 		Core::App().settings().setAdaptiveForWide(originalAdaptiveForWide);
@@ -13467,11 +13594,14 @@ void RunAuthenticatedCacheSymlinkCases(
 							 "wide_before=%d "
 							 "changed_while_hidden=%d "
 							 "full_resize_before=%d "
-							 "full_resize_after=%d rebuilt=%d.\n",
+							 "full_resize_after=%d layout_wide_after=%d "
+							 "transitions_settled=%d rebuilt=%d.\n",
 							 chatSwitch.historyChatModeInitiallyWide,
 							 chatSwitch.historyChatModeChangedWhileHidden,
 							 chatSwitch.historyChatModeResizeCountBefore,
 							 chatSwitch.historyChatModeResizeCountAfter,
+							 chatSwitch.historyChatModeLayoutWideAfter,
+							 chatSwitch.chatSwitchTransitionsSettled,
 							 chatSwitch.historyChatModeInvalidationRebuilt);
 				std::fprintf(
 					stderr,

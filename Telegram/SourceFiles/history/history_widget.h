@@ -310,6 +310,9 @@ public:
 	void resetFieldAutocompleteForRegressionTest();
 	[[nodiscard]] bool clickBotMenuForRegressionTest();
 	[[nodiscard]] bool clickBotCommandStartForRegressionTest();
+	[[nodiscard]] bool botMenuButtonVisibleForRegressionTest() const;
+	[[nodiscard]] bool botCommandStartVisibleForRegressionTest() const;
+	[[nodiscard]] bool historyTransitionFinishedForRegressionTest() const;
 	void hideFieldAutocompleteForRegressionTest();
 	void sendForRegressionTest(Api::SendOptions options);
 	void chooseReactionForRegressionTest(FullMsgId context,
@@ -333,6 +336,7 @@ public:
 	[[nodiscard]] int attachMenuCacheSizeForRegressionTest() const;
 	[[nodiscard]] int fieldAutocompleteBuildCountForRegressionTest() const;
 	[[nodiscard]] PeerData *fieldAutocompletePeerForRegressionTest() const;
+	[[nodiscard]] bool fieldFocusedForRegressionTest() const;
 	[[nodiscard]] bool
 	fieldAutocompleteSuggestionsReadyForRegressionTest() const;
 	[[nodiscard]] int tabbedPanelBuildCountForRegressionTest() const;

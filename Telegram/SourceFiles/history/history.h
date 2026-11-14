@@ -295,6 +295,9 @@ public:
 	[[nodiscard]] int layoutFullResizeCountForRegressionTest() const {
 		return _layoutFullResizeCount;
 	}
+	[[nodiscard]] bool layoutChatWideForRegressionTest() const {
+		return _layoutChatWide;
+	}
 
 	void itemRemoved(not_null<HistoryItem*> item);
 	void itemVanished(not_null<HistoryItem*> item);

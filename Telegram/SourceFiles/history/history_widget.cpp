@@ -6895,6 +6895,10 @@ PeerData *HistoryWidget::fieldAutocompletePeerForRegressionTest() const {
 	return _autocomplete ? _autocomplete->currentPeer() : nullptr;
 }
 
+bool HistoryWidget::fieldFocusedForRegressionTest() const {
+	return _field->hasFocus();
+}
+
 bool HistoryWidget::fieldAutocompleteSuggestionsReadyForRegressionTest() const {
 	return _autocomplete && !_autocomplete->isHidden()
 		   && (_autocomplete->width() == _scroll->width())
@@ -6921,6 +6925,18 @@ bool HistoryWidget::clickBotCommandStartForRegressionTest() {
 	}
 	_botCommandStart->clicked(Qt::NoModifier, Qt::LeftButton);
 	return !_field->hasFocus();
+}
+
+bool HistoryWidget::botMenuButtonVisibleForRegressionTest() const {
+	return _botMenu.button && !_botMenu.button->isHidden();
+}
+
+bool HistoryWidget::botCommandStartVisibleForRegressionTest() const {
+	return !_botCommandStart->isHidden();
+}
+
+bool HistoryWidget::historyTransitionFinishedForRegressionTest() const {
+	return !_showAnimation;
 }
 
 int HistoryWidget::tabbedPanelBuildCountForRegressionTest() const {
@@ -8750,7 +8766,11 @@ void HistoryWidget::updateHistoryGeometry(bool initial, bool loadedDown,
 	const auto wasScrollTop = _scroll->scrollTop();
 	const auto wasAtBottom = (wasScrollTop >= _scroll->scrollTopMax());
 	const auto needResize = (_scroll->width() != newScrollWidth)
-		|| (_scroll->height() != newScrollHeight);
+							|| (_scroll->height() != newScrollHeight);
+	const auto chatWide = controller()->adaptive().isChatWide();
+	const auto needsHistoryLayoutResize
+		= _history->needsResizeFor(newScrollWidth, chatWide)
+		  || (_migrated && _migrated->needsResizeFor(newScrollWidth, chatWide));
 	if (needResize) {
 		_scroll->resize(newScrollWidth, newScrollHeight);
 		// on initial updateListSize we didn't put the _scroll->scrollTop
@@ -8790,8 +8810,9 @@ void HistoryWidget::updateHistoryGeometry(bool initial, bool loadedDown,
 		return;
 	}
 
-	if (listChanged || needResize || hasPendingResizedItems()
-		|| !_itemRevealPending.empty() || _updateHistoryGeometryRequired) {
+	if (listChanged || needResize || needsHistoryLayoutResize
+		|| hasPendingResizedItems() || !_itemRevealPending.empty()
+		|| _updateHistoryGeometryRequired) {
 		updateListSize();
 	}
 	_updateHistoryGeometryRequired = false;
