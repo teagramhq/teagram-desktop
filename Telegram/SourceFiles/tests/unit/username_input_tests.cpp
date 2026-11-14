@@ -18,6 +18,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include <QtCore/QCoreApplication>
 #include <QtCore/QResource>
+#include <QtCore/QTimer>
 #include <QtGui/QAccessible>
 #include <QtGui/QClipboard>
 #include <QtGui/QFontMetrics>
@@ -139,7 +140,7 @@ TEST_CASE(RawFontFixedWidthRejectsMissingGlyphs) {
 			 int(std::ceil(metrics.horizontalAdvance(missing))));
 }
 
-TEST_CASE(CustomGposFontKeepsShapedFixedWidths) {
+TEST_CASE(CustomGposWidthsStayShapedAfterWorkerRetries) {
 	const auto application
 		= qobject_cast<QApplication *>(QCoreApplication::instance());
 	CHECK(application != nullptr);
@@ -154,13 +155,17 @@ TEST_CASE(CustomGposFontKeepsShapedFixedWidths) {
 	CHECK(!raw.fontTable("GPOS").isEmpty());
 	CHECK(!style::internal::RawFixedMetricWidth(font, u"..."_q).has_value());
 
+	auto eventProcessed = false;
+	style::internal::SetMetricsWorkerStartFailuresForTests(2);
 	style::internal::SetShapedMetricsDeferred(true);
 	auto owned = style::internal::OwnedFont(u"Vazirmatn UI NL"_q, 0, 16);
 	CHECK_EQ(owned->spacew, 0);
 	CHECK_EQ(owned->elidew, 0);
+	QTimer::singleShot(1, [&] { eventProcessed = true; });
 	style::internal::ResolveDeferredShapedMetrics();
 	style::internal::SetShapedMetricsDeferred(false);
 
+	CHECK(eventProcessed);
 	const auto &metrics = owned->metrics();
 	CHECK_EQ(owned->spacew, int(std::ceil(metrics.horizontalAdvance(u" "_q))));
 	CHECK_EQ(owned->elidew,
