@@ -167,6 +167,7 @@ public:
 	// not be written. This marker is independent of the config blob and must
 	// survive a restart before any network or account request is admitted.
 	bool writeMtpAuthorizationFailure();
+	void writeMtpAuthorizationFailureAsync(Fn<void(bool)> done);
 	bool writeMtpData(bool sync = false);
 	bool writeMtpConfig(bool sync = false);
 	void writeEndpointRefreshRecord(const MTP::Config &original,
@@ -180,7 +181,8 @@ public:
 	void recoverEndpointRefreshConfigAsync(
 		std::unique_ptr<MTP::Config> current, std::vector<MTP::AuthKeyPtr> keys,
 		bool restoredSession, Fn<void(std::unique_ptr<MTP::Config>)> done);
-	void prepareEndpointRefreshLogout(Fn<void(bool)> done);
+	void prepareEndpointRefreshLogout(Fn<void(bool)> done,
+									  Fn<void()> intentDurable = nullptr);
 	void clearEndpointRefreshRecords(Fn<void(bool)> done = nullptr);
 	void finishEndpointRefreshLogout(Fn<void(bool)> done);
 	void reset(Fn<void(bool)> done);

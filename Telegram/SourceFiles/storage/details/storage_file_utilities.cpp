@@ -19,6 +19,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <QtCore/QMetaObject>
 #include <QtCore/QtEndian>
 #include <QtCore/QSaveFile>
+#include <deque>
 #include <vector>
 
 namespace Storage {
@@ -99,6 +100,7 @@ private:
 
 #if defined(TDESKTOP_LIFECYCLE_REGRESSION) || defined(TDESKTOP_UNIT_TESTS)
 Fn<bool()> EndpointConfigWriteHook;
+std::deque<Fn<bool()>> PreparedWriteHooks;
 #endif
 
 WriteManager::WriteManager(crl::weak_on_thread<WriteManager> weak)
@@ -290,11 +292,18 @@ void AsyncWriteManager::writeBatchWithResult(std::vector<WriteEntry> entries,
 	if (!_manager) {
 		_manager.emplace();
 	}
-	_manager->with([entries = std::move(entries),
-					done = std::move(done)](WriteManager &manager) mutable {
-		auto success = true;
+	auto hook = Fn<bool()>();
+#if defined(TDESKTOP_LIFECYCLE_REGRESSION) || defined(TDESKTOP_UNIT_TESTS)
+	if (!PreparedWriteHooks.empty()) {
+		hook = std::move(PreparedWriteHooks.front());
+		PreparedWriteHooks.pop_front();
+	}
+#endif
+	_manager->with([entries = std::move(entries), done = std::move(done),
+					hook = std::move(hook)](WriteManager &manager) mutable {
+		auto success = !hook || hook();
 		for (auto &entry : entries) {
-			if (!manager.writeSync(std::move(entry))) {
+			if (!success || !manager.writeSync(std::move(entry))) {
 				success = false;
 				break;
 			}
@@ -358,6 +367,13 @@ AsyncWriteManager Manager;
 #if defined(TDESKTOP_LIFECYCLE_REGRESSION) || defined(TDESKTOP_UNIT_TESTS)
 void SetEndpointConfigWriteHookForRegressionTest(Fn<bool()> hook) {
 	EndpointConfigWriteHook = std::move(hook);
+}
+
+void SetPreparedWriteHooksForTest(std::vector<Fn<bool()>> hooks) {
+	PreparedWriteHooks.clear();
+	for (auto &hook : hooks) {
+		PreparedWriteHooks.push_back(std::move(hook));
+	}
 }
 #endif
 

@@ -3587,7 +3587,8 @@ PrepareSyntheticStockAccountForRegression(not_null<Main::Account *> account) {
 [[nodiscard]] bool
 RestartDomain(Main::Domain &domain,
 			  LifecycleWriteCountsForRegressionTest *teardownWriteCounts
-			  = nullptr) {
+			  = nullptr,
+			  Fn<void()> beforeStart = nullptr) {
 	auto &app = Core::App();
 	const auto applicationWindows = [&] {
 		auto result = std::vector<Window::Controller *>();
@@ -3614,6 +3615,9 @@ RestartDomain(Main::Domain &domain,
 		*teardownWriteCounts = GetLifecycleWriteCountsForRegressionTest();
 	}
 	Storage::details::Sync();
+	if (beforeStart) {
+		beforeStart();
+	}
 	if (domain.start(QByteArray()) != Storage::StartResult::Success
 		|| !WaitForRegressionCondition([&] { return domain.started(); })
 		|| domain.accounts().empty()) {
@@ -4499,6 +4503,7 @@ RunCacheVersionMarkerRewriteRegression(Main::Domain &domain, UserId selfId,
 	}
 	struct State {
 		QSemaphore mainUpdateQueued;
+		QSemaphore logoutMarkerQueued;
 		bool completed = false;
 		bool callbackOnMain = false;
 		std::optional<Storage::Cache::Error> error;
@@ -4506,6 +4511,12 @@ RunCacheVersionMarkerRewriteRegression(Main::Domain &domain, UserId selfId,
 	const auto state = std::make_shared<State>();
 	data.setCacheClearHandoffForTesting(
 		mediaCache, [state] { state->mainUpdateQueued.release(); });
+	guarded->forcedLogOut();
+	Storage::details::RunOnStorageWorker(
+		[state] { state->logoutMarkerQueued.release(); });
+	if (!state->logoutMarkerQueued.tryAcquire(1, 10000)) {
+		return false;
+	}
 	data.clearCacheDatabase(
 		mediaCache, false, [state](Storage::Cache::Error error) {
 			state->callbackOnMain = QThread::currentThread()
@@ -4517,8 +4528,8 @@ RunCacheVersionMarkerRewriteRegression(Main::Domain &domain, UserId selfId,
 	const auto accessStayedBlocked = mainUpdateQueued
 									 && data.cacheAllowedForTesting(mediaCache)
 									 && (cacheIfAllowed() == nullptr);
-	guarded->forcedLogOut();
-	const auto sessionDestroyed = !guarded->sessionExists();
+	const auto sessionDestroyed
+		= WaitForRegressionCondition([&] { return !guarded->sessionExists(); });
 	auto cacheDatabase = Core::App().databases().get(
 		guarded->local().cachePath(), guarded->local().cacheSettings());
 	auto mediaCacheDatabase
@@ -4606,7 +4617,8 @@ RunLogoutBeforeCacheInitializationRegression(Main::Domain &domain,
 	const auto initializationPending
 		= !data.cacheInitializationFinishedForTesting(mediaCache);
 	guarded->forcedLogOut();
-	const auto sessionDestroyed = !guarded->sessionExists();
+	const auto sessionDestroyed
+		= WaitForRegressionCondition([&] { return !guarded->sessionExists(); });
 	auto cacheDatabase = Core::App().databases().get(
 		guarded->local().cachePath(), guarded->local().cacheSettings());
 	auto mediaCacheDatabase
@@ -4941,6 +4953,217 @@ FindAuthorizationBlockedAccount(const Main::Domain &domain) {
 		   && second->mtp().isServerEnrollmentNetworkAllowed();
 }
 
+[[nodiscard]] bool ProxyRotationWaitsForRestoredAccounts(Main::Domain &domain) {
+	const auto secondUserId = UserId(377208);
+	const auto second = domain.add(MTP::Environment::Production);
+	if (!WaitForRegressionCondition([&] { return !second->startPending(); })
+		|| !ConfigurePinnedServer(second, RegressionServerKey())) {
+		return false;
+	}
+	second->mtp().dcPersistentKeyChanged(2, RegressionAuthKey(0x41));
+	second->setSessionUserId(secondUserId);
+	if (!second->createSession(RegressionUser(secondUserId, true, QString()),
+							   std::make_unique<Main::SessionSettings>())) {
+		return false;
+	}
+	second->mtp().resume();
+	auto &settings = Core::App().settings().proxy();
+	const auto saved = settings.serialize();
+	const auto restoreSettings = gsl::finally([&] {
+		settings.setFromSerialized(saved);
+		Core::App().proxyRotationSettingsChanged();
+	});
+	const auto selected = MTP::ProxyData{
+		.type = MTP::ProxyData::Type::Socks5,
+		.host = u"127.0.0.1"_q,
+		.port = 32761,
+	};
+	const auto alternate = MTP::ProxyData{
+		.type = MTP::ProxyData::Type::Socks5,
+		.host = u"127.0.0.1"_q,
+		.port = 32762,
+	};
+	settings.setList({selected, alternate});
+	settings.setSelected(selected);
+	settings.setSettings(MTP::ProxyData::Settings::Enabled);
+	settings.setProxyRotationEnabled(true);
+	const auto release = std::make_shared<QSemaphore>();
+	const auto waiting = std::make_shared<std::atomic<bool>>(false);
+	const auto cleanup = gsl::finally([=] {
+		release->release();
+		Storage::details::SetPreparedWriteHooksForTest({});
+	});
+	auto checkedWhileStarting = false;
+	auto probe = QTimer();
+	QObject::connect(&probe, &QTimer::timeout, [&] {
+		if (!waiting->load() || domain.started() || !domain.starting()) {
+			return;
+		}
+		for (const auto &entry : domain.accounts()) {
+			if (entry.account->sessionExists()) {
+				Core::App().checkProxyRotation(entry.account.get(),
+											   MTP::DisconnectedState);
+				domain.removeRedundantAccounts();
+				checkedWhileStarting = true;
+				release->release();
+				return;
+			}
+		}
+	});
+	probe.start(1);
+	const auto restarted = RestartDomain(domain, nullptr, [=] {
+		Storage::details::SetPreparedWriteHooksForTest({
+			[] { return true; },
+			[=] {
+				waiting->store(true);
+				const auto released = release->tryAcquire(1, 10'000);
+				waiting->store(false);
+				return released;
+			},
+		});
+	});
+	probe.stop();
+	if (!restarted || !checkedWhileStarting
+		|| !domain.active().sessionExists()) {
+		return false;
+	}
+	Core::App().checkProxyRotation(&domain.active(), MTP::DisconnectedState);
+	for (const auto &entry : domain.accounts()) {
+		if (entry.account->sessionExists()
+			&& entry.account->session().userId() == secondUserId) {
+			const auto weak = base::make_weak(entry.account.get());
+			entry.account->forcedLogOut();
+			return WaitForRegressionCondition(
+				[&] {
+					const auto account = weak.get();
+					return !account || !account->loggingOut();
+				},
+				10'000);
+		}
+	}
+	return false;
+}
+
+[[nodiscard]] bool FailedStartupMarkerSurvivesRestart(Main::Domain &domain) {
+	const auto dataName = u"main-3772-startup-marker-"_q
+						  + QString::number(qlonglong(crl::now()));
+	const auto localKey = RegressionAuthKey(0x77);
+	const auto userId = UserId(377209);
+	auto account = std::make_unique<Main::Account>(&domain, dataName, 0);
+	auto config = account->prepareToStart(localKey);
+	if (!config) {
+		config = std::make_unique<MTP::Config>(MTP::Environment::Production);
+	}
+	account->start(std::move(config));
+	if (!WaitForRegressionCondition([&] { return !account->startPending(); })
+		|| !ConfigurePinnedServer(not_null<Main::Account *>(account.get()),
+								  RegressionServerKey())) {
+		return false;
+	}
+	account->mtp().dcPersistentKeyChanged(2, RegressionAuthKey(0x42));
+	account->setSessionUserId(userId);
+	if (!account->createSession(RegressionUser(userId, true, QString()),
+								std::make_unique<Main::SessionSettings>())) {
+		return false;
+	}
+	account->mtp().resume();
+	account.reset();
+	Storage::details::Sync();
+	const auto clearFailure = gsl::finally([] {
+		qunsetenv("TDESKTOP_FAIL_MTP_AUTHORIZATION_WRITE");
+		Storage::details::SetPreparedWriteHooksForTest({});
+	});
+	qputenv("TDESKTOP_FAIL_MTP_AUTHORIZATION_WRITE", "1");
+	Storage::details::SetPreparedWriteHooksForTest({[] { return false; }});
+	auto failed = std::make_unique<Main::Account>(&domain, dataName, 0);
+	auto recovered = failed->prepareToStart(localKey);
+	failed->start(std::move(recovered));
+	if (!WaitForRegressionCondition([&] { return !failed->startPending(); })
+		|| failed->sessionExists()
+		|| !failed->local().mtpAuthorizationWriteFailed()) {
+		return false;
+	}
+	qunsetenv("TDESKTOP_FAIL_MTP_AUTHORIZATION_WRITE");
+	failed.reset();
+	Storage::details::Sync();
+	auto restarted = std::make_unique<Main::Account>(&domain, dataName, 0);
+	recovered = restarted->prepareToStart(localKey);
+	restarted->start(std::move(recovered));
+	return WaitForRegressionCondition(
+			   [&] { return !restarted->startPending(); })
+		   && !restarted->sessionExists()
+		   && restarted->local().mtpAuthorizationWriteFailed()
+		   && restarted->mtp().dcOptions().blocked();
+}
+
+[[nodiscard]] bool LogoutMarkerFailureDoesNotComplete(Main::Domain &domain) {
+	const auto dataName = u"main-3772-logout-marker-"_q
+						  + QString::number(qlonglong(crl::now()));
+	const auto localKey = RegressionAuthKey(0x76);
+	const auto userId = UserId(377207);
+	auto account = std::make_unique<Main::Account>(&domain, dataName, 0);
+	auto config = account->prepareToStart(localKey);
+	if (!config) {
+		config = std::make_unique<MTP::Config>(MTP::Environment::Production);
+	}
+	account->start(std::move(config));
+	if (!WaitForRegressionCondition([&] { return !account->startPending(); })
+		|| !ConfigurePinnedServer(not_null<Main::Account *>(account.get()),
+								  RegressionServerKey())) {
+		return false;
+	}
+	auto proofData = MTP::AuthKey::Data();
+	std::fill(proofData.begin(), proofData.end(), static_cast<gsl::byte>(0x33));
+	const auto proof = std::make_shared<MTP::AuthKey>(
+		MTP::AuthKey::Type::ReadFromFile, 2, proofData);
+	account->mtp().dcPersistentKeyChanged(2, proof);
+	account->setSessionUserId(userId);
+	if (!account->createSession(RegressionUser(userId, true, QString()),
+								std::make_unique<Main::SessionSettings>())) {
+		return false;
+	}
+	account->mtp().resume();
+	auto original = MTP::Config(account->mtp().config());
+	auto candidate = MTP::Config(original);
+	const auto originalPin = original.customServer();
+	auto candidatePin = originalPin;
+	candidatePin.ip = "127.0.0.2";
+	if (!candidate.dcOptions().refreshCustomServerEndpoint(originalPin,
+														   candidatePin)) {
+		return false;
+	}
+	const auto committed = std::make_shared<std::optional<bool>>();
+	account->local().writeEndpointRefreshRecord(
+		original, candidate, proof, true,
+		[committed](bool success) { *committed = success; });
+	if (!WaitForRegressionCondition([&] { return committed->has_value(); })
+		|| !committed->value_or(false)) {
+		return false;
+	}
+	Storage::details::SetEndpointConfigWriteHookForRegressionTest(
+		[] { return false; });
+	const auto clearHook = gsl::finally([] {
+		Storage::details::SetEndpointConfigWriteHookForRegressionTest(nullptr);
+	});
+	account->forcedLogOut();
+	if (!WaitForRegressionCondition([&] {
+			return !AccountLifecycleRegressionAccess::logoutCleanupPending(
+				*account);
+		})
+		|| !account->loggingOut() || !account->sessionExists()
+		|| account->mtp().isServerEnrollmentNetworkAllowed()) {
+		return false;
+	}
+	account.reset();
+	Storage::details::Sync();
+	auto restarted = std::make_unique<Main::Account>(&domain, dataName, 0);
+	auto recovered = restarted->prepareToStart(localKey);
+	restarted->start(std::move(recovered));
+	return WaitForRegressionCondition(
+			   [&] { return !restarted->startPending(); })
+		   && restarted->sessionExists();
+}
+
 [[nodiscard]] bool LogoutDuringEndpointWriteRestarts(Main::Domain &domain) {
 	const auto dataName
 		= u"main-3772-logout-"_q + QString::number(qlonglong(crl::now()));
@@ -5016,7 +5239,7 @@ FindAuthorizationBlockedAccount(const Main::Domain &domain) {
 	QTimer::singleShot(0, [&] {
 		account->mtp().resume();
 		responsive = waiting->load() && account->loggingOut()
-					 && !account->sessionExists()
+					 && account->sessionExists()
 					 && !account->mtp().isServerEnrollmentNetworkAllowed()
 					 && !account->createSession(
 						 RegressionUser(UserId(377205), true, QString()),
@@ -9834,7 +10057,7 @@ bool RegressionBoxCloseEventTrace::eventFilter(QObject *watched,
 	}
 	const auto deferredAccountWeak = base::make_weak(deferred.get());
 	deferred->forcedLogOut();
-	if (!diedSessionWeak.empty()) {
+	if (!WaitForRegressionCondition([&] { return diedSessionWeak.empty(); })) {
 		std::fprintf(
 			stderr,
 			"Mini-app open regression: teardown kept the session alive with a "
@@ -17900,6 +18123,10 @@ RunAiComposeApplyHandlerRegression(not_null<Window::Controller *> window,
 	const auto accountPath
 		= QFileInfo(discardedServerCacheBindingFiles.front()).absolutePath();
 	discarded->forcedLogOut();
+	if (!WaitForRegressionCondition(
+			[&] { return !discarded->sessionExists(); })) {
+		return failPrerequisite("logout did not finish session teardown");
+	}
 	if (discarded->local().telegramStickerBotToken()) {
 		return failPrerequisite("logout retained the Telegram bot token");
 	}
@@ -20191,7 +20418,21 @@ RunAiComposeApplyHandlerRegression(not_null<Window::Controller *> window,
 		return failAccountLifecycle("logout did not clear a pending endpoint "
 									"write before re-enrollment");
 	}
+	if (!LogoutMarkerFailureDoesNotComplete(domain)) {
+		return failAccountLifecycle("logout marker failure completed a session "
+									"before clearing its saved authorization");
+	}
+	if (!FailedStartupMarkerSurvivesRestart(domain)) {
+		return failAccountLifecycle(
+			"authorization failure marker did not survive "
+			"a failed preferences write and restart");
+	}
 	endpointRefreshDiscovery.close();
+	if (!ProxyRotationWaitsForRestoredAccounts(domain)) {
+		return failAccountLifecycle("proxy rotation ran before the restored "
+									"accounts were activated");
+	}
+	active = not_null<Main::Account *>(&domain.active());
 
 	const auto teardownFailureKey = RegressionAuthKey(0x33);
 	active->mtp().dcPersistentKeyChanged(2, teardownFailureKey);

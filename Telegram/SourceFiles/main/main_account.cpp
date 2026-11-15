@@ -442,13 +442,11 @@ void Account::finishRestoredStartup(bool persisted) {
 			_mtp->dcOptions().constructBlocked();
 		}
 		_session.reset();
-		Storage::details::PrepareWritesAsync(
-			[=] { return _local->writeMtpAuthorizationFailure(); },
+		_local->writeMtpAuthorizationFailureAsync(
 			crl::guard(this, [=](bool marked) {
 				if (!marked) {
-					LOG(("MTP Error: could not persist the authorization "
-						 "failure "
-						 "marker; keeping the account blocked."));
+					LOG(("MTP Error: could not persist all authorization "
+						 "failure state; keeping the account blocked."));
 				}
 				finishPendingStartup();
 			}));
@@ -971,7 +969,9 @@ bool Account::startMtp(
 	}) | rpl::on_next([=] {
 		*writingKeys = true;
 		Ui::PostponeCall(_mtp.get(), [=] {
-			local().writeMtpData();
+			if (!_loggingOut) {
+				local().writeMtpData();
+			}
 			*writingKeys = false;
 		});
 	}, _mtp->lifetime());
@@ -1151,23 +1151,26 @@ void Account::loggedOut() {
 	if (_mtp) {
 		_mtp->holdForServerEnrollment();
 	}
+	discardStaleAuthorizationState();
 	local().forgetTelegramStickerBotTokenForLogout();
-	local().prepareEndpointRefreshLogout(crl::guard(this, [=](bool prepared) {
-		if (!prepared) {
-			finishLogoutCleanup(false);
-			return;
-		}
-		local().clearTelegramStickerBotTokenAsync(
-			crl::guard(this, [=](bool cleared) {
-				if (cleared) {
-					continueLogoutCleanup();
-				} else {
-					finishLogoutCleanup(false);
-				}
-			}));
-	}));
+	local().prepareEndpointRefreshLogout(
+		crl::guard(this,
+				   [=](bool prepared) {
+					   if (!prepared) {
+						   finishLogoutCleanup(false);
+						   return;
+					   }
+					   local().clearTelegramStickerBotTokenAsync(
+						   crl::guard(this, [=](bool cleared) {
+							   if (cleared) {
+								   continueLogoutCleanup();
+							   } else {
+								   finishLogoutCleanup(false);
+							   }
+						   }));
+				   }),
+		crl::guard(this, [=] { destroySession(DestroyReason::LoggedOut); }));
 	Media::Player::mixer()->stopAndClear();
-	destroySession(DestroyReason::LoggedOut);
 }
 
 void Account::continueLogoutCleanup() {
@@ -1303,7 +1306,9 @@ void Account::destroyMtpKeys(MTP::AuthKeysList &&keys) {
 		crl::on_main(this, [=] {
 			_mtpForKeysDestroy = nullptr;
 			_mtpForKeysDestroyPin.reset();
-			local().writeMtpData();
+			if (!_loggingOut) {
+				local().writeMtpData();
+			}
 		});
 	}, _mtpForKeysDestroy->lifetime());
 }

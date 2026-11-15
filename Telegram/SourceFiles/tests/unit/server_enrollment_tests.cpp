@@ -1723,6 +1723,45 @@ TEST_CASE(PostAuthAuthorizationCommitFailureKeepsSessionClosed) {
 	CHECK(restarted->mtpAuthorizationWriteFailed());
 }
 
+TEST_CASE(RestoredAuthorizationFailureMarkerSurvivesPreferenceWriteFailure) {
+	QTemporaryDir directory;
+	CHECK(directory.isValid());
+	if (!directory.isValid()) {
+		return;
+	}
+	const auto basePath = directory.path() + u"/account/"_q;
+	const auto key = MakeEnrollmentStorageKey();
+	const auto token = Core::TelegramBotToken::Create(
+		u"12345:AbCdEf0123456789012345678901234567890"_q);
+	CHECK(token.has_value());
+	if (!token) {
+		return;
+	}
+	auto account = MakeEnrollmentStorageAccount(basePath, key);
+	CHECK(account->writeTelegramStickerBotToken(*token));
+	const auto prefsKey = Storage::AccountTestPeer::PrefsKey(*account);
+	const auto prefsFile
+		= basePath + Storage::details::ToFilePart(prefsKey) + 's';
+	CHECK(prefsKey != 0);
+	CHECK(QFile::remove(prefsFile));
+	CHECK(QDir().mkdir(prefsFile));
+	const auto result = std::make_shared<std::optional<bool>>();
+	account->writeMtpAuthorizationFailureAsync(
+		[result](bool success) { *result = success; });
+	auto timeout = QElapsedTimer();
+	timeout.start();
+	while (!result->has_value() && timeout.elapsed() < 5'000) {
+		QCoreApplication::processEvents();
+		QThread::msleep(1);
+	}
+	CHECK(result->has_value() && !result->value_or(true));
+	CHECK(QFileInfo::exists(basePath + u"mtp_authorization_write_faileds"_q));
+	account.reset();
+	auto restarted = MakeEnrollmentStorageAccount(basePath, key);
+	restarted->readMtpAuthorizationFailureMarkerForTest();
+	CHECK(restarted->mtpAuthorizationWriteFailed());
+}
+
 TEST_CASE(CleanTeardownAuthorizationCommitFailureKeepsLastState) {
 	QTemporaryDir directory;
 	CHECK(directory.isValid());
@@ -2562,6 +2601,77 @@ TEST_CASE(LogoutClearsDelayedEndpointWritesBeforeReenrollment) {
 	if (recovered) {
 		CHECK(SameCustomServerPin(nextServer, recovered->customServer()));
 	}
+}
+
+TEST_CASE(LogoutMarkerWriteFailureKeepsAuthorizationUntilRetry) {
+	QTemporaryDir directory;
+	CHECK(directory.isValid());
+	if (!directory.isValid()) {
+		return;
+	}
+	const auto previousDirectory = QDir::currentPath();
+	const auto changedDirectory = QDir::setCurrent(directory.path());
+	CHECK(changedDirectory);
+	if (!changedDirectory) {
+		return;
+	}
+	const auto restoreDirectory
+		= gsl::finally([&] { QDir::setCurrent(previousDirectory); });
+	const auto path = directory.path() + u"/account/"_q;
+	const auto key = MakeEnrollmentStorageKey();
+	const auto proof = MakeEndpointRefreshAuthKey(0x3A);
+	const auto first = MakeEndpointRefreshPin("100.124.236.66");
+	const auto next = MakeEndpointRefreshPin("100.112.103.90");
+	auto config = std::make_shared<MTP::Config>(MTP::Environment::Production);
+	CHECK(config->dcOptions().setCustomServer(first));
+	CHECK(config->dcOptions().markAuthorized(first.dcId));
+	auto candidate = MTP::Config(*config);
+	CHECK(candidate.dcOptions().refreshCustomServerEndpoint(first, next));
+	const auto serialized = QByteArray("stored authorization");
+	auto account = std::make_unique<Storage::Account>(
+		path, key, config, true, [serialized] { return serialized; });
+	CHECK(account->writeMtpConfig(true));
+	CHECK(account->writeMtpData(true));
+	const auto committed = std::make_shared<std::optional<bool>>();
+	account->writeEndpointRefreshRecord(
+		*config, candidate, proof, true,
+		[committed](bool success) { *committed = success; });
+	auto timeout = QElapsedTimer();
+	timeout.start();
+	while (!committed->has_value() && timeout.elapsed() < 5'000) {
+		QCoreApplication::processEvents();
+		QThread::msleep(1);
+	}
+	CHECK(committed->value_or(false));
+	Storage::details::SetEndpointConfigWriteHookForRegressionTest(
+		[] { return false; });
+	const auto result = std::make_shared<std::optional<bool>>();
+	auto logoutCompleted = false;
+	account->prepareEndpointRefreshLogout(
+		[result](bool success) { *result = success; },
+		[&] { logoutCompleted = true; });
+	timeout.restart();
+	while (!result->has_value() && timeout.elapsed() < 5'000) {
+		QCoreApplication::processEvents();
+		QThread::msleep(1);
+	}
+	CHECK(result->has_value() && !result->value_or(true));
+	CHECK(!logoutCompleted);
+	CHECK(!QFileInfo::exists(path + u"mtp_endpoint_refresh_logouts"_q));
+	account.reset();
+	auto restored = QByteArray("not read");
+	auto read = false;
+	auto restarted = Storage::Account(
+		path, key, config, true, [] { return QByteArray(); },
+		[&](const QByteArray &value) {
+			read = true;
+			restored = value;
+		});
+	restarted.readMtpDataForTest();
+	CHECK(read);
+	CHECK_EQ(restored, serialized);
+	CHECK(restarted.recoverEndpointRefreshConfig(
+		std::make_unique<MTP::Config>(*config), {proof}, true));
 }
 
 TEST_CASE(LogoutJournalRemovalFailureBlocksRestartAndReenrollment) {

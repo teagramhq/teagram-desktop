@@ -159,7 +159,11 @@ void Domain::activateAfterStarting() {
 	}
 
 	activate(toActivate);
-	removePasscodeIfEmpty();
+	if (_removeRedundantAfterStarting) {
+		removeRedundantAccounts();
+	} else {
+		removePasscodeIfEmpty();
+	}
 }
 
 const std::vector<Domain::AccountWithIndex> &Domain::accounts() const {
@@ -443,7 +447,11 @@ bool Domain::removePasscodeIfEmpty() {
 }
 
 void Domain::removeRedundantAccounts() {
-	Expects(started());
+	if (!started()) {
+		_removeRedundantAfterStarting = true;
+		return;
+	}
+	_removeRedundantAfterStarting = false;
 
 	const auto was = _accounts.size();
 	for (auto i = _accounts.begin(); i != _accounts.end();) {

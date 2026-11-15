@@ -371,6 +371,32 @@ bool Account::writeMtpAuthorizationFailure() {
 	return prefsWritten && markerWritten;
 }
 
+void Account::writeMtpAuthorizationFailureAsync(Fn<void(bool)> done) {
+	Expects(_localKey != nullptr && done != nullptr);
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+	Tests::RecordLifecycleWriteForRegressionTest(
+		Tests::LifecycleWriteForRegressionTest::AuthorizationFailureMarker);
+#endif
+	const auto alive = std::weak_ptr<char>(_endpointRecoveryLifetime);
+	_mtpAuthorizationWriteFailed = true;
+	EncryptedDescriptor marker(sizeof(quint32));
+	marker.stream << quint32(1);
+	FileWriteDescriptor file(kMtpAuthorizationWriteFailedFile, _basePath);
+	file.writeEncrypted(marker, _localKey);
+	file.finishAsync([=](bool markerWritten) {
+		if (alive.expired()) {
+			return;
+		}
+		writePref<bool>(kMtpAuthorizationWriteFailedPref, true);
+		details::PrepareWritesAsync([=] { return writePrefs(true); },
+									[=](bool prefsWritten) {
+										if (!alive.expired()) {
+											done(markerWritten && prefsWritten);
+										}
+									});
+	});
+}
+
 bool Account::writeMtpData(bool sync) {
 	Expects(_localKey != nullptr);
 
@@ -1404,7 +1430,8 @@ void Account::recoverEndpointRefreshConfigAsync(
 	});
 }
 
-void Account::prepareEndpointRefreshLogout(Fn<void(bool)> done) {
+void Account::prepareEndpointRefreshLogout(Fn<void(bool)> done,
+										   Fn<void()> intentDurable) {
 	Expects(_localKey != nullptr && done != nullptr);
 	const auto alive = std::weak_ptr<char>(_endpointRecoveryLifetime);
 	EncryptedDescriptor marker(sizeof(quint32));
@@ -1418,6 +1445,12 @@ void Account::prepareEndpointRefreshLogout(Fn<void(bool)> done) {
 		if (!marked) {
 			done(false);
 			return;
+		}
+		if (intentDurable) {
+			intentDurable();
+			if (alive.expired()) {
+				return;
+			}
 		}
 		const auto empty = QByteArray();
 		EncryptedDescriptor data(sizeof(quint32)

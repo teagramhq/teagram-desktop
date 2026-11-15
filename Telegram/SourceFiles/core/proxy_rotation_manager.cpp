@@ -32,6 +32,9 @@ ProxyRotationManager::ProxyRotationManager()
 		stopChecking();
 		reevaluate();
 	}, _lifetime);
+	App().domain().activeChanges()
+		| rpl::on_next([=](not_null<Main::Account *>) { reevaluate(); },
+					   _lifetime);
 }
 
 void ProxyRotationManager::settingsChanged() {
@@ -50,17 +53,17 @@ void ProxyRotationManager::handleConnectionStateChanged(
 
 bool ProxyRotationManager::shouldObserve() const {
 	const auto &settings = App().settings().proxy();
-	return settings.isEnabled()
-		&& settings.selected()
-		&& settings.proxyRotationEnabled()
-		&& (settings.list().size() > 1);
+	return App().domain().started() && settings.isEnabled()
+		   && settings.selected() && settings.proxyRotationEnabled()
+		   && (settings.list().size() > 1);
 }
 
 std::vector<not_null<Main::Account*>> ProxyRotationManager::productionAccounts() const {
 	auto result = std::vector<not_null<Main::Account*>>();
 	for (const auto &entry : App().domain().accounts()) {
 		const auto account = entry.account.get();
-		if (!account->sessionExists() || account->mtp().isTestMode()) {
+		if (!account->sessionExists() || account->loggingOut()
+			|| account->mtp().isTestMode()) {
 			continue;
 		}
 		result.push_back(account);
@@ -69,8 +72,8 @@ std::vector<not_null<Main::Account*>> ProxyRotationManager::productionAccounts()
 }
 
 not_null<Main::Account*> ProxyRotationManager::accountForChecks() const {
-	if (App().someSessionExists()
-		&& App().activeAccount().sessionExists()
+	if (App().someSessionExists() && App().activeAccount().sessionExists()
+		&& !App().activeAccount().loggingOut()
 		&& !App().activeAccount().mtp().isTestMode()) {
 		return &App().activeAccount();
 	}

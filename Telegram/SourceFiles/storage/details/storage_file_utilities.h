@@ -91,6 +91,7 @@ private:
 
 #if defined(TDESKTOP_LIFECYCLE_REGRESSION) || defined(TDESKTOP_UNIT_TESTS)
 void SetEndpointConfigWriteHookForRegressionTest(Fn<bool()> hook);
+void SetPreparedWriteHooksForTest(std::vector<Fn<bool()>> hooks);
 void SetEndpointRecoveryReadHookForTest(Fn<void()> hook);
 void SetEndpointRecoveryReadHooksForTest(std::vector<Fn<void()>> hooks);
 void SetEndpointRefreshRemovalHookForTest(Fn<bool()> hook);

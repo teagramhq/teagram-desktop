@@ -367,7 +367,6 @@ void Application::run() {
 	Ui::InitUsernameInputAccessibility();
 	Ui::InitTextOptions();
 	Ui::StartCachedCorners();
-	Ui::Emoji::Init();
 
 #if defined(TDESKTOP_LIFECYCLE_REGRESSION)
 	if (fontStartupRegression) {
@@ -376,6 +375,7 @@ void Application::run() {
 	}
 #endif // TDESKTOP_LIFECYCLE_REGRESSION
 
+	Ui::Emoji::Init();
 	Ui::PreloadTextSpoilerMask(_spoilerPreloadLifetime);
 	startShortcuts();
 	startEmojiImageLoader();

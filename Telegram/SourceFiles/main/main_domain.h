@@ -109,6 +109,7 @@ private:
 	int _lastActiveIndex = -1;
 	bool _writeAccountsScheduled = false;
 	bool _starting = false;
+	bool _removeRedundantAfterStarting = false;
 	rpl::event_stream<> _startFinished;
 
 	rpl::event_stream<Session*> _activeSessions;
