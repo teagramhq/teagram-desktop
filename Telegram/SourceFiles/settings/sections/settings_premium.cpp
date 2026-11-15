@@ -20,6 +20,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_peer_values.h"
 #include "data/data_session.h"
 #include "data/stickers/data_custom_emoji.h" // SerializeCustomEmojiId.
+#include "data/stickers/data_custom_emoji_policy.h"
 #include "data/stickers/data_stickers.h"
 #include "history/view/media/history_view_sticker.h" // EmojiSize.
 #include "history/view/media/history_view_sticker_player.h"
@@ -1847,10 +1848,13 @@ void ShowGiftPremium(
 void ShowEmojiStatusPremium(
 		not_null<Window::SessionController*> controller,
 		not_null<PeerData*> peer) {
-	if (const auto unique = peer->emojiStatusId().collectible.get()) {
+	const auto id = peer->emojiStatusId();
+	if (const auto unique = id.collectible.get()) {
 		Core::ResolveAndShowUniqueGift(controller->uiShow(), unique->slug);
-	} else {
-		ShowPremium(controller, Ref::EmojiStatus::Serialize({ peer->id }));
+	} else if (Data::details::ShouldShowEmojiStatusPremiumPromo(
+				   peer->usesCustomServer(), peer->isUser(), id.documentId != 0,
+				   id.collectible != nullptr)) {
+		ShowPremium(controller, Ref::EmojiStatus::Serialize({peer->id}));
 	}
 }
 

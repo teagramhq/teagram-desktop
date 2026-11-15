@@ -140,6 +140,7 @@ PRIVATE
     tests/unit/debug_mode_tests.cpp
     tests/unit/edit_admin_rights_save_tests.cpp
     tests/unit/edit_peer_permissions_save_tests.cpp
+    tests/unit/emoji_status_promo_tests.cpp
     tests/unit/export_output_string_tests.cpp
     tests/unit/ffmpeg_frame_generator_tests.cpp
     tests/unit/ffmpeg_frame_storage_tests.cpp

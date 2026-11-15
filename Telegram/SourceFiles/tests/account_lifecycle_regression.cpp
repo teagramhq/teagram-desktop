@@ -169,7 +169,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/widgets/popup_menu.h"
 #include "ui/click_handler.h"
 #include "ui/item_text_options.h"
+#include "ui/painter.h"
 #include "ui/style/style_core_scale.h"
+#include "ui/unread_badge.h"
 #include "ui/ui_utility.h"
 #include "window/window_controller.h"
 #include "window/window_main_menu.h"
@@ -180,6 +182,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "styles/style_basic.h"
 #include "styles/style_chat.h"
+#include "styles/style_dialogs.h"
 #include "styles/style_info.h"
 #include "styles/style_settings.h"
 #include "styles/style_widgets.h"
@@ -22101,6 +22104,142 @@ void RunCustomEmojiUiSmoke(Fn<void(int)> done) {
 	QCoreApplication::processEvents();
 	if (remoteSender->emojiStatusId() != statusId || !badge.widget()) {
 		return fail("recipient did not render the received emoji status");
+	}
+	if (remoteSender->isPremium()
+		|| recipient->session().premiumBadgesShown()) {
+		return fail("recipient badge fixture unexpectedly enables Premium");
+	}
+	auto badgeImage = QImage(160, 30, QImage::Format_ARGB32_Premultiplied);
+	badgeImage.fill(Qt::transparent);
+	auto painter = Painter(&badgeImage);
+	auto chatBadge = Ui::PeerBadge();
+	const auto drawChatBadge = [&](bool allowEmoji) {
+		return chatBadge.drawGetWidth(
+			painter,
+			{
+				.peer = not_null<PeerData *>(remoteSender),
+				.rectForName = QRect(0, 0, 160, 30),
+				.nameWidth = 20,
+				.outerWidth = 160,
+				.verified = &st::dialogsVerifiedIcon,
+				.premium = allowEmoji ? &st::dialogsPremiumIcon.icon : nullptr,
+				.premiumFg = &st::dialogsVerifiedIconBg,
+				.customEmojiRepaint = [] {},
+			});
+	};
+	if (drawChatBadge(true) <= 0 || chatBadge.emojiStatusRect().isEmpty()) {
+		return fail("recipient chat badge did not render the emoji status");
+	}
+	recipient->session().api().updates().applyUpdateNoPtsCheck(
+		MTP_updateUserEmojiStatus(MTP_long(kSenderId.bare),
+								  MTP_emojiStatusEmpty()));
+	QCoreApplication::processEvents();
+	if (remoteSender->emojiStatusId()) {
+		return fail("recipient did not clear the received emoji status");
+	}
+	if (drawChatBadge(true) != 0 || !chatBadge.emojiStatusRect().isEmpty()) {
+		return fail("recipient chat badge retained the cleared emoji status");
+	}
+	recipient->session().api().updates().applyUpdateNoPtsCheck(
+		MTP_updateUserEmojiStatus(
+			MTP_long(kSenderId.bare),
+			MTP_emojiStatus(MTP_flags(0),
+							MTP_long(static_cast<int64>(kDocumentId)),
+							MTP_int(0))));
+	QCoreApplication::processEvents();
+	if (remoteSender->emojiStatusId() != statusId || drawChatBadge(true) <= 0
+		|| chatBadge.emojiStatusRect().isEmpty()) {
+		return fail("recipient chat badge did not restore the emoji status");
+	}
+	if (drawChatBadge(false) != 0 || !chatBadge.emojiStatusRect().isEmpty()) {
+		return fail("recipient chat badge retained a suppressed emoji status");
+	}
+	if (drawChatBadge(true) <= 0 || chatBadge.emojiStatusRect().isEmpty()) {
+		return fail("recipient chat badge did not redraw the emoji status");
+	}
+
+	if (emoji->sticker()->alt.isEmpty()
+		|| emoji->sticker()->set.id
+			   == sender->session()
+					  .data()
+					  .customEmojiManager()
+					  .coloredSetId()) {
+		return fail("contact status fixture is not a custom emoji");
+	}
+	const auto statusLabel = [](not_null<QWidget *> root) -> Ui::FlatLabel * {
+		for (const auto label : Test::FindAll<Ui::FlatLabel>(root)) {
+			if (&label->st() == &st::historyEmojiStatusInfoLabel) {
+				return label;
+			}
+		}
+		return nullptr;
+	};
+	const auto channel = sender->session().data().channel(ChannelId(724104));
+	PrepareRegressionChannel(channel);
+	channel->setBarSettings(PeerBarSettings(PeerBarSetting::ReportSpam));
+	channel->setEmojiStatus(statusId, 0);
+	auto channelParent = Ui::RpWidget(controller->widget().get());
+	channelParent.resize(400, 100);
+	channelParent.show();
+	auto channelStatus = HistoryView::ContactStatus(controller, &channelParent,
+													channel, false);
+	channelStatus.show();
+	const auto channelLabel = statusLabel(&channelParent);
+	if (!channelLabel
+		|| !WaitForRegressionCondition(
+			[&] {
+				return !channelLabel->accessibilityName().isEmpty()
+					   && channelLabel->isVisibleTo(&channelParent);
+			},
+			1000)) {
+		return fail("channel contact status promo fixture did not appear");
+	}
+	channelParent.hide();
+
+	recipientUser->setBarSettings(PeerBarSettings(PeerBarSetting::AddContact));
+	recipientUser->setEmojiStatus(statusId, 0);
+	auto contactParent = Ui::RpWidget(controller->widget().get());
+	contactParent.resize(400, 100);
+	contactParent.show();
+	auto contactStatus = HistoryView::ContactStatus(controller, &contactParent,
+													recipientUser, false);
+	contactStatus.show();
+	const auto contactLabel = statusLabel(&contactParent);
+	if (!contactLabel
+		|| !WaitForRegressionCondition(
+			[&] { return contactStatus.bar().height() > 0; }, 1000)) {
+		return fail("custom-server contact status bar did not appear");
+	}
+	if (!contactLabel->accessibilityName().isEmpty()
+		|| contactLabel->isVisibleTo(&contactParent)) {
+		return fail("custom-server contact status showed a Premium promo");
+	}
+	contactParent.hide();
+
+	controller->hideLayer(anim::type::instant);
+	QCoreApplication::processEvents();
+	if (sender->session().premiumPossible() || controller->isLayerShown()) {
+		return fail("status click promo fixture unexpectedly enables Premium");
+	}
+	const auto otherUser = sender->session().data().processUsers(
+		MTP_vector<MTPUser>({RegressionUser(UserId(724105), false, u"3"_q)}));
+	if (!otherUser || otherUser->emojiStatusId()) {
+		return fail("status click promo control user is invalid");
+	}
+	Settings::ShowEmojiStatusPremium(controller, otherUser);
+	if (!WaitForRegressionCondition([&] { return controller->isLayerShown(); },
+									1000)) {
+		return fail("status click promo control did not open");
+	}
+	controller->hideLayer(anim::type::instant);
+	if (!WaitForRegressionCondition([&] { return !controller->isLayerShown(); },
+									1000)) {
+		return fail("status click promo control did not close");
+	}
+	Settings::ShowEmojiStatusPremium(controller, recipientUser);
+	QCoreApplication::processEvents();
+	if (controller->isLayerShown()) {
+		return fail("custom-server status click showed a Premium promo");
 	}
 
 	std::fprintf(stderr, "Custom emoji UI smoke: PASS (message send, reaction "

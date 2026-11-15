@@ -95,4 +95,15 @@ EmojiStatusRequiresPremium(bool premium, bool customServer, bool collectible) {
 	return CustomEmojiRequiresPremium(premium, customServer && !collectible);
 }
 
+[[nodiscard]] constexpr bool
+ShouldShowEmojiStatusPremiumPromo(bool customServer, bool isUser,
+								  bool hasStatus, bool collectible) {
+	return !customServer || !isUser || !hasStatus || collectible;
+}
+
+[[nodiscard]] constexpr bool EmojiStatusVisibleForPeerBadge(
+	bool premiumBadgesShown, bool premiumPeerOrChannel, bool customServerUser) {
+	return customServerUser || (premiumBadgesShown && premiumPeerOrChannel);
+}
+
 } // namespace Data::details
