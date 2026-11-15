@@ -19,7 +19,7 @@ from urllib.request import urlopen
 
 FIXTURE = '41f14cb01791815af2b42667a04aec313d4a15ebe7ef6b0da3e4f884ec861e95'
 MANIFEST_SHA256 = 'a1e1286defa111a187c05237c5f743bb36572b439c20a76e824e7a9af2bfc32f'
-SERVER = '11aca52138df628f0ef9972e0583c768d12c221d'
+SERVER = '14fa2c5e047b1e4e258ad6f8212dbf0086abb580'
 RELEASE_URL = f'https://github.com/teagramhq/teagram-server/releases/download/perf-fixture-{FIXTURE}'
 PHASES = ('tool setup', 'download', 'postgres setup', 'restore 1x', 'restore 100x',
           'migrations', 'server build', 'server ready', 'cleanup')
