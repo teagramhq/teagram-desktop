@@ -173,8 +173,6 @@ private:
 	bool _applicationCreated = false;
 	std::atomic_bool _fontStartupQuitObserved = false;
 	std::atomic_bool _fontEnumerationOverlapped = false;
-	std::atomic_int _fontEnumerationsStarted = 0;
-	std::atomic_int _fontEnumerationsFinished = 0;
 	std::unique_ptr<QWindow> _fontStartupWindow;
 	std::thread _fontDatabaseWarmupThread;
 #endif // Q_OS_MAC

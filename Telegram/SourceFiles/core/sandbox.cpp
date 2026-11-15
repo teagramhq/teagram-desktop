@@ -68,6 +68,10 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #ifdef Q_OS_MAC
 #include <cstdio>
+#include <dlfcn.h>
+#include <execinfo.h>
+#include <pthread.h>
+#include <signal.h>
 #include <functional>
 #include <chrono>
 #include <system_error>
@@ -91,12 +95,68 @@ constexpr auto kFontStartupSplashExposureTimeout = 1000;
 #endif // Q_OS_MAC
 
 #ifdef Q_OS_MAC
+constexpr auto kProbeMaxFrames = 64;
+void *ProbeFrames[kProbeMaxFrames];
+std::atomic_int ProbeDepth = -1;
+
+void ProbeSignal(int) {
+	ProbeDepth.store(backtrace(ProbeFrames, kProbeMaxFrames),
+					 std::memory_order_release);
+}
+
+[[nodiscard]] bool InstallProbeSignal() {
+	struct sigaction action = {};
+	action.sa_handler = ProbeSignal;
+	sigemptyset(&action.sa_mask);
+	action.sa_flags = SA_RESTART;
+	return sigaction(SIGUSR1, &action, nullptr) == 0;
+}
+
+[[nodiscard]] bool StackInSystemEnumeration() {
+	for (auto i = 0; i != ProbeDepth.load(std::memory_order_acquire); ++i) {
+		auto info = Dl_info();
+		if (!dladdr(ProbeFrames[i], &info) || !info.dli_sname) {
+			continue;
+		}
+		const auto name = QByteArray(info.dli_sname);
+		if (name.contains("CTFontManagerCopyAvailableFontFamilyNames")
+			|| name.contains("populateFontDatabase")
+			|| name.contains("populateFromDescriptor")) {
+			return true;
+		}
+	}
+	return false;
+}
+
+// Signals the worker and inspects its stack, so overlap is recorded only when
+// a system family enumeration frame is executing at that moment. Sampling is
+// retried while the worker keeps enumerating.
+[[nodiscard]] bool WorkerInSystemEnumeration(pthread_t worker) {
+	using Clock = std::chrono::steady_clock;
+	const auto deadline = Clock::now() + std::chrono::seconds(2);
+	while (Clock::now() < deadline) {
+		ProbeDepth.store(-1, std::memory_order_release);
+		if (pthread_kill(worker, SIGUSR1) != 0) {
+			return false;
+		}
+		const auto wait = Clock::now() + std::chrono::milliseconds(50);
+		while (ProbeDepth.load(std::memory_order_acquire) < 0
+			   && Clock::now() < wait) {
+			std::this_thread::yield();
+		}
+		if (StackInSystemEnumeration()) {
+			return true;
+		}
+		std::this_thread::sleep_for(std::chrono::milliseconds(1));
+	}
+	return false;
+}
+
 // Repeats a real system font-family enumeration: registering an application
 // font invalidates the Qt font database, so the next families() call
-// enumerates the system families again. The quit is requested once the first
-// enumeration has begun, and the loop runs until aboutToQuit has fired.
-void EnumerateUntilQuit(std::atomic_int &started, std::atomic_int &finished,
-						const std::atomic_bool &quitObserved,
+// enumerates the system families again. The quit is requested once the loop
+// starts, and the loop runs until aboutToQuit has sampled the worker stack.
+void EnumerateUntilQuit(const std::atomic_bool &quitObserved,
 						const std::function<void()> &requestQuit) {
 	using Clock = std::chrono::steady_clock;
 	const auto files = QDir(u":/gui/fonts/"_q).entryInfoList();
@@ -105,7 +165,6 @@ void EnumerateUntilQuit(std::atomic_int &started, std::atomic_int &finished,
 	const auto deadline = Clock::now() + std::chrono::seconds(10);
 	auto requested = false;
 	while (!quitObserved && Clock::now() < deadline) {
-		++started;
 		if (!requested) {
 			requested = true;
 			requestQuit();
@@ -121,7 +180,6 @@ void EnumerateUntilQuit(std::atomic_int &started, std::atomic_int &finished,
 		if (id >= 0) {
 			QFontDatabase::removeApplicationFont(id);
 		}
-		++finished;
 	}
 }
 
@@ -575,10 +633,13 @@ void Sandbox::startFontDatabaseWarmup() {
 	if (quitRegression) {
 		// The worker requests the real quit as its first repeated
 		// enumeration begins and keeps enumerating until aboutToQuit has
-		// run. aboutToQuit records whether an enumeration was active.
+		// sampled its stack for a system enumeration frame.
+		if (!InstallProbeSignal()) {
+			fprintf(stderr, "Font shutdown regression: probe=unavailable\n");
+		}
 		connect(this, &QCoreApplication::aboutToQuit, [=] {
-			_fontEnumerationOverlapped
-				= _fontEnumerationsStarted > _fontEnumerationsFinished;
+			_fontEnumerationOverlapped = WorkerInSystemEnumeration(
+				_fontDatabaseWarmupThread.native_handle());
 			_fontStartupQuitObserved = true;
 		});
 	}
@@ -605,12 +666,10 @@ void Sandbox::startFontDatabaseWarmup() {
 			prewarmFontMetrics(QFont().family());
 			prewarmFontMetrics(u"Open Sans"_q);
 			if (quitRegression) {
-				EnumerateUntilQuit(
-					_fontEnumerationsStarted, _fontEnumerationsFinished,
-					_fontStartupQuitObserved, [this] {
-						QMetaObject::invokeMethod(
-							this, [] { Core::Quit(); }, Qt::QueuedConnection);
-					});
+				EnumerateUntilQuit(_fontStartupQuitObserved, [this] {
+					QMetaObject::invokeMethod(
+						this, [] { Core::Quit(); }, Qt::QueuedConnection);
+				});
 				fprintf(stderr,
 						"Font shutdown regression: quit_observed=%d "
 						"font_work=active enumeration_overlapped=%d\n",
