@@ -173,6 +173,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/click_handler.h"
 #include "ui/item_text_options.h"
 #include "ui/style/style_core_scale.h"
+#include "ui/painter.h"
+#include "ui/unread_badge.h"
 #include "ui/ui_utility.h"
 #include "window/window_controller.h"
 #include "window/window_main_menu.h"
@@ -183,6 +185,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "styles/style_basic.h"
 #include "styles/style_chat.h"
+#include "styles/style_dialogs.h"
 #include "styles/style_info.h"
 #include "styles/style_settings.h"
 #include "styles/style_widgets.h"
@@ -24753,6 +24756,28 @@ void RunCustomEmojiUiSmoke(Fn<void(int)> done) {
 	QCoreApplication::processEvents();
 	if (remoteSender->emojiStatusId() != statusId || !badge.widget()) {
 		return fail("recipient did not render the received emoji status");
+	}
+	if (remoteSender->isPremium()
+		|| recipient->session().premiumBadgesShown()) {
+		return fail("recipient badge fixture unexpectedly enables Premium");
+	}
+	auto badgeImage = QImage(160, 30, QImage::Format_ARGB32_Premultiplied);
+	badgeImage.fill(Qt::transparent);
+	auto painter = Painter(&badgeImage);
+	auto chatBadge = Ui::PeerBadge();
+	const auto chatBadgeWidth = chatBadge.drawGetWidth(
+		painter, {
+					 .peer = not_null<PeerData *>(remoteSender),
+					 .rectForName = QRect(0, 0, 160, 30),
+					 .nameWidth = 20,
+					 .outerWidth = 160,
+					 .verified = &st::dialogsVerifiedIcon,
+					 .premium = &st::dialogsPremiumIcon.icon,
+					 .premiumFg = &st::dialogsVerifiedIconBg,
+					 .customEmojiRepaint = [] {},
+				 });
+	if (chatBadgeWidth <= 0 || chatBadge.emojiStatusRect().isEmpty()) {
+		return fail("recipient chat badge did not render the emoji status");
 	}
 
 	std::fprintf(stderr, "Custom emoji UI smoke: PASS (message send, reaction "
