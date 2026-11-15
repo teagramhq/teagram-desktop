@@ -24810,6 +24810,90 @@ void RunCustomEmojiUiSmoke(Fn<void(int)> done) {
 		return fail("recipient chat badge did not redraw the emoji status");
 	}
 
+	if (emoji->sticker()->alt.isEmpty()
+		|| emoji->sticker()->set.id
+			   == sender->session()
+					  .data()
+					  .customEmojiManager()
+					  .coloredSetId()) {
+		return fail("contact status fixture is not a custom emoji");
+	}
+	const auto statusLabel = [](not_null<QWidget *> root) -> Ui::FlatLabel * {
+		for (const auto label : Test::FindAll<Ui::FlatLabel>(root)) {
+			if (&label->st() == &st::historyEmojiStatusInfoLabel) {
+				return label;
+			}
+		}
+		return nullptr;
+	};
+	const auto channel = sender->session().data().channel(ChannelId(724104));
+	PrepareRegressionChannel(channel);
+	channel->setBarSettings(PeerBarSettings(PeerBarSetting::ReportSpam));
+	channel->setEmojiStatus(statusId, 0);
+	auto channelParent = Ui::RpWidget(controller->widget().get());
+	channelParent.resize(400, 100);
+	channelParent.show();
+	auto channelStatus = HistoryView::ContactStatus(controller, &channelParent,
+													channel, false);
+	channelStatus.show();
+	const auto channelLabel = statusLabel(&channelParent);
+	if (!channelLabel
+		|| !WaitForRegressionCondition(
+			[&] {
+				return !channelLabel->accessibilityName().isEmpty()
+					   && channelLabel->isVisibleTo(&channelParent);
+			},
+			1000)) {
+		return fail("channel contact status promo fixture did not appear");
+	}
+	channelParent.hide();
+
+	recipientUser->setBarSettings(PeerBarSettings(PeerBarSetting::AddContact));
+	recipientUser->setEmojiStatus(statusId, 0);
+	auto contactParent = Ui::RpWidget(controller->widget().get());
+	contactParent.resize(400, 100);
+	contactParent.show();
+	auto contactStatus = HistoryView::ContactStatus(controller, &contactParent,
+													recipientUser, false);
+	contactStatus.show();
+	const auto contactLabel = statusLabel(&contactParent);
+	if (!contactLabel
+		|| !WaitForRegressionCondition(
+			[&] { return contactStatus.bar().height() > 0; }, 1000)) {
+		return fail("custom-server contact status bar did not appear");
+	}
+	if (!contactLabel->accessibilityName().isEmpty()
+		|| contactLabel->isVisibleTo(&contactParent)) {
+		return fail("custom-server contact status showed a Premium promo");
+	}
+	contactParent.hide();
+
+	controller->hideLayer(anim::type::instant);
+	QCoreApplication::processEvents();
+	if (sender->session().premiumPossible() || controller->isLayerShown()) {
+		return fail("status click promo fixture unexpectedly enables Premium");
+	}
+	const auto otherUser = sender->session().data().processUsers(
+		MTP_vector<MTPUser>({RegressionUser(UserId(724105), false, u"3"_q)}));
+	if (!otherUser || otherUser->emojiStatusId()) {
+		return fail("status click promo control user is invalid");
+	}
+	Settings::ShowEmojiStatusPremium(controller, otherUser);
+	if (!WaitForRegressionCondition([&] { return controller->isLayerShown(); },
+									1000)) {
+		return fail("status click promo control did not open");
+	}
+	controller->hideLayer(anim::type::instant);
+	if (!WaitForRegressionCondition([&] { return !controller->isLayerShown(); },
+									1000)) {
+		return fail("status click promo control did not close");
+	}
+	Settings::ShowEmojiStatusPremium(controller, recipientUser);
+	QCoreApplication::processEvents();
+	if (controller->isLayerShown()) {
+		return fail("custom-server status click showed a Premium promo");
+	}
+
 	std::fprintf(stderr, "Custom emoji UI smoke: PASS (message send, reaction "
 						 "toggle, status picker, recipient rendering).\n");
 	done(0);
