@@ -24765,19 +24765,49 @@ void RunCustomEmojiUiSmoke(Fn<void(int)> done) {
 	badgeImage.fill(Qt::transparent);
 	auto painter = Painter(&badgeImage);
 	auto chatBadge = Ui::PeerBadge();
-	const auto chatBadgeWidth = chatBadge.drawGetWidth(
-		painter, {
-					 .peer = not_null<PeerData *>(remoteSender),
-					 .rectForName = QRect(0, 0, 160, 30),
-					 .nameWidth = 20,
-					 .outerWidth = 160,
-					 .verified = &st::dialogsVerifiedIcon,
-					 .premium = &st::dialogsPremiumIcon.icon,
-					 .premiumFg = &st::dialogsVerifiedIconBg,
-					 .customEmojiRepaint = [] {},
-				 });
-	if (chatBadgeWidth <= 0 || chatBadge.emojiStatusRect().isEmpty()) {
+	const auto drawChatBadge = [&](bool allowEmoji) {
+		return chatBadge.drawGetWidth(
+			painter,
+			{
+				.peer = not_null<PeerData *>(remoteSender),
+				.rectForName = QRect(0, 0, 160, 30),
+				.nameWidth = 20,
+				.outerWidth = 160,
+				.verified = &st::dialogsVerifiedIcon,
+				.premium = allowEmoji ? &st::dialogsPremiumIcon.icon : nullptr,
+				.premiumFg = &st::dialogsVerifiedIconBg,
+				.customEmojiRepaint = [] {},
+			});
+	};
+	if (drawChatBadge(true) <= 0 || chatBadge.emojiStatusRect().isEmpty()) {
 		return fail("recipient chat badge did not render the emoji status");
+	}
+	recipient->session().api().updates().applyUpdateNoPtsCheck(
+		MTP_updateUserEmojiStatus(MTP_long(kSenderId.bare),
+								  MTP_emojiStatusEmpty()));
+	QCoreApplication::processEvents();
+	if (remoteSender->emojiStatusId()) {
+		return fail("recipient did not clear the received emoji status");
+	}
+	if (drawChatBadge(true) != 0 || !chatBadge.emojiStatusRect().isEmpty()) {
+		return fail("recipient chat badge retained the cleared emoji status");
+	}
+	recipient->session().api().updates().applyUpdateNoPtsCheck(
+		MTP_updateUserEmojiStatus(
+			MTP_long(kSenderId.bare),
+			MTP_emojiStatus(MTP_flags(0),
+							MTP_long(static_cast<int64>(kDocumentId)),
+							MTP_int(0))));
+	QCoreApplication::processEvents();
+	if (remoteSender->emojiStatusId() != statusId || drawChatBadge(true) <= 0
+		|| chatBadge.emojiStatusRect().isEmpty()) {
+		return fail("recipient chat badge did not restore the emoji status");
+	}
+	if (drawChatBadge(false) != 0 || !chatBadge.emojiStatusRect().isEmpty()) {
+		return fail("recipient chat badge retained a suppressed emoji status");
+	}
+	if (drawChatBadge(true) <= 0 || chatBadge.emojiStatusRect().isEmpty()) {
+		return fail("recipient chat badge did not redraw the emoji status");
 	}
 
 	std::fprintf(stderr, "Custom emoji UI smoke: PASS (message send, reaction "
