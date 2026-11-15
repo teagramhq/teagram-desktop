@@ -114,7 +114,7 @@ private:
 
 	std::array<std::unique_ptr<Lottie::Icon>, 2> _voiceRoundIcons;
 	std::array<bool, 2> _voiceRoundPreparing = {};
-	std::array<bool, 2> _voiceRoundUnavailable = {};
+	std::array<bool, 2> _voiceRoundRetryScheduled = {};
 	bool _voiceRoundAnimating = false;
 	bool _grabCurrentContent = false;
 	RippleShape _lastRippleShape = RippleShape::SendEllipse;

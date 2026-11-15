@@ -7,6 +7,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "ui/controls/send_button.h"
 
+#include "base/call_delayed.h"
 #include "base/debug_log.h"
 #include "lang/lang_tag.h"
 #include "lottie/lottie_icon.h"
@@ -33,6 +34,7 @@ constexpr auto kWideScale = 5;
 constexpr auto kVoiceToRoundIndex = 0;
 constexpr auto kRoundToVoiceIndex = 1;
 constexpr auto kForbiddenOpacity = 0.5;
+constexpr auto kVoiceRoundRetryDelay = crl::time(500);
 
 } // namespace
 
@@ -128,8 +130,6 @@ void SendButton::setState(State state) {
 		}
 		if (icon) {
 			animateVoiceRoundIcon(index, icon->framesCount());
-		} else if (_voiceRoundUnavailable[index]) {
-			_voiceRoundAnimating = false;
 		}
 		auto &after = _voiceRoundIcons[1 - index];
 		if (!after) {
@@ -533,7 +533,7 @@ QPoint SendButton::prepareRippleStartPosition() const {
 void SendButton::initVoiceRoundIcon(int index) {
 	Expects(index >= 0 && index < 2);
 
-	if (_voiceRoundPreparing[index] || _voiceRoundUnavailable[index]) {
+	if (_voiceRoundPreparing[index] || _voiceRoundRetryScheduled[index]) {
 		return;
 	}
 	_voiceRoundPreparing[index] = true;
@@ -579,9 +579,17 @@ void SendButton::initVoiceRoundIcon(int index) {
 		}).detach();
 	} catch (const std::system_error &error) {
 		_voiceRoundPreparing[index] = false;
-		_voiceRoundUnavailable[index] = true;
+		_voiceRoundRetryScheduled[index] = true;
 		LOG(("Send button icon preparation could not start: %1")
 				.arg(QString::fromLocal8Bit(error.what())));
+		base::call_delayed(kVoiceRoundRetryDelay, this, [this, index] {
+			_voiceRoundRetryScheduled[index] = false;
+			if (!_voiceRoundIcons[index]
+				&& (_state.type == Type::Record
+					|| _state.type == Type::Round)) {
+				initVoiceRoundIcon(index);
+			}
+		});
 	}
 }
 
