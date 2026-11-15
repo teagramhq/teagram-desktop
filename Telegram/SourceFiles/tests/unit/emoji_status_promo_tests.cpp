@@ -9,6 +9,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "data/stickers/data_custom_emoji_policy.h"
 
+using Data::details::EmojiStatusVisibleForPeerBadge;
 using Data::details::ShouldShowEmojiStatusPremiumPromo;
 
 TEST_CASE(CustomServerUserEmojiStatusDoesNotShowPremiumPromo) {
@@ -29,4 +30,15 @@ TEST_CASE(PremiumBadgeWithoutStatusStillShowsPremiumPromo) {
 
 TEST_CASE(CollectibleStatusKeepsExistingPremiumPromo) {
 	CHECK(ShouldShowEmojiStatusPremiumPromo(true, true, true, true));
+}
+
+TEST_CASE(NonPremiumRecipientSeesCustomServerUserStatus) {
+	CHECK(EmojiStatusVisibleForPeerBadge(false, false, true));
+}
+
+TEST_CASE(PeerBadgeStatusPreservesPremiumRulesElsewhere) {
+	CHECK(!EmojiStatusVisibleForPeerBadge(false, false, false));
+	CHECK(!EmojiStatusVisibleForPeerBadge(false, true, false));
+	CHECK(!EmojiStatusVisibleForPeerBadge(true, false, false));
+	CHECK(EmojiStatusVisibleForPeerBadge(true, true, false));
 }

@@ -101,4 +101,9 @@ ShouldShowEmojiStatusPremiumPromo(bool customServer, bool isUser,
 	return !customServer || !isUser || !hasStatus || collectible;
 }
 
+[[nodiscard]] constexpr bool EmojiStatusVisibleForPeerBadge(
+	bool premiumBadgesShown, bool premiumPeerOrChannel, bool customServerUser) {
+	return customServerUser || (premiumBadgesShown && premiumPeerOrChannel);
+}
+
 } // namespace Data::details
