@@ -2303,12 +2303,20 @@ TEST_CASE(EndpointRefreshRestartRejectsAChangedStoredKey) {
 	auto restarted = Storage::Account(
 		path, localKey, config, false, nullptr,
 		[&](const QByteArray &value) { restoredAuthorization = value; });
-	auto restartConfig = restarted.start(localKey);
+	const auto prefsKey = ReadEnrollmentPrefsKey(path, localKey);
+	CHECK(prefsKey.has_value());
+	if (!prefsKey) {
+		return;
+	}
+	Storage::AccountTestPeer::ReadPrefs(restarted, *prefsKey);
+	Storage::AccountTestPeer::ReadStoredCustomServerPin(restarted);
+	CHECK(restarted.hasStoredCustomServer());
+	restarted.readMtpDataForTest();
 	const auto restoredKey
 		= RestoreEndpointRefreshAuthKey(restoredAuthorization);
 	CHECK(restoredKey && restoredKey->equals(changedKey));
 	auto recovered = restarted.recoverEndpointRefreshConfig(
-		std::move(restartConfig), {restoredKey}, true);
+		ReadEnrollmentConfig(path, localKey), {restoredKey}, true);
 	CHECK(recovered != nullptr);
 	if (recovered) {
 		CHECK(SameCustomServerPin(original, recovered->customServer()));
