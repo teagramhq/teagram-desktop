@@ -146,6 +146,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "storage/streamed_file_downloader.h"
 #include "styles/style_chat_helpers.h"
 #include "test/test_widgets.h"
+#include "ui/chat/group_call_bar.h"
+#include "ui/chat/group_call_userpics.h"
 #include "ui/controls/compose_ai_button_factory.h"
 #include "ui/controls/userpic_button.h"
 #include "ui/effects/animations.h"
@@ -11776,6 +11778,71 @@ struct CacheReactionProbe final {
 	bool active = false;
 };
 
+[[nodiscard]] bool GroupCallBarDeferredButtonRegressionPasses() {
+	auto parent = QWidget();
+	auto changes = rpl::event_stream<Ui::GroupCallBarContent>();
+	auto bar = Ui::GroupCallBar(
+		&parent, changes.events_starting_with(Ui::GroupCallBarContent()),
+		rpl::single(false));
+	bar.resizeToWidth(500);
+	const auto findButton = [](QWidget &root) -> Ui::RoundButton * {
+		for (const auto child : root.findChildren<QWidget *>()) {
+			if (const auto result = dynamic_cast<Ui::RoundButton *>(child)) {
+				return result;
+			}
+		}
+		return nullptr;
+	};
+	const auto deferred
+		= (findButton(parent) == nullptr) && (bar.height() == 0);
+	changes.fire_copy(Ui::GroupCallBarContent{
+		.scheduleDate = base::unixtime::now() + 60,
+		.shown = false,
+	});
+	const auto deferredScheduled = (findButton(parent) == nullptr);
+	auto clicks = 0;
+	auto lifetime = rpl::lifetime();
+	bar.joinClicks() | rpl::on_next([&] { ++clicks; }, lifetime);
+	changes.fire_copy(Ui::GroupCallBarContent{.shown = true});
+	bar.finishAnimating();
+	const auto join = findButton(parent);
+	const auto joined = (join != nullptr) && (bar.height() > 0);
+	if (join) {
+		join->clicked(Qt::NoModifier, Qt::LeftButton);
+	}
+	changes.fire_copy(Ui::GroupCallBarContent{
+		.scheduleDate = base::unixtime::now() + 60,
+		.shown = true,
+	});
+	bar.finishAnimating();
+	const auto scheduled = findButton(parent);
+	const auto scheduledShown = (scheduled != nullptr) && (bar.height() > 0);
+	if (scheduled) {
+		scheduled->clicked(Qt::NoModifier, Qt::LeftButton);
+	}
+	changes.fire_copy(Ui::GroupCallBarContent());
+	bar.finishAnimating();
+	const auto hidden = (bar.height() == 0);
+	changes.fire_copy(Ui::GroupCallBarContent{.shown = true});
+	bar.finishAnimating();
+	const auto reopened = findButton(parent);
+	if (reopened) {
+		reopened->clicked(Qt::NoModifier, Qt::LeftButton);
+	}
+	auto initiallyShownParent = QWidget();
+	auto initiallyShownChanges = rpl::event_stream<Ui::GroupCallBarContent>();
+	auto initiallyShown
+		= Ui::GroupCallBar(&initiallyShownParent,
+						   initiallyShownChanges.events_starting_with(
+							   Ui::GroupCallBarContent{.shown = true}),
+						   rpl::single(false));
+	initiallyShown.resizeToWidth(500);
+	initiallyShown.finishAnimating();
+	return deferred && deferredScheduled && joined && scheduledShown && hidden
+		   && reopened && (bar.height() > 0) && (clicks == 3)
+		   && findButton(initiallyShownParent) && (initiallyShown.height() > 0);
+}
+
 [[maybe_unused, nodiscard]] CacheChatSwitchRegressionResult
 RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 									Window::Controller *window) {
@@ -12843,6 +12910,22 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 			chatSwitchWindows[i].mainThreadWorkNanoseconds,
 			chatSwitchWindows[i].durationNanoseconds, schedulerTrace,
 			schedulerSampleOffsetsNanoseconds);
+		if (estimate.estimatedWorkNanoseconds >= kMaxChatSwitchNanoseconds) {
+			auto offsets = QStringList();
+			for (const auto offset : schedulerSampleOffsetsNanoseconds) {
+				offsets.push_back(QString::number(offset));
+			}
+			const auto startedAt = chatSwitchWindows[i]
+									   .startedAt.toString(Qt::ISODateWithMs)
+									   .toLatin1();
+			const auto offsetsText = offsets.join(u',').toLatin1();
+			std::fprintf(
+				stderr,
+				"Chat switch over-budget samples: index=%zu started_at=%s "
+				"offsets_ns=%s.\n",
+				static_cast<std::size_t>(i), startedAt.constData(),
+				offsetsText.constData());
+		}
 		if ((estimate.blockedNanoseconds < 0)
 			&& (chatSwitchWindows[i].durationNanoseconds
 				>= kMaxChatSwitchNanoseconds)) {
@@ -13071,6 +13154,10 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		std::max(result.attachMenuHoverNanoseconds,
 				 result.attachMenuInvalidationCallbackCpuNanoseconds));
 	result.cachedDocuments = int(mediaViews.size());
+	const auto groupCallBarDeferred
+		= GroupCallBarDeferredButtonRegressionPasses();
+	std::fprintf(stderr, "Group call bar deferred button: passed=%d.\n",
+				 groupCallBarDeferred);
 	result.passed
 		= completed && !timedOut && (result.reactions == kReactionCount)
 		  && (result.attachMenuBotCount >= 20)
@@ -13081,7 +13168,7 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		  && (result.cachedDocuments
 			  == (kReactionCount / 2 + 1) * kDocumentsPerReaction)
 		  && result.historyScaleInvalidationRebuilt
-		  && result.historyChatModeInvalidationRebuilt
+		  && result.historyChatModeInvalidationRebuilt && groupCallBarDeferred
 		  && MainThreadCpuWorkWithinBudget(
 			  result.attachMenuFirstHoverCallbackCpuNanoseconds,
 			  kMaxChatSwitchNanoseconds)
