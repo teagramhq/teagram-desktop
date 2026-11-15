@@ -167,10 +167,7 @@ void FinalizeSetBotPhotoFirstOpenState(not_null<PeerData*> peer) {
 	return result;
 }
 
-[[nodiscard]] object_ptr<Ui::RippleButton> SetupSetBotPhotoButton(
-		object_ptr<Ui::RippleButton> button) {
-	const auto raw = button.data();
-
+void SetupSetBotPhotoButton(not_null<Ui::RippleButton *> raw) {
 	const auto icon = Ui::CreateChild<Ui::RpWidget>(raw);
 	icon->setAttribute(Qt::WA_TransparentForMouseEvents);
 	icon->paintRequest(
@@ -210,8 +207,6 @@ void FinalizeSetBotPhotoFirstOpenState(not_null<PeerData*> peer) {
 		icon->raise();
 		label->raise();
 	}, raw->lifetime());
-
-	return button;
 }
 
 } // namespace
@@ -281,6 +276,7 @@ private:
 	bool _addWithName = false;
 	bool _addElided = false;
 	bool _narrow = false;
+	bool _botPhotoContentReady = false;
 	rpl::event_stream<> _emojiStatusClicks;
 
 };
@@ -306,53 +302,31 @@ void ContactStatus::BgButton::paintEvent(QPaintEvent *e) {
 	paintRipple(p, 0, 0);
 }
 
-ContactStatus::Bar::Bar(
-	QWidget *parent,
-	not_null<QWidget*> tooltipParent,
-	const QString &name)
-: RpWidget(parent)
-, _tooltipParent(tooltipParent)
-, _name(name)
-, _add(
-	this,
-	QString(),
-	st::historyContactStatusButton)
-, _unarchive(
-	this,
-	tr::lng_new_contact_unarchive(tr::now).toUpper(),
-	st::historyContactStatusButton)
-, _unarchiveIcon(MakeIconButton(this, st::menuIconUnarchive))
-, _block(
-	this,
-	tr::lng_new_contact_block(tr::now).toUpper(),
-	st::historyContactStatusBlock)
-, _share(
-	this,
-	tr::lng_new_contact_share(tr::now).toUpper(),
-	st::historyContactStatusButton)
-, _report(
-	this,
-	QString(),
-	st::historyContactStatusBlock)
-, _reportIcon(MakeIconButton(this, st::menuIconReportAttention))
-, _close(this, st::historyReplyCancel)
-, _requestChatBg(this, st::historyContactStatusButton)
-, _requestChatInfo(
-	this,
-	QString(),
-	st::historyContactStatusLabel)
-, _emojiStatusInfo(
-	this,
-	object_ptr<Ui::FlatLabel>(this, u""_q, st::historyEmojiStatusInfoLabel),
-	QMargins(
-		st::historyContactStatusMinSkip,
-		st::topBarArrowPadding.top(),
-		st::historyContactStatusMinSkip,
-		st::topBarArrowPadding.top()))
-, _emojiStatusShadow(this)
-, _setBotPhoto(
-	SetupSetBotPhotoButton(
-		object_ptr<BgButton>(this, st::historyContactStatusButton))) {
+ContactStatus::Bar::Bar(QWidget *parent, not_null<QWidget *> tooltipParent,
+						const QString &name)
+	: RpWidget(parent), _tooltipParent(tooltipParent), _name(name),
+	  _add(this, QString(), st::historyContactStatusButton),
+	  _unarchive(this, tr::lng_new_contact_unarchive(tr::now).toUpper(),
+				 st::historyContactStatusButton),
+	  _unarchiveIcon(MakeIconButton(this, st::menuIconUnarchive)),
+	  _block(this, tr::lng_new_contact_block(tr::now).toUpper(),
+			 st::historyContactStatusBlock),
+	  _share(this, tr::lng_new_contact_share(tr::now).toUpper(),
+			 st::historyContactStatusButton),
+	  _report(this, QString(), st::historyContactStatusBlock),
+	  _reportIcon(MakeIconButton(this, st::menuIconReportAttention)),
+	  _close(this, st::historyReplyCancel),
+	  _requestChatBg(this, st::historyContactStatusButton),
+	  _requestChatInfo(this, QString(), st::historyContactStatusLabel),
+	  _emojiStatusInfo(this,
+					   object_ptr<Ui::FlatLabel>(
+						   this, u""_q, st::historyEmojiStatusInfoLabel),
+					   QMargins(st::historyContactStatusMinSkip,
+								st::topBarArrowPadding.top(),
+								st::historyContactStatusMinSkip,
+								st::topBarArrowPadding.top())),
+	  _emojiStatusShadow(this),
+	  _setBotPhoto(object_ptr<BgButton>(this, st::historyContactStatusButton)) {
 	_close->setAccessibleName(tr::lng_cancel(tr::now));
 	_unarchiveIcon->setAccessibleName(tr::lng_new_contact_unarchive(tr::now));
 	_reportIcon->setAccessibleName(tr::lng_report_spam(tr::now));
@@ -402,6 +376,10 @@ void ContactStatus::Bar::showState(
 	_reportIcon->setVisible(_narrow && report);
 	_requestChatInfo->setVisible(type == Type::RequestChatInfo);
 	_requestChatBg->setVisible(type == Type::RequestChatInfo);
+	if ((type == Type::SetBotPhoto) && !_botPhotoContentReady) {
+		_botPhotoContentReady = true;
+		SetupSetBotPhotoButton(_setBotPhoto.data());
+	}
 	_setBotPhoto->setVisible(type == Type::SetBotPhoto);
 	const auto has = !status.empty();
 	_emojiStatusShadow->setVisible(
@@ -430,16 +408,14 @@ void ContactStatus::Bar::showState(
 	_report->setText((type == Type::ReportSpam)
 		? tr::lng_report_spam_and_leave(tr::now).toUpper()
 		: tr::lng_report_spam(tr::now).toUpper());
-	_requestChatInfo->setMarkedText(
-		(state.requestChatIsBroadcast
-			? tr::lng_new_contact_from_request_channel
-			: tr::lng_new_contact_from_request_group)(
-			tr::now,
-			lt_user,
-			tr::bold(_name),
-			lt_name,
-			tr::bold(state.requestChatName),
-			tr::marked));
+	if (type == Type::RequestChatInfo) {
+		_requestChatInfo->setMarkedText(
+			(state.requestChatIsBroadcast
+				 ? tr::lng_new_contact_from_request_channel
+				 : tr::lng_new_contact_from_request_group)(
+				tr::now, lt_user, tr::bold(_name), lt_name,
+				tr::bold(state.requestChatName), tr::marked));
+	}
 	resizeToWidth(width());
 }
 
