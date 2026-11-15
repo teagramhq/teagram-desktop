@@ -1821,6 +1821,22 @@ run_font_startup_regression() {
 		return 1
 	fi
 	printf 'Font shutdown probe installation failure=PASS\n'
+	local probe_timeout_log="$TEST_HOME/font-probe-timeout.log"
+	if run_font_shutdown_regression probe-timeout >"$probe_timeout_log" 2>&1; then
+		echo 'font shutdown regression accepted a probe timeout' >&2
+		return 1
+	fi
+	if ! grep -E -q '^Font shutdown regression: last_other_work_frames=.+' \
+		"$probe_timeout_log" \
+		|| grep -F -q 'Font shutdown regression: last_other_work_frames=unavailable' \
+			"$probe_timeout_log" \
+		|| ! grep -F -q 'font shutdown regression did not quit during an active system font enumeration' \
+			"$probe_timeout_log"; then
+		cat "$probe_timeout_log" >&2
+		echo 'font shutdown probe timeout did not report the sampled frames' >&2
+		return 1
+	fi
+	printf 'Font shutdown probe timeout diagnostics=PASS\n'
 	run_font_warmup_thread_failure_regression
 }
 

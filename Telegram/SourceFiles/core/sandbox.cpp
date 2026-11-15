@@ -66,7 +66,10 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <QtGui/qpa/qplatformscreen.h>
 
 #ifdef Q_OS_MAC
+#include <cstdint>
 #include <cstdio>
+#include <cstdlib>
+#include <cxxabi.h>
 #include <dlfcn.h>
 #include <execinfo.h>
 #include <pthread.h>
@@ -165,10 +168,44 @@ enum class StackSample {
 	InSystemEnumeration,
 };
 
+constexpr auto kProbeReportedFrames = 8;
+struct ProbeFrameSnapshot final {
+	void *frames[kProbeReportedFrames] = {};
+	int count = 0;
+};
+
+void PrintProbeFrameSnapshot(const ProbeFrameSnapshot &snapshot) {
+	auto line = QByteArray("Font shutdown regression: last_other_work_frames=");
+	if (!snapshot.count) {
+		line += "unavailable";
+	}
+	for (auto i = 0; i != snapshot.count; ++i) {
+		const auto address
+			= reinterpret_cast<std::uintptr_t>(snapshot.frames[i]);
+		const auto lookup = address ? reinterpret_cast<void *>(address - 1)
+									: snapshot.frames[i];
+		auto info = Dl_info();
+		if (i) {
+			line += " <- ";
+		}
+		if (dladdr(lookup, &info) && info.dli_sname) {
+			auto status = 0;
+			const auto demangled = abi::__cxa_demangle(info.dli_sname, nullptr,
+													   nullptr, &status);
+			line += (status == 0 && demangled) ? demangled : info.dli_sname;
+			std::free(demangled);
+		} else {
+			line += "0x" + QByteArray::number(qulonglong(address), 16);
+		}
+	}
+	fprintf(stderr, "%s\n", line.constData());
+}
+
 // Signals the worker and waits until its capture completes, however long the
 // signal takes, then scans a bounded copy of the captured frames. A worker
 // caught inside the system enumeration is held there until the final release.
-[[nodiscard]] StackSample SampleWorkerStack(pthread_t worker) {
+[[nodiscard]] StackSample SampleWorkerStack(pthread_t worker,
+											ProbeFrameSnapshot &lastOtherWork) {
 	using Clock = std::chrono::steady_clock;
 	const auto deadline = Clock::now() + std::chrono::seconds(2);
 	// The previous handler must have seen its Release and returned before
@@ -203,6 +240,10 @@ enum class StackSample {
 	void *frames[kProbeMaxFrames];
 	std::copy(ProbeFrames, ProbeFrames + depth, frames);
 	const auto inEnumeration = FramesInSystemEnumeration(frames, depth);
+	if (!inEnumeration) {
+		lastOtherWork.count = std::min(depth, kProbeReportedFrames);
+		std::copy_n(frames, lastOtherWork.count, lastOtherWork.frames);
+	}
 	ProbeDecision.store(inEnumeration ? ProbeHold : ProbeRelease,
 						std::memory_order_release);
 	return inEnumeration ? StackSample::InSystemEnumeration
@@ -680,7 +721,15 @@ void Sandbox::startFontDatabaseWarmup() {
 			throw std::system_error(std::make_error_code(
 				std::errc::resource_unavailable_try_again));
 		}
-		_fontDatabaseWarmupThread = std::thread([this, quitRegression] {
+		_fontDatabaseWarmupThread = std::thread([this, quitRegression,
+												 testFailure] {
+			if (quitRegression && testFailure == "probe-timeout") {
+				// Keep the test worker outside enumeration until sampled.
+				while (!ProbeFinalRelease.load(std::memory_order_acquire)) {
+					std::this_thread::yield();
+				}
+				return;
+			}
 			const auto openSansLoaded = style::internal::PreloadCustomFonts();
 			{
 #if QT_VERSION < QT_VERSION_CHECK(6, 0, 0)
@@ -737,10 +786,11 @@ void Sandbox::startFontDatabaseWarmup() {
 		if (quitRegression) {
 			const auto timer = Ui::CreateChild<QTimer>(this);
 			const auto started = std::make_shared<QElapsedTimer>();
+			const auto lastOtherWork = std::make_shared<ProbeFrameSnapshot>();
 			started->start();
 			connect(timer, &QTimer::timeout, this, [=] {
 				const auto sample = SampleWorkerStack(
-					_fontDatabaseWarmupThread.native_handle());
+					_fontDatabaseWarmupThread.native_handle(), *lastOtherWork);
 				if (sample == StackSample::Failed) {
 					timer->stop();
 					ProbeFinalRelease.store(true, std::memory_order_release);
@@ -749,12 +799,14 @@ void Sandbox::startFontDatabaseWarmup() {
 				}
 				const auto sampled
 					= (sample == StackSample::InSystemEnumeration);
-				if (!sampled && started->elapsed() < 10000) {
+				if (!sampled && testFailure != "probe-timeout"
+					&& started->elapsed() < 10000) {
 					return;
 				}
 				timer->stop();
 				_fontEnumerationOverlapped = sampled;
 				if (!sampled) {
+					PrintProbeFrameSnapshot(*lastOtherWork);
 					ProbeFinalRelease.store(true, std::memory_order_release);
 				}
 				Core::Quit();

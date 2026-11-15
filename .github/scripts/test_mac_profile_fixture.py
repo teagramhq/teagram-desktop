@@ -54,6 +54,11 @@ if [[ "${TDESKTOP_FONT_STARTUP_QUIT_REGRESSION:-}" == 1 ]]; then
         printf 'Font shutdown regression: probe=unavailable\\n'
         exit 1
     fi
+    if [[ "${TDESKTOP_FONT_STARTUP_TEST_FAILURE:-}" == probe-timeout ]]; then
+        printf 'Font shutdown regression: last_other_work_frames=worker <- pthread_start\\n'
+        printf 'Font shutdown regression: quit_observed=1 font_work=active enumeration_overlapped=0\\n'
+        exit 0
+    fi
     printf 'Font shutdown regression: quit_observed=1 font_work=active enumeration_overlapped=1\\n'
     printf 'Font shutdown regression: worker_joined=1 application_created=0 teardown=complete\\n'
     exit 0
@@ -135,10 +140,21 @@ if [[ "${TDESKTOP_FONT_STARTUP_QUIT_REGRESSION:-}" == 1 ]]; then
     elif [[ "$FONT_SHUTDOWN_TEST_MODE" == shutdown-probe-release ]]; then
         printf 'Font shutdown regression: probe_error=handler_release_timeout\\n'
         exit 1
+    elif [[ "${TDESKTOP_FONT_STARTUP_TEST_FAILURE:-}" == probe-timeout \
+        && "$FONT_SHUTDOWN_TEST_MODE" == timeout-no-frames ]]; then
+        printf 'Font shutdown regression: last_other_work_frames=unavailable\\n'
+        printf 'Font shutdown regression: quit_observed=1 font_work=active enumeration_overlapped=0\\n'
+        exit 0
+    elif [[ "${TDESKTOP_FONT_STARTUP_TEST_FAILURE:-}" == probe-timeout \
+        && "$FONT_SHUTDOWN_TEST_MODE" != timeout-injection-ignored ]]; then
+        printf 'Font shutdown regression: last_other_work_frames=worker <- pthread_start\\n'
+        printf 'Font shutdown regression: quit_observed=1 font_work=active enumeration_overlapped=0\\n'
+        exit 0
     elif [[ "$FONT_SHUTDOWN_TEST_MODE" == shutdown-not-in-flight ]]; then
         printf 'Font shutdown regression: quit_observed=0 font_work=active enumeration_overlapped=0\\n'
         printf 'Font shutdown regression: worker_joined=1 application_created=0 teardown=complete\\n'
     elif [[ "$FONT_SHUTDOWN_TEST_MODE" == shutdown-no-overlap ]]; then
+        printf 'Font shutdown regression: last_other_work_frames=frame0 <- frame1 <- frame2 <- frame3 <- frame4 <- frame5 <- frame6 <- frame7\\n'
         printf 'Font shutdown regression: quit_observed=1 font_work=active enumeration_overlapped=0\\n'
         printf 'Font shutdown regression: worker_joined=1 application_created=0 teardown=complete\\n'
     elif [[ "$FONT_SHUTDOWN_TEST_MODE" == shutdown-order ]]; then
@@ -297,6 +313,7 @@ assert 'fallback=PASS font_stall_gate=PASS' \
 assert 'Font shutdown teardown=PASS font_work_active=1 application_created=0' \
     in font_startup_output
 assert 'Font shutdown probe installation failure=PASS' in font_startup_output
+assert 'Font shutdown probe timeout diagnostics=PASS' in font_startup_output
 assert 'Font database warmup thread failure fallback=PASS' in font_startup_output
 font_startup_failure = run_font_startup_fixture(50_000_000, 100_000_000, 1)
 assert 'StartFonts warm exceeded the 100ms budget' in font_startup_failure
@@ -399,6 +416,8 @@ font_startup_shutdown_no_overlap = run_font_startup_fixture(
     50_000_000, 50_000_000, 1, mode='shutdown-no-overlap')
 assert 'font shutdown regression did not quit during an active system font enumeration' \
     in font_startup_shutdown_no_overlap
+assert 'last_other_work_frames=frame0 <- frame1 <- frame2 <- frame3 <- frame4 <- frame5 <- frame6 <- frame7' \
+    in font_startup_shutdown_no_overlap
 font_startup_shutdown_order = run_font_startup_fixture(
     50_000_000, 50_000_000, 1, mode='shutdown-order')
 assert 'font shutdown did not join the worker and tear down without starting the application' \
@@ -427,4 +446,11 @@ font_probe_injection_ignored = run_font_startup_fixture(
     50_000_000, 50_000_000, 1, mode='probe-injection-ignored')
 assert 'font shutdown regression accepted a failed probe installation' \
     in font_probe_injection_ignored
+font_timeout_injection_ignored = run_font_startup_fixture(
+    50_000_000, 50_000_000, 1, mode='timeout-injection-ignored')
+assert 'font shutdown regression accepted a probe timeout' in font_timeout_injection_ignored
+font_timeout_no_frames = run_font_startup_fixture(
+    50_000_000, 50_000_000, 1, mode='timeout-no-frames')
+assert 'font shutdown probe timeout did not report the sampled frames' \
+    in font_timeout_no_frames
 print('macOS font startup timing and failure guards: PASS')

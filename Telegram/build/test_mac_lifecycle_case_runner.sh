@@ -111,6 +111,11 @@ if [[ "${TDESKTOP_FONT_STARTUP_QUIT_REGRESSION:-}" == 1 ]]; then
 		printf 'Font shutdown regression: probe=unavailable\n'
 		exit 1
 	fi
+	if [[ "${TDESKTOP_FONT_STARTUP_TEST_FAILURE:-}" == probe-timeout ]]; then
+		printf 'Font shutdown regression: last_other_work_frames=worker <- pthread_start\n'
+		printf 'Font shutdown regression: quit_observed=1 font_work=active enumeration_overlapped=0\n'
+		exit 0
+	fi
 	printf 'Font shutdown regression: quit_observed=1 font_work=active enumeration_overlapped=1\n'
 	printf 'Font shutdown regression: worker_joined=1 application_created=0 teardown=complete\n'
 	exit 0
