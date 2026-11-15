@@ -40,6 +40,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_forum_topic.h"
 #include "data/data_peer_values.h"
 #include "data/stickers/data_custom_emoji.h"
+#include "data/stickers/data_custom_emoji_policy.h"
 #include "settings/sections/settings_premium.h"
 #include "window/window_peer_menu.h"
 #include "window/window_controller.h"
@@ -135,6 +136,11 @@ void FinalizeSetBotPhotoFirstOpenState(not_null<PeerData*> peer) {
 		Data::PeerUpdate::Flag::EmojiStatus
 	) | rpl::map([=] {
 		const auto id = peer->emojiStatusId();
+		if (!Data::details::ShouldShowEmojiStatusPremiumPromo(
+				peer->usesCustomServer(), peer->isUser(), id.documentId != 0,
+				id.collectible != nullptr)) {
+			return rpl::single(TextWithEntities()) | rpl::type_erased;
+		}
 		return id.collectible
 			? rpl::single(Ui::Text::SingleCustomEmoji(
 				Data::EmojiStatusCustomId(id)))

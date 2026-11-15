@@ -95,4 +95,10 @@ EmojiStatusRequiresPremium(bool premium, bool customServer, bool collectible) {
 	return CustomEmojiRequiresPremium(premium, customServer && !collectible);
 }
 
+[[nodiscard]] constexpr bool
+ShouldShowEmojiStatusPremiumPromo(bool customServer, bool isUser,
+								  bool hasStatus, bool collectible) {
+	return !customServer || !isUser || !hasStatus || collectible;
+}
+
 } // namespace Data::details
