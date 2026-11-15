@@ -664,6 +664,51 @@ require_step_script "$mac_workflow" build-macos 'Report MacOS job wall time.' \
   '::warning::Warm-cache MacOS PR build exceeded the 30-minute target ('
 reject_step_script "$mac_workflow" build-macos 'Report MacOS job wall time.' '::error::' 'exit 1'
 reject_value "$mac_workflow" 'A warm MacOS PR run must have an exact Libraries cache hit.'
+
+require_job_field "$mac_workflow" build-macos '.["timeout-minutes"]' '240'
+require_step_field "$mac_workflow" build-macos 'Set up fixture server Go.' '.timeout-minutes' '6'
+require_step_field "$mac_workflow" build-macos 'Set up fixture migrations.' '.timeout-minutes' '6'
+require_step_field "$mac_workflow" build-macos 'Restore and run performance fixtures (informational).' '.timeout-minutes' '20'
+for fixture_step in 'Start performance fixture timing.' 'Set up fixture server Go.' 'Set up fixture migrations.' 'Restore and run performance fixtures (informational).' 'Report interrupted fixture setup.'; do
+  require_step_field "$mac_workflow" build-macos "$fixture_step" '.continue-on-error' 'true'
+done
+fixture_start_script="$(step_field "$mac_workflow" build-macos 'Start performance fixture timing.' '.run')"
+mkdir -p "$temp_dir/fixture-deadline/bin"
+cat > "$temp_dir/fixture-deadline/bin/date" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$FIXTURE_TEST_NOW"
+EOF
+chmod +x "$temp_dir/fixture-deadline/bin/date"
+assert_fixture_deadline() {
+  local name="$1" started_at="$2" now="$3" expected="$4"
+  local case_dir="$temp_dir/fixture-deadline/$name"
+  mkdir -p "$case_dir"
+  : > "$case_dir/env"
+  : > "$case_dir/output"
+  : > "$case_dir/summary"
+  env PATH="$temp_dir/fixture-deadline/bin:$PATH" FIXTURE_TEST_NOW="$now" \
+    MACOS_JOB_STARTED_AT="$started_at" RUNNER_TEMP="$case_dir" \
+    GITHUB_ENV="$case_dir/env" GITHUB_OUTPUT="$case_dir/output" \
+    GITHUB_STEP_SUMMARY="$case_dir/summary" bash -c "$fixture_start_script"
+  grep -Fxq "run_fixture=$expected" "$case_dir/output" \
+    || contract_fail "Fixture deadline decision is wrong for $name."
+  if [[ "$expected" == false ]]; then
+    grep -Fq 'Failed phase: **job deadline headroom**' "$case_dir/summary" \
+      || contract_fail "Fixture deadline failure is missing from the summary for $name."
+  fi
+}
+assert_fixture_deadline sufficient 600 12300 true
+assert_fixture_deadline insufficient 600 12301 false
+assert_fixture_deadline invalid invalid 12300 false
+for fixture_step in 'Set up fixture server Go.' 'Restore and run performance fixtures (informational).' 'Report interrupted fixture setup.'; do
+  expect_contains "$mac_workflow job $fixture_step if" \
+    "$(step_field "$mac_workflow" build-macos "$fixture_step" '.if')" \
+    "steps.perf-fixture-start.outputs.run_fixture == 'true'"
+done
+expect_contains "$mac_workflow fixture migrations if" \
+  "$(step_field "$mac_workflow" build-macos 'Set up fixture migrations.' '.if')" \
+  "steps.perf-fixture-go.outcome == 'success'"
+
 require_step_field "$mac_workflow" build-macos 'Restore macOS libraries artifact.' '.run' \
   "bash \"\$REPO_NAME/$macos_libraries_image_script\" pull \"\$MACOS_LIBRARIES_IMAGE\" \"\$GITHUB_WORKSPACE\" \"\$GITHUB_OUTPUT\""
 require_step_field "$mac_workflow" build-macos 'Libraries.' '.if' \

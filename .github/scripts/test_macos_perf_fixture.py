@@ -45,10 +45,13 @@ class FixtureReleaseTests(unittest.TestCase):
         self.write_manifest()
 
     def write_manifest(self):
-        (self.release / 'manifest.json').write_text(json.dumps(self.manifest))
+        path = self.release / 'manifest.json'
+        path.write_text(json.dumps(self.manifest))
+        self.manifest_sha256 = hashlib.sha256(path.read_bytes()).hexdigest()
 
     def download(self):
-        return fixture.download_fixture(self.release.as_uri(), self.root / 'snapshot', self.version)
+        return fixture.download_fixture(self.release.as_uri(), self.root / 'snapshot', self.version,
+                                        self.manifest_sha256)
 
     def test_download_verifies_every_asset_and_restores_blob_paths(self):
         manifest = self.download()
@@ -59,6 +62,12 @@ class FixtureReleaseTests(unittest.TestCase):
     def test_checksum_mismatch_fails_the_fixture(self):
         (self.release / 'blobs-100x__02__2').write_bytes(b'corrupt')
         with self.assertRaisesRegex(ValueError, 'checksum mismatch.*blobs-100x__02__2'):
+            self.download()
+
+    def test_manifest_must_match_the_pinned_digest(self):
+        self.manifest['server_commit'] = 'c' * 40
+        (self.release / 'manifest.json').write_text(json.dumps(self.manifest))
+        with self.assertRaisesRegex(ValueError, 'manifest checksum mismatch'):
             self.download()
 
     def test_rejects_unsafe_or_duplicate_asset_paths(self):

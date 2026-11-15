@@ -18,6 +18,7 @@ from urllib.request import urlopen
 
 
 FIXTURE = '41f14cb01791815af2b42667a04aec313d4a15ebe7ef6b0da3e4f884ec861e95'
+MANIFEST_SHA256 = 'a1e1286defa111a187c05237c5f743bb36572b439c20a76e824e7a9af2bfc32f'
 SERVER = '11aca52138df628f0ef9972e0583c768d12c221d'
 RELEASE_URL = f'https://github.com/teagramhq/teagram-server/releases/download/perf-fixture-{FIXTURE}'
 PHASES = ('tool setup', 'download', 'postgres setup', 'restore 1x', 'restore 100x',
@@ -33,9 +34,12 @@ def asset_path(name):
     return Path(*parts)
 
 
-def download_fixture(release_url, destination, version):
+def download_fixture(release_url, destination, version, manifest_sha256):
     with urlopen(f'{release_url}/manifest.json', timeout=45) as response:
-        manifest = json.load(response)
+        manifest_bytes = response.read()
+    if hashlib.sha256(manifest_bytes).hexdigest() != manifest_sha256:
+        raise ValueError('fixture manifest checksum mismatch')
+    manifest = json.loads(manifest_bytes)
     if manifest.get('fixture') != version or not re.fullmatch(r'[0-9a-f]{64}', version):
         raise ValueError('fixture manifest does not match the pinned version')
     if not re.fullmatch(r'[0-9a-f]{40}', manifest.get('server_commit', '')):
@@ -208,7 +212,7 @@ def exercise(root, report):
         with report.measure('download'):
             snapshot = root / 'snapshot'
             server = root / 'server'
-            manifest = download_fixture(RELEASE_URL, snapshot, FIXTURE)
+            manifest = download_fixture(RELEASE_URL, snapshot, FIXTURE, MANIFEST_SHA256)
             checkout_server(server)
             fixture_url = ('https://raw.githubusercontent.com/teagramhq/teagram-server/'
                            f"{manifest['server_commit']}/migrations/atlas.sum")

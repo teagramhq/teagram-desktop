@@ -1437,7 +1437,36 @@ jobs:
         continue-on-error: true
         run: |
           set -euo pipefail
-          echo "PERF_FIXTURE_STARTED_AT=$(date -u +%s)" >> "$GITHUB_ENV"
+          now="$(date -u +%s)"
+          started_at="${MACOS_JOB_STARTED_AT:-}"
+          run_fixture=false
+          if [[ "$started_at" =~ ^[0-9]+$ && "$now" =~ ^[0-9]+$ ]] && ((now >= started_at)); then
+            elapsed_seconds=$((now - started_at))
+            if ((240 * 60 - elapsed_seconds >= 45 * 60)); then
+              run_fixture=true
+            fi
+          fi
+          echo "run_fixture=$run_fixture" >> "$GITHUB_OUTPUT"
+          if [[ "$run_fixture" != true ]]; then
+            finished_at="$(date -u +%s)"
+            elapsed_fixture='unknown'
+            if [[ "$now" =~ ^[0-9]+$ && "$finished_at" =~ ^[0-9]+$ ]] && ((finished_at >= now)); then
+              elapsed_fixture="$((finished_at - now)) s"
+            fi
+            {
+              echo '### macOS live performance fixture'
+              echo
+              echo 'Status: **failed**. Failed phase: **job deadline headroom**.'
+              echo 'Fixture setup requires at least 45 minutes of job headroom, including time for reporting.'
+              printf '\n| Phase | Wall time |\n| --- | ---: |\n'
+              for name in 'tool setup' download 'postgres setup' 'restore 1x' 'restore 100x' migrations 'server build' 'server ready' cleanup; do
+                printf '| %s | not reached |\n' "$name"
+              done
+              printf '| Total added to job | %s |\n' "$elapsed_fixture"
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          echo "PERF_FIXTURE_STARTED_AT=$now" >> "$GITHUB_ENV"
           echo "PERF_FIXTURE_PHASE_FILE=$RUNNER_TEMP/macos-perf-fixture-phase" >> "$GITHUB_ENV"
           echo "PERF_FIXTURE_TIMES_FILE=$RUNNER_TEMP/macos-perf-fixture-times" >> "$GITHUB_ENV"
           echo "PERF_FIXTURE_SUMMARY_FILE=$RUNNER_TEMP/macos-perf-fixture-summary" >> "$GITHUB_ENV"
@@ -1446,7 +1475,7 @@ jobs:
 
       - name: Set up fixture server Go.
         id: perf-fixture-go
-        if: ${{ !cancelled() && steps.perf-fixture-start.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.perf-fixture-start.outcome == 'success' && steps.perf-fixture-start.outputs.run_fixture == 'true' }}
         continue-on-error: true
         timeout-minutes: 6
         uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5
@@ -1465,7 +1494,7 @@ jobs:
 
       - name: Restore and run performance fixtures (informational).
         id: perf-fixture
-        if: ${{ !cancelled() && steps.perf-fixture-start.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.perf-fixture-start.outcome == 'success' && steps.perf-fixture-start.outputs.run_fixture == 'true' }}
         continue-on-error: true
         timeout-minutes: 20
         env:
@@ -1474,7 +1503,7 @@ jobs:
         run: python3 "$REPO_NAME/.github/scripts/macos_perf_fixture.py"
 
       - name: Report interrupted fixture setup.
-        if: ${{ !cancelled() && steps.perf-fixture-start.outcome == 'success' && steps.perf-fixture.outcome != 'success' }}
+        if: ${{ !cancelled() && steps.perf-fixture-start.outcome == 'success' && steps.perf-fixture-start.outputs.run_fixture == 'true' && steps.perf-fixture.outcome != 'success' }}
         continue-on-error: true
         run: |
           set -euo pipefail
