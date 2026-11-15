@@ -11716,7 +11716,7 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		const auto chat = data.chat(id);
 		const auto peer = not_null<PeerData *>(static_cast<PeerData *>(&*chat));
 		session.api().processFullPeer(
-			peer, RegressionChatFullReply(id, 1, QString(), UserId(1)));
+			peer, RegressionChatFullReply(id, 1, u"+10000000001"_q, UserId(1)));
 		return data.history(peer);
 	};
 	const auto firstHistory = makeHistory(ChatId(1051));
@@ -11725,6 +11725,8 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 	const auto emptySecondHistory = makeHistory(ChatId(1'050'052));
 	result.dialogHistoriesReady
 		= !firstHistory->isEmpty() && !secondHistory->isEmpty()
+		  && HasExpectedParticipants(data.chat(ChatId(1051)), UserId(1))
+		  && HasExpectedParticipants(data.chat(ChatId(1052)), UserId(1))
 		  && (firstHistory->unreadCount() == 7)
 		  && (secondHistory->unreadCount() == 6)
 		  && firstHistory->isReadyFor(ShowAtUnreadMsgId)
@@ -11890,6 +11892,13 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		   == secondHistory->peer.get());
 	const auto autocompleteFocusedAfterFocus
 		= historyWidget->fieldFocusedForRegressionTest();
+	std::fprintf(
+		stderr,
+		"Focused autocomplete fixture: built_on_focus=%d peer_matches=%d "
+		"history_matches=%d participants=%d.\n",
+		autocompleteBuiltOnFocus, autocompletePeerMatchesAfterFocus,
+		historyWidget->history() == secondHistory.get(),
+		HasExpectedParticipants(data.chat(ChatId(1052)), UserId(1)));
 	historyWidget->setDraftTextForRegressionTest(u"@"_q);
 	result.fieldAutocompleteSuggestionsReady = WaitForRegressionCondition(
 		[&] {
@@ -11914,6 +11923,11 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 	const auto autocompletePeerMatches
 		= (historyWidget->fieldAutocompletePeerForRegressionTest()
 		   == firstHistory->peer.get());
+	std::fprintf(stderr,
+				 "Autocomplete switch fixture: history_matches=%d "
+				 "peer_matches=%d.\n",
+				 historyWidget->history() == firstHistory.get(),
+				 autocompletePeerMatches);
 	const auto tabbedPanelBuildsAfterSwitch
 		= historyWidget->tabbedPanelBuildCountForRegressionTest();
 	result.chatSwitchComposeUiReused
@@ -12591,6 +12605,16 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 			},
 			1500);
 		const auto layoutWidth = firstHistory->layoutWidthForRegressionTest();
+		std::fprintf(
+			stderr,
+			"Wide history fixture: history_matches=%d adaptive_wide=%d "
+			"history_wide=%d layout_width=%d loaded_top=%d loaded_bottom=%d "
+			"ready_unread=%d.\n",
+			historyWidget->history() == firstHistory.get(),
+			controller->adaptive().isChatWide(),
+			firstHistory->layoutChatWideForRegressionTest(), layoutWidth,
+			firstHistory->loadedAtTop(), firstHistory->loadedAtBottom(),
+			firstHistory->isReadyFor(ShowAtUnreadMsgId));
 		result.historyChatModeInitiallyWide
 			= normalLayoutReached && (layoutWidth > 0) && wideLayoutReached
 			  && firstHistory->layoutChatWideForRegressionTest();
@@ -12685,6 +12709,32 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 			chatSwitchWindows[i].mainThreadWorkNanoseconds,
 			chatSwitchWindows[i].durationNanoseconds, schedulerTrace,
 			schedulerSampleOffsetsNanoseconds);
+		if ((estimate.blockedNanoseconds < 0)
+			&& (chatSwitchWindows[i].durationNanoseconds
+				>= kMaxChatSwitchNanoseconds)) {
+			auto maxGap = qint64(0);
+			for (auto j = std::size_t(1);
+				 j < schedulerSampleOffsetsNanoseconds.size(); ++j) {
+				maxGap = std::max(
+					maxGap, schedulerSampleOffsetsNanoseconds[j]
+								- schedulerSampleOffsetsNanoseconds[j - 1]);
+			}
+			std::fprintf(
+				stderr,
+				"Chat switch coverage: index=%zu samples=%zu first_ns=%lld "
+				"last_ns=%lld max_gap_ns=%lld.\n",
+				static_cast<std::size_t>(i),
+				schedulerSampleOffsetsNanoseconds.size(),
+				static_cast<long long>(
+					schedulerSampleOffsetsNanoseconds.empty()
+						? -1
+						: schedulerSampleOffsetsNanoseconds.front()),
+				static_cast<long long>(
+					schedulerSampleOffsetsNanoseconds.empty()
+						? -1
+						: schedulerSampleOffsetsNanoseconds.back()),
+				static_cast<long long>(maxGap));
+		}
 		if (i > 0) {
 			result.maxChatSwitchEstimatedWorkNanoseconds
 				= std::max(result.maxChatSwitchEstimatedWorkNanoseconds,
