@@ -16034,6 +16034,8 @@ RunAiComposeApplyHandlerRegression(not_null<Window::Controller *> window,
 		static_cast<void>(releaseRecovery->tryAcquire(1, 10'000));
 	});
 	auto recoveryWasResponsive = false;
+	auto activeSessionValues = std::vector<Main::Session *>();
+	auto activeSessionLifetime = rpl::lifetime();
 	auto recoveryProbe = QTimer();
 	QObject::connect(&recoveryProbe, &QTimer::timeout, [&] {
 		if (recoveryEntered->tryAcquire()) {
@@ -16047,7 +16049,15 @@ RunAiComposeApplyHandlerRegression(not_null<Window::Controller *> window,
 								*entry.account);
 				}
 			}
-			recoveryWasResponsive = !domain.started() && pending && noMtp;
+			domain.activeSessionValue()
+				| rpl::on_next(
+					[&](Main::Session *session) {
+						activeSessionValues.push_back(session);
+					},
+					activeSessionLifetime);
+			recoveryWasResponsive = !domain.started() && pending && noMtp
+									&& activeSessionValues.size() == 1
+									&& activeSessionValues.front() == nullptr;
 			releaseRecovery->release();
 		}
 	});
@@ -16058,6 +16068,12 @@ RunAiComposeApplyHandlerRegression(not_null<Window::Controller *> window,
 		return failAccountLifecycle(
 			"endpoint recovery blocked the UI or resumed startup early");
 	}
+	if (activeSessionValues.size() < 2 || !domain.active().maybeSession()
+		|| activeSessionValues.back() != domain.active().maybeSession()) {
+		return failAccountLifecycle(
+			"active session value did not resume after endpoint recovery");
+	}
+	activeSessionLifetime.destroy();
 	auto active
 		= not_null<Main::Account *>(domain.accounts().front().account.get());
 	if (!active->sessionExists()) {

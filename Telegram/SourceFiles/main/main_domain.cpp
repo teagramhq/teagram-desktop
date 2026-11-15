@@ -237,9 +237,8 @@ rpl::producer<Session*> Domain::activeSessionChanges() const {
 }
 
 rpl::producer<Session*> Domain::activeSessionValue() const {
-	const auto current = _accounts.empty()
-		? nullptr
-		: active().maybeSession();
+	const auto account = _active.current();
+	const auto current = account ? account->maybeSession() : nullptr;
 	return rpl::single(current) | rpl::then(_activeSessions.events());
 }
 
