@@ -1070,6 +1070,46 @@ if main_thread_work_estimate_within_budget \
   0 100000000 RRRR 50000000 26000000,50000000,75000000,100000000; then
   contract_fail 'A 26 ms uncovered edge must fall back to wall time.'
 fi
+if ! main_thread_work_estimate_within_budget \
+  45000000 60000000 RRRR 50000000 5000000,25000000,45000000,55000000 \
+  R 5000000 R 5000000; then
+  contract_fail 'Runnable samples bracketing both edges must cover them.'
+fi
+if main_thread_work_estimate_within_budget \
+  45000000 60000000 RRRR 50000000 5000000,25000000,45000000,55000000 \
+  W 5000000 R 5000000; then
+  contract_fail 'A waiting sample before the window must charge its covered edge.'
+fi
+if main_thread_work_estimate_within_budget \
+  45000000 60000000 RRRR 50000000 5000000,25000000,45000000,55000000 \
+  R 5000000 U 5000000; then
+  contract_fail 'An uninterruptible sample after the window must charge its covered edge.'
+fi
+if ! main_thread_work_estimate_within_budget \
+  45000000 60000000 RRRR 50000000 5000000,25000000,45000000,55000000 \
+  R 20000000 R 5000000; then
+  contract_fail 'A bracketing gap of 25 ms must cover the window edge.'
+fi
+if main_thread_work_estimate_within_budget \
+  45000000 60000000 RRRR 50000000 5000000,25000000,45000000,55000000 \
+  R 21000000 R 5000000; then
+  contract_fail 'A bracketing gap of 26 ms must fall back to wall time.'
+fi
+if main_thread_work_estimate_within_budget \
+  45000000 60000000 RRRR 50000000 5000000,25000000,45000000,55000000 \
+  '?' 5000000 R 5000000; then
+  contract_fail 'An unknown bracketing state must fall back to wall time.'
+fi
+if main_thread_work_estimate_within_budget \
+  45000000 60000000 RRRR 50000000 5000000,25000000,45000000,55000000 \
+  R -1 R 5000000; then
+  contract_fail 'A negative bracketing distance must fall back to wall time.'
+fi
+if main_thread_work_estimate_within_budget \
+  52000000 60000000 RRRR 50000000 5000000,25000000,45000000,55000000 \
+  R 5000000 R 5000000; then
+  contract_fail 'Runnable brackets must not excuse over-budget main-thread CPU.'
+fi
 startup_offsets=""
 for ((offset = 0; offset <= 100000000; offset += 5000000)); do
   startup_offsets="${startup_offsets:+$startup_offsets,}$offset"

@@ -17,6 +17,7 @@ namespace Ui {
 class PlainShadow;
 class PopupMenu;
 class IconButton;
+class FlatLabel;
 } // namespace Ui
 
 namespace Window {
@@ -42,6 +43,9 @@ public:
 
 #ifdef TDESKTOP_LIFECYCLE_REGRESSION
 	[[nodiscard]] bool shouldBeShownForRegressionTest() const;
+	[[nodiscard]] bool controlsCreatedForRegressionTest() const;
+	[[nodiscard]] int contentWidthForRegressionTest() const;
+	void clickForRegressionTest();
 #endif
 
 	void move(int x, int y);
@@ -55,6 +59,8 @@ public:
 
 private:
 	void setup(not_null<History*> history);
+	void setupControls();
+	void translateTo(LanguageId id);
 	void updateShadowGeometry(QRect wrapGeometry);
 	[[nodiscard]] base::unique_qptr<Ui::PopupMenu> createMenu(
 		not_null<Ui::IconButton*> button);
@@ -75,6 +81,8 @@ private:
 	base::unique_qptr<Ui::PopupMenu> _menu;
 	rpl::variable<LanguageId> _overridenTo;
 	rpl::variable<LanguageId> _to;
+	Ui::FlatLabel *_label = nullptr;
+	Fn<void()> _updateLabelGeometry;
 	bool _shouldBeShown = false;
 	bool _forceHidden = false;
 

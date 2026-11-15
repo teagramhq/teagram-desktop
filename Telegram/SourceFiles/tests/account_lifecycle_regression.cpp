@@ -90,6 +90,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "history/history_item_reply_markup.h"
 #include "history/history_widget.h"
 #include "history/view/history_view_chat_section.h"
+#include "history/view/history_view_contact_status.h"
 #include "history/view/history_view_top_bar_widget.h"
 #include "history/view/history_view_translate_bar.h"
 #include "history/view/history_view_translate_tracker.h"
@@ -8958,14 +8959,49 @@ AddTranslationRegressionMessage(not_null<Main::Session *> session,
 						 "session stopped automatic translation tracking.\n");
 			return false;
 		}
-		stockHistory->translateOfferFrom(offered);
+		stockHistory->translateTo(LanguageId());
+		stockHistory->translateOfferFrom(LanguageId());
 		HistoryView::TranslateBar bar(stockController->widget().get(),
 									  stockController, stockHistory);
+		bar.resizeToWidth(500);
 		bar.finishAnimating();
-		if (!bar.shouldBeShownForRegressionTest()) {
+		if (bar.shouldBeShownForRegressionTest()
+			|| bar.controlsCreatedForRegressionTest()) {
+			std::fprintf(stderr,
+						 "Translation controls regression failed: "
+						 "the hidden bar eagerly created its controls.\n");
+			return false;
+		}
+		stockHistory->translateOfferFrom(offered);
+		const auto shown = WaitForRegressionCondition(
+			[&] {
+				return bar.shouldBeShownForRegressionTest()
+					   && bar.controlsCreatedForRegressionTest();
+			},
+			1000);
+		bar.finishAnimating();
+		if (!shown || (bar.contentWidthForRegressionTest() != 500)) {
 			std::fprintf(stderr,
 						 "Translation controls regression failed: stock "
 						 "session lost its automatic translation bar.\n");
+			return false;
+		}
+		HistoryView::TranslateBar initiallyVisible(
+			stockController->widget().get(), stockController, stockHistory);
+		if (!initiallyVisible.shouldBeShownForRegressionTest()
+			|| !initiallyVisible.controlsCreatedForRegressionTest()) {
+			return false;
+		}
+		const auto originalTranslation = stockHistory->translatedTo();
+		bar.clickForRegressionTest();
+		const auto toggled = WaitForRegressionCondition(
+			[&] { return stockHistory->translatedTo() != originalTranslation; },
+			1000);
+		bar.clickForRegressionTest();
+		const auto restored = WaitForRegressionCondition(
+			[&] { return stockHistory->translatedTo() == originalTranslation; },
+			1000);
+		if (!toggled || !restored) {
 			return false;
 		}
 	}
@@ -10634,10 +10670,17 @@ SchedulerSampleOffsetsForInterval(
 	return rebasedSampleOffsetsNanoseconds;
 }
 
+struct SchedulerBoundarySample final {
+	char state = '?';
+	qint64 distanceNanoseconds = -1;
+};
+
 struct SchedulerTraceWindow final {
 	QString trace;
 	std::vector<qint64> sampleOffsetsNanoseconds;
 	bool capturePending = false;
+	std::optional<SchedulerBoundarySample> before;
+	std::optional<SchedulerBoundarySample> after;
 };
 
 [[nodiscard]] SchedulerTraceWindow SchedulerTraceForInterval(
@@ -10729,10 +10772,24 @@ struct SchedulerTraceWindow final {
 	auto samplesInWindow = std::vector<std::pair<qint64, QChar>>();
 	auto latestSampleAt = qint64(0);
 	for (const auto &sample : samples) {
+		if (sample.sampledAtSteadyNanoseconds <= 0) {
+			return {};
+		}
 		latestSampleAt
 			= std::max(latestSampleAt, sample.sampledAtSteadyNanoseconds);
-		if ((sample.sampledAtSteadyNanoseconds >= start)
-			&& (sample.sampledAtSteadyNanoseconds <= windowEnd)) {
+		if (sample.sampledAtSteadyNanoseconds < start) {
+			const auto distance = start - sample.sampledAtSteadyNanoseconds;
+			if (!result.before
+				|| (distance < result.before->distanceNanoseconds)) {
+				result.before = SchedulerBoundarySample{sample.state, distance};
+			}
+		} else if (sample.sampledAtSteadyNanoseconds > windowEnd) {
+			const auto distance = sample.sampledAtSteadyNanoseconds - windowEnd;
+			if (!result.after
+				|| (distance < result.after->distanceNanoseconds)) {
+				result.after = SchedulerBoundarySample{sample.state, distance};
+			}
+		} else {
 			samplesInWindow.emplace_back(
 				sample.sampledAtSteadyNanoseconds - start, QChar(sample.state));
 		}
@@ -11143,10 +11200,12 @@ struct MainThreadWorkEstimate final {
 	qint64 estimatedWorkNanoseconds = -1;
 };
 
-[[nodiscard]] MainThreadWorkEstimate
-EstimateMainThreadWork(qint64 mainThreadCpuNanoseconds, qint64 wallNanoseconds,
-					   const QString &schedulerTrace,
-					   const std::vector<qint64> &sampleOffsetsNanoseconds) {
+[[nodiscard]] MainThreadWorkEstimate EstimateMainThreadWork(
+	qint64 mainThreadCpuNanoseconds, qint64 wallNanoseconds,
+	const QString &schedulerTrace,
+	const std::vector<qint64> &sampleOffsetsNanoseconds,
+	const std::optional<SchedulerBoundarySample> &before = std::nullopt,
+	const std::optional<SchedulerBoundarySample> &after = std::nullopt) {
 	if (wallNanoseconds < 0) {
 		return {};
 	} else if (schedulerTrace.isEmpty() || (schedulerTrace == u"none"_q)) {
@@ -11182,7 +11241,19 @@ EstimateMainThreadWork(qint64 mainThreadCpuNanoseconds, qint64 wallNanoseconds,
 		if (gap > kMaximumSampleGapNanoseconds) {
 			return {-1, wallNanoseconds};
 		}
-		if (!hasInWindowSample || (previousState != u'R') || (state != u'R')) {
+		if (!hasInWindowSample && gap && before) {
+			if ((before->distanceNanoseconds < 0)
+				|| (before->distanceNanoseconds
+					> kMaximumSampleGapNanoseconds - gap)
+				|| ((before->state != 'R') && (before->state != 'W')
+					&& (before->state != 'U'))) {
+				return {-1, wallNanoseconds};
+			}
+			if ((before->state != 'R') || (state != u'R')) {
+				blockedNanoseconds += gap;
+			}
+		} else if (!hasInWindowSample || (previousState != u'R')
+				   || (state != u'R')) {
 			blockedNanoseconds += gap;
 		}
 		lastInWindowOffset = offset;
@@ -11194,7 +11265,21 @@ EstimateMainThreadWork(qint64 mainThreadCpuNanoseconds, qint64 wallNanoseconds,
 			> kMaximumSampleGapNanoseconds)) {
 		return {-1, wallNanoseconds};
 	}
-	blockedNanoseconds += wallNanoseconds - lastInWindowOffset;
+	const auto tail = wallNanoseconds - lastInWindowOffset;
+	if (tail && after) {
+		if ((after->distanceNanoseconds < 0)
+			|| (after->distanceNanoseconds
+				> kMaximumSampleGapNanoseconds - tail)
+			|| ((after->state != 'R') && (after->state != 'W')
+				&& (after->state != 'U'))) {
+			return {-1, wallNanoseconds};
+		}
+		if ((previousState != u'R') || (after->state != 'R')) {
+			blockedNanoseconds += tail;
+		}
+	} else {
+		blockedNanoseconds += tail;
+	}
 	if (mainThreadCpuNanoseconds
 		> std::numeric_limits<qint64>::max() - blockedNanoseconds) {
 		return {};
@@ -11330,6 +11415,68 @@ void AccumulateMainThreadWorkEstimate(qint64 &aggregateNanoseconds,
 	const auto noInWindowSamples
 		= EstimateMainThreadWork(18'000'000, 225'000'000, u"RRR"_q,
 								 {226'000'000, 227'000'000, 228'000'000});
+	const auto bracketedWindow = MainThreadWorkInterval{
+		.durationNanoseconds = 60'000'000,
+		.startedAtSteadyNanoseconds = 100'000'000,
+	};
+	const auto bracketedSamples
+		= std::vector<Core::UiStallWatchdog::SchedulerSampleEvidence>{
+			{.sampledAtSteadyNanoseconds = 95'000'000, .state = 'R'},
+			{.sampledAtSteadyNanoseconds = 105'000'000, .state = 'R'},
+			{.sampledAtSteadyNanoseconds = 125'000'000, .state = 'R'},
+			{.sampledAtSteadyNanoseconds = 145'000'000, .state = 'R'},
+			{.sampledAtSteadyNanoseconds = 155'000'000, .state = 'R'},
+			{.sampledAtSteadyNanoseconds = 165'000'000, .state = 'R'},
+	};
+	const auto bracketed
+		= SchedulerTraceForInterval(bracketedWindow, bracketedSamples);
+	const auto bracketedEstimate = EstimateMainThreadWork(
+		45'000'000, bracketedWindow.durationNanoseconds, bracketed.trace,
+		bracketed.sampleOffsetsNanoseconds, bracketed.before, bracketed.after);
+	auto waitingBeforeSamples = bracketedSamples;
+	waitingBeforeSamples.front().state = 'W';
+	const auto waitingBefore
+		= SchedulerTraceForInterval(bracketedWindow, waitingBeforeSamples);
+	const auto waitingBeforeEstimate = EstimateMainThreadWork(
+		45'000'000, bracketedWindow.durationNanoseconds, waitingBefore.trace,
+		waitingBefore.sampleOffsetsNanoseconds, waitingBefore.before,
+		waitingBefore.after);
+	auto waitingAfterSamples = bracketedSamples;
+	waitingAfterSamples.back().state = 'U';
+	const auto waitingAfter
+		= SchedulerTraceForInterval(bracketedWindow, waitingAfterSamples);
+	const auto waitingAfterEstimate = EstimateMainThreadWork(
+		45'000'000, bracketedWindow.durationNanoseconds, waitingAfter.trace,
+		waitingAfter.sampleOffsetsNanoseconds, waitingAfter.before,
+		waitingAfter.after);
+	auto edge25Samples = bracketedSamples;
+	edge25Samples.front().sampledAtSteadyNanoseconds = 80'000'000;
+	const auto edge25
+		= SchedulerTraceForInterval(bracketedWindow, edge25Samples);
+	const auto edge25Estimate = EstimateMainThreadWork(
+		45'000'000, bracketedWindow.durationNanoseconds, edge25.trace,
+		edge25.sampleOffsetsNanoseconds, edge25.before, edge25.after);
+	auto edge26Samples = bracketedSamples;
+	edge26Samples.front().sampledAtSteadyNanoseconds = 79'000'000;
+	const auto edge26
+		= SchedulerTraceForInterval(bracketedWindow, edge26Samples);
+	const auto edge26Estimate = EstimateMainThreadWork(
+		45'000'000, bracketedWindow.durationNanoseconds, edge26.trace,
+		edge26.sampleOffsetsNanoseconds, edge26.before, edge26.after);
+	auto unknownBeforeSamples = bracketedSamples;
+	unknownBeforeSamples.front().state = '?';
+	const auto unknownBefore
+		= SchedulerTraceForInterval(bracketedWindow, unknownBeforeSamples);
+	const auto unknownBeforeEstimate = EstimateMainThreadWork(
+		45'000'000, bracketedWindow.durationNanoseconds, unknownBefore.trace,
+		unknownBefore.sampleOffsetsNanoseconds, unknownBefore.before,
+		unknownBefore.after);
+	const auto withoutBoundaries = EstimateMainThreadWork(
+		45'000'000, bracketedWindow.durationNanoseconds, bracketed.trace,
+		bracketed.sampleOffsetsNanoseconds);
+	const auto overCpuBudget = EstimateMainThreadWork(
+		52'000'000, bracketedWindow.durationNanoseconds, bracketed.trace,
+		bracketed.sampleOffsetsNanoseconds, bracketed.before, bracketed.after);
 	const auto callbackOffsets = coveredOffsets(200'000'000);
 	const auto blockedAttachMenuCallback = EstimateMainThreadWork(
 		12'000'000, 200'000'000,
@@ -11618,6 +11765,16 @@ void AccumulateMainThreadWorkEstimate(qint64 &aggregateNanoseconds,
 												  100'000'000)
 		   && (noInWindowSamples.blockedNanoseconds == -1)
 		   && (noInWindowSamples.estimatedWorkNanoseconds == 225'000'000)
+		   && (bracketedEstimate.estimatedWorkNanoseconds == 45'000'000)
+		   && (waitingBeforeEstimate.estimatedWorkNanoseconds == 50'000'000)
+		   && (waitingAfterEstimate.estimatedWorkNanoseconds == 50'000'000)
+		   && (edge25Estimate.estimatedWorkNanoseconds == 45'000'000)
+		   && (edge26Estimate.blockedNanoseconds == -1)
+		   && (edge26Estimate.estimatedWorkNanoseconds == 60'000'000)
+		   && (unknownBeforeEstimate.blockedNanoseconds == -1)
+		   && (unknownBeforeEstimate.estimatedWorkNanoseconds == 60'000'000)
+		   && (withoutBoundaries.estimatedWorkNanoseconds == 55'000'000)
+		   && (overCpuBudget.estimatedWorkNanoseconds == 52'000'000)
 		   && !MainThreadWorkEstimateWithinBudget(
 			   18'000'000, 225'000'000, u"RRR"_q,
 			   {226'000'000, 227'000'000, 228'000'000}, 100'000'000)
@@ -11778,6 +11935,87 @@ struct CacheReactionProbe final {
 	bool active = false;
 };
 
+[[nodiscard]] bool ContactStatusRequestTextRegressionPasses(
+	not_null<Window::SessionController *> controller) {
+	const auto user
+		= controller->session().data().processUsers(MTP_vector<MTPUser>(
+			{RegressionUser(UserId(1'050'080), false, u"1050080"_q, false)}));
+	if (!user) {
+		return false;
+	}
+	user->setBarSettings(PeerBarSettings());
+	auto parent = Ui::RpWidget(controller->widget().get());
+	auto status = HistoryView::ContactStatus(controller, &parent, user, false);
+	const auto botPhotoLabel = [](QWidget &root) -> Ui::FlatLabel * {
+		for (const auto child : root.findChildren<QWidget *>()) {
+			if (const auto label = dynamic_cast<Ui::FlatLabel *>(child)) {
+				if (&label->st() == &st::historySetBotPhotoLabel) {
+					return label;
+				}
+			}
+		}
+		return nullptr;
+	};
+	const auto botPhotoDeferred = !botPhotoLabel(parent);
+	Ui::FlatLabel *requestLabel = nullptr;
+	for (const auto child : parent.findChildren<QWidget *>()) {
+		if (const auto label = dynamic_cast<Ui::FlatLabel *>(child)) {
+			if (&label->st() == &st::historyContactStatusLabel) {
+				requestLabel = label;
+				break;
+			}
+		}
+	}
+	if (!requestLabel || !requestLabel->accessibilityName().isEmpty()) {
+		std::fprintf(stderr,
+					 "Contact status fixture: request_label=%d "
+					 "initial_text_empty=%d.\n",
+					 bool(requestLabel),
+					 requestLabel
+						 && requestLabel->accessibilityName().isEmpty());
+		return false;
+	}
+	status.show();
+	user->setBarSettings(PeerBarSettings(PeerBarSetting::RequestChat));
+	const auto groupReady = WaitForRegressionCondition(
+		[&] { return !requestLabel->accessibilityName().isEmpty(); }, 1000);
+	const auto groupText = requestLabel->accessibilityName();
+	user->setBarSettings(PeerBarSetting::RequestChat
+						 | PeerBarSetting::RequestChatIsBroadcast);
+	const auto channelReady = WaitForRegressionCondition(
+		[&] {
+			return !requestLabel->accessibilityName().isEmpty()
+				   && (requestLabel->accessibilityName() != groupText);
+		},
+		1000);
+	const auto bot = controller->session().data().processUsers(
+		MTP_vector<MTPUser>({RegressionBotUser(UserId(1'050'081))}));
+	if (!bot || !bot->botInfo) {
+		return false;
+	}
+	bot->botInfo->canEditInformation = true;
+	bot->setBotManagerId(controller->session().userId());
+	bot->setBarSettings(PeerBarSettings());
+	auto botParent = Ui::RpWidget(controller->widget().get());
+	auto botStatus
+		= HistoryView::ContactStatus(controller, &botParent, bot, false);
+	botStatus.show();
+	const auto botPhotoReady = WaitForRegressionCondition(
+		[&] {
+			const auto label = botPhotoLabel(botParent);
+			return label && !label->isHidden()
+				   && !label->accessibilityName().isEmpty();
+		},
+		1000);
+	if (!groupReady || !channelReady || !botPhotoDeferred || !botPhotoReady) {
+		std::fprintf(stderr,
+					 "Contact status fixture: group=%d channel=%d "
+					 "photo_deferred=%d photo_ready=%d.\n",
+					 groupReady, channelReady, botPhotoDeferred, botPhotoReady);
+	}
+	return groupReady && channelReady && botPhotoDeferred && botPhotoReady;
+}
+
 [[nodiscard]] bool GroupCallBarDeferredButtonRegressionPasses() {
 	auto parent = QWidget();
 	auto changes = rpl::event_stream<Ui::GroupCallBarContent>();
@@ -11785,6 +12023,7 @@ struct CacheReactionProbe final {
 		&parent, changes.events_starting_with(Ui::GroupCallBarContent()),
 		rpl::single(false));
 	bar.resizeToWidth(500);
+	Ui::SendPendingMoveResizeEvents(&parent);
 	const auto findButton = [](QWidget &root) -> Ui::RoundButton * {
 		for (const auto child : root.findChildren<QWidget *>()) {
 			if (const auto result = dynamic_cast<Ui::RoundButton *>(child)) {
@@ -11804,6 +12043,7 @@ struct CacheReactionProbe final {
 	auto lifetime = rpl::lifetime();
 	bar.joinClicks() | rpl::on_next([&] { ++clicks; }, lifetime);
 	changes.fire_copy(Ui::GroupCallBarContent{.shown = true});
+	Ui::SendPendingMoveResizeEvents(&parent);
 	bar.finishAnimating();
 	const auto join = findButton(parent);
 	const auto joined = (join != nullptr) && (bar.height() > 0);
@@ -11814,6 +12054,7 @@ struct CacheReactionProbe final {
 		.scheduleDate = base::unixtime::now() + 60,
 		.shown = true,
 	});
+	Ui::SendPendingMoveResizeEvents(&parent);
 	bar.finishAnimating();
 	const auto scheduled = findButton(parent);
 	const auto scheduledShown = (scheduled != nullptr) && (bar.height() > 0);
@@ -11821,9 +12062,11 @@ struct CacheReactionProbe final {
 		scheduled->clicked(Qt::NoModifier, Qt::LeftButton);
 	}
 	changes.fire_copy(Ui::GroupCallBarContent());
+	Ui::SendPendingMoveResizeEvents(&parent);
 	bar.finishAnimating();
 	const auto hidden = (bar.height() == 0);
 	changes.fire_copy(Ui::GroupCallBarContent{.shown = true});
+	Ui::SendPendingMoveResizeEvents(&parent);
 	bar.finishAnimating();
 	const auto reopened = findButton(parent);
 	if (reopened) {
@@ -11837,10 +12080,24 @@ struct CacheReactionProbe final {
 							   Ui::GroupCallBarContent{.shown = true}),
 						   rpl::single(false));
 	initiallyShown.resizeToWidth(500);
+	Ui::SendPendingMoveResizeEvents(&initiallyShownParent);
 	initiallyShown.finishAnimating();
-	return deferred && deferredScheduled && joined && scheduledShown && hidden
-		   && reopened && (bar.height() > 0) && (clicks == 3)
-		   && findButton(initiallyShownParent) && (initiallyShown.height() > 0);
+	const auto passed
+		= deferred && deferredScheduled && joined && scheduledShown && hidden
+		  && reopened && (bar.height() > 0) && (clicks == 3)
+		  && findButton(initiallyShownParent) && (initiallyShown.height() > 0);
+	if (!passed) {
+		std::fprintf(stderr,
+					 "Group call bar fixture: deferred=%d "
+					 "scheduled_deferred=%d joined=%d scheduled=%d hidden=%d "
+					 "reopened=%d height=%d clicks=%d initially_shown=%d "
+					 "initial_height=%d.\n",
+					 deferred, deferredScheduled, joined, scheduledShown,
+					 hidden, bool(reopened), bar.height(), clicks,
+					 bool(findButton(initiallyShownParent)),
+					 initiallyShown.height());
+	}
+	return passed;
 }
 
 [[maybe_unused, nodiscard]] CacheChatSwitchRegressionResult
@@ -12909,8 +13166,11 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		const auto estimate = EstimateMainThreadWork(
 			chatSwitchWindows[i].mainThreadWorkNanoseconds,
 			chatSwitchWindows[i].durationNanoseconds, schedulerTrace,
-			schedulerSampleOffsetsNanoseconds);
-		if (estimate.estimatedWorkNanoseconds >= kMaxChatSwitchNanoseconds) {
+			schedulerSampleOffsetsNanoseconds, schedulerSamples.before,
+			schedulerSamples.after);
+		if ((estimate.estimatedWorkNanoseconds >= kMaxChatSwitchNanoseconds)
+			|| (chatSwitchWindows[i].durationNanoseconds
+				>= kMaxChatSwitchNanoseconds)) {
 			auto offsets = QStringList();
 			for (const auto offset : schedulerSampleOffsetsNanoseconds) {
 				offsets.push_back(QString::number(offset));
@@ -12921,10 +13181,21 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 			const auto offsetsText = offsets.join(u',').toLatin1();
 			std::fprintf(
 				stderr,
-				"Chat switch over-budget samples: index=%zu started_at=%s "
-				"offsets_ns=%s.\n",
+				"Chat switch sample context: index=%zu started_at=%s "
+				"offsets_ns=%s before=%c before_distance_ns=%lld "
+				"after=%c after_distance_ns=%lld.\n",
 				static_cast<std::size_t>(i), startedAt.constData(),
-				offsetsText.constData());
+				offsetsText.constData(),
+				schedulerSamples.before ? schedulerSamples.before->state : '-',
+				static_cast<long long>(
+					schedulerSamples.before
+						? schedulerSamples.before->distanceNanoseconds
+						: -1),
+				schedulerSamples.after ? schedulerSamples.after->state : '-',
+				static_cast<long long>(
+					schedulerSamples.after
+						? schedulerSamples.after->distanceNanoseconds
+						: -1));
 		}
 		if ((estimate.blockedNanoseconds < 0)
 			&& (chatSwitchWindows[i].durationNanoseconds
@@ -13086,7 +13357,40 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 			= SchedulerTraceForInterval(callback, attachMenuSchedulerTimeline);
 		const auto estimate = EstimateMainThreadWork(
 			callback.mainThreadWorkNanoseconds, callback.durationNanoseconds,
-			schedulerSamples.trace, schedulerSamples.sampleOffsetsNanoseconds);
+			schedulerSamples.trace, schedulerSamples.sampleOffsetsNanoseconds,
+			schedulerSamples.before, schedulerSamples.after);
+		auto offsets = QStringList();
+		for (const auto offset : schedulerSamples.sampleOffsetsNanoseconds) {
+			offsets.push_back(QString::number(offset));
+		}
+		const auto label = callback.label.toUtf8();
+		const auto trace = schedulerSamples.trace.isEmpty()
+							   ? QByteArray("none")
+							   : schedulerSamples.trace.toLatin1();
+		const auto offsetsText = offsets.join(u',').toLatin1();
+		std::fprintf(
+			stderr,
+			"Attach menu callback work window: label=%s wall_ns=%lld "
+			"main_thread_cpu_ns=%lld blocked_estimate_ns=%lld "
+			"estimated_work_ns=%lld trace=%s offsets_ns=%s "
+			"before=%c before_distance_ns=%lld after=%c "
+			"after_distance_ns=%lld.\n",
+			label.constData(),
+			static_cast<long long>(callback.durationNanoseconds),
+			static_cast<long long>(callback.mainThreadWorkNanoseconds),
+			static_cast<long long>(estimate.blockedNanoseconds),
+			static_cast<long long>(estimate.estimatedWorkNanoseconds),
+			trace.constData(), offsetsText.constData(),
+			schedulerSamples.before ? schedulerSamples.before->state : '-',
+			static_cast<long long>(
+				schedulerSamples.before
+					? schedulerSamples.before->distanceNanoseconds
+					: -1),
+			schedulerSamples.after ? schedulerSamples.after->state : '-',
+			static_cast<long long>(
+				schedulerSamples.after
+					? schedulerSamples.after->distanceNanoseconds
+					: -1));
 		qint64 *destination = nullptr;
 		bool *seen = nullptr;
 		if (callback.label == u"first hover callback"_q) {
@@ -13156,8 +13460,12 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 	result.cachedDocuments = int(mediaViews.size());
 	const auto groupCallBarDeferred
 		= GroupCallBarDeferredButtonRegressionPasses();
+	const auto contactStatusRequestText
+		= ContactStatusRequestTextRegressionPasses(controller);
 	std::fprintf(stderr, "Group call bar deferred button: passed=%d.\n",
 				 groupCallBarDeferred);
+	std::fprintf(stderr, "Contact status deferred request text: passed=%d.\n",
+				 contactStatusRequestText);
 	result.passed
 		= completed && !timedOut && (result.reactions == kReactionCount)
 		  && (result.attachMenuBotCount >= 20)
@@ -13169,6 +13477,7 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 			  == (kReactionCount / 2 + 1) * kDocumentsPerReaction)
 		  && result.historyScaleInvalidationRebuilt
 		  && result.historyChatModeInvalidationRebuilt && groupCallBarDeferred
+		  && contactStatusRequestText
 		  && MainThreadCpuWorkWithinBudget(
 			  result.attachMenuFirstHoverCallbackCpuNanoseconds,
 			  kMaxChatSwitchNanoseconds)
@@ -13210,11 +13519,8 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		  && (result.maxChatSwitchIndex >= 0)
 		  && (result.maxChatSwitchPeerId >= 0)
 		  && result.chatSwitchWorkWithinBudget
-		  && MainThreadWorkEstimateWithinBudget(
-			  result.initialHistorySelectionMainThreadWorkNanoseconds,
-			  result.initialHistorySelectionNanoseconds,
-			  result.initialHistorySelectionSchedulerTrace,
-			  result.initialHistorySelectionSchedulerSampleOffsetsNanoseconds,
+		  && MainThreadEstimatedWorkWithinBudget(
+			  result.initialHistorySelectionEstimatedWorkNanoseconds,
 			  kMaxChatSwitchNanoseconds)
 		  && (result.maxRecurringChatSwitchMainThreadWorkNanoseconds >= 0)
 		  && (result.maxRecurringChatSwitchEstimatedWorkNanoseconds >= 0)
@@ -13403,7 +13709,8 @@ RunFirstDialogsHandlerLatencyRegression(not_null<Main::Account *> account) {
 	const auto handlerEstimate = EstimateMainThreadWork(
 		result.handlerMainThreadCpuNanoseconds, result.handlerNanoseconds,
 		result.handlerSchedulerTrace,
-		result.handlerSchedulerSampleOffsetsNanoseconds);
+		result.handlerSchedulerSampleOffsetsNanoseconds,
+		handlerSchedulerSamples.before, handlerSchedulerSamples.after);
 	result.handlerBlockedEstimateNanoseconds
 		= handlerEstimate.blockedNanoseconds;
 	result.handlerEstimatedWorkNanoseconds

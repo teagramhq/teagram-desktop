@@ -90,6 +90,10 @@ main_thread_work_estimate_within_budget() {
 	local trace="$3"
 	local budget_ns="$4"
 	local offsets_csv="${5:-}"
+	local before_state="${6:-}"
+	local before_distance="${7:-}"
+	local after_state="${8:-}"
+	local after_distance="${9:-}"
 	local estimate_ns
 	if [[ "$trace" == none || -z "$trace" ]]; then
 		estimate_ns="$wall_ns"
@@ -136,7 +140,18 @@ main_thread_work_estimate_within_budget() {
 					samples_valid=false
 					break
 				fi
-				if [[ "$has_in_window_sample" != true || "$previous_state" != R || "$state" != R ]]; then
+				if [[ "$has_in_window_sample" != true ]] && (( gap > 0 )) \
+					&& [[ -n "$before_state" || -n "$before_distance" ]]; then
+					if [[ ! "$before_distance" =~ ^[0-9]+$ ]] \
+						|| [[ "$before_state" != R && "$before_state" != W && "$before_state" != U ]] \
+						|| (( before_distance > maximum_sample_gap_ns - gap )); then
+						samples_valid=false
+						break
+					fi
+					if [[ "$before_state" != R || "$state" != R ]]; then
+						blocked_ns="$((blocked_ns + gap))"
+					fi
+				elif [[ "$has_in_window_sample" != true || "$previous_state" != R || "$state" != R ]]; then
 					blocked_ns="$((blocked_ns + gap))"
 				fi
 				last_in_window_offset="$offset"
@@ -149,8 +164,23 @@ main_thread_work_estimate_within_budget() {
 		if [[ "$samples_valid" == true ]] \
 			&& [[ "$has_in_window_sample" == true ]] \
 			&& (( wall_ns - last_in_window_offset <= maximum_sample_gap_ns )); then
-			blocked_ns="$((blocked_ns + wall_ns - last_in_window_offset))"
-			estimate_ns="$((main_thread_cpu_ns + blocked_ns))"
+			local tail="$((wall_ns - last_in_window_offset))"
+			if (( tail > 0 )) && [[ -n "$after_state" || -n "$after_distance" ]]; then
+				if [[ ! "$after_distance" =~ ^[0-9]+$ ]] \
+					|| [[ "$after_state" != R && "$after_state" != W && "$after_state" != U ]] \
+					|| (( after_distance > maximum_sample_gap_ns - tail )); then
+					samples_valid=false
+				elif [[ "$previous_state" != R || "$after_state" != R ]]; then
+					blocked_ns="$((blocked_ns + tail))"
+				fi
+			else
+				blocked_ns="$((blocked_ns + tail))"
+			fi
+			if [[ "$samples_valid" == true ]]; then
+				estimate_ns="$((main_thread_cpu_ns + blocked_ns))"
+			else
+				estimate_ns="$wall_ns"
+			fi
 		else
 			estimate_ns="$wall_ns"
 		fi
