@@ -101,6 +101,11 @@ def validate_migration_history(manifest, fixture_sum, runtime_sum):
         raise ValueError(f'fixture migration history through {revision} differs from the pinned server')
 
 
+def validate_restored_revision(scale, actual, expected):
+    if actual != expected:
+        raise ValueError(f'{scale} database migration revision {actual} does not match manifest {expected}')
+
+
 def format_summary(status, phase, durations, started_at, finished_at, job_started_at, fingerprints, error=''):
     lines = ['### macOS live performance fixture', '', f'Status: **{status}**']
     if status != 'passed':
@@ -201,6 +206,7 @@ def exercise(root, report):
     processes = []
     pg_bin = None
     pg_data = root / 'postgres'
+    original_error = None
     try:
         if os.environ['PERF_GO_OUTCOME'] != 'success':
             report.failure_phase = 'tool setup'
@@ -247,8 +253,7 @@ def exercise(root, report):
                 actual = run([str(pg_bin / 'psql'), '-XAt', '-v', 'ON_ERROR_STOP=1', '-d', dsn,
                               '-c', 'SELECT version FROM atlas_schema_revisions.atlas_schema_revisions ORDER BY version DESC LIMIT 1'],
                              capture=True).stdout.strip()
-                if actual != manifest['migration_revision']:
-                    raise ValueError(f'{scale} database migration revision {actual} does not match manifest {manifest["migration_revision"]}')
+                validate_restored_revision(scale, actual, manifest['migration_revision'])
 
         with report.measure('migrations'):
             for scale in ('1x', '100x'):
@@ -293,23 +298,41 @@ def exercise(root, report):
                 servers.append((scale, process, log, port))
             for scale, process, log, port in servers:
                 report.fingerprints[scale] = wait_for_server(process, log, port)
-    except Exception:
+    except BaseException as error:
+        original_error = error
         postgres_log = root / 'postgres.log'
-        if postgres_log.exists():
-            print(f'PostgreSQL log:\n{postgres_log.read_text(errors="replace")[-6000:]}', file=sys.stderr)
+        try:
+            if postgres_log.exists():
+                print(f'PostgreSQL log:\n{postgres_log.read_text(errors="replace")[-6000:]}', file=sys.stderr)
+        except OSError as error:
+            print(f'Could not read PostgreSQL log: {error}', file=sys.stderr)
         raise
     finally:
-        with report.measure('cleanup'):
-            for process in processes:
-                if process.poll() is None:
-                    process.terminate()
+        try:
+            with report.measure('cleanup'):
+                cleanup_errors = []
+                for process in processes:
                     try:
-                        process.wait(timeout=10)
-                    except subprocess.TimeoutExpired:
-                        process.kill()
-                        process.wait(timeout=10)
-            if pg_bin and (pg_data / 'postmaster.pid').exists():
-                run([str(pg_bin / 'pg_ctl'), '-D', str(pg_data), '-m', 'fast', '-w', 'stop'], timeout=60)
+                        if process.poll() is None:
+                            process.terminate()
+                            try:
+                                process.wait(timeout=10)
+                            except subprocess.TimeoutExpired:
+                                process.kill()
+                                process.wait(timeout=10)
+                    except Exception as error:
+                        cleanup_errors.append(f'server shutdown failed: {error}')
+                if pg_bin and (pg_data / 'postmaster.pid').exists():
+                    try:
+                        run([str(pg_bin / 'pg_ctl'), '-D', str(pg_data), '-m', 'fast', '-w', 'stop'], timeout=60)
+                    except Exception as error:
+                        cleanup_errors.append(f'PostgreSQL shutdown failed: {error}')
+                if cleanup_errors:
+                    raise RuntimeError('; '.join(cleanup_errors))
+        except Exception as cleanup_error:
+            if original_error is None:
+                raise
+            print(f'Fixture cleanup failed: {cleanup_error}', file=sys.stderr)
 
 
 def main():

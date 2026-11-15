@@ -708,6 +708,30 @@ done
 expect_contains "$mac_workflow fixture migrations if" \
   "$(step_field "$mac_workflow" build-macos 'Set up fixture migrations.' '.if')" \
   "steps.perf-fixture-go.outcome == 'success'"
+fixture_report_script="$(step_field "$mac_workflow" build-macos 'Report interrupted fixture setup.' '.run')"
+fixture_report_dir="$temp_dir/fixture-deadline/report"
+mkdir -p "$fixture_report_dir"
+printf '%s\n' 'restore 100x' > "$fixture_report_dir/phase"
+printf '%s\n' 'tool setup|1.0' 'download|2.0' 'restore 1x|3.5' > "$fixture_report_dir/times"
+: > "$fixture_report_dir/summary"
+run_fixture_report() {
+  env PATH="$temp_dir/fixture-deadline/bin:$PATH" FIXTURE_TEST_NOW=112 \
+    PERF_FIXTURE_STARTED_AT=100 PERF_FIXTURE_PHASE_FILE="$fixture_report_dir/phase" \
+    PERF_FIXTURE_TIMES_FILE="$fixture_report_dir/times" \
+    PERF_FIXTURE_SUMMARY_FILE="$fixture_report_dir/written" \
+    GITHUB_STEP_SUMMARY="$fixture_report_dir/summary" bash -c "$fixture_report_script"
+}
+run_fixture_report
+for expected in 'Failed phase: **restore 100x**' '| download | 2.0 s |' \
+    '| restore 100x | interrupted |' '| migrations | not reached |' '| Total added to job | 12 s |'; do
+  grep -Fq "$expected" "$fixture_report_dir/summary" \
+    || contract_fail "Interrupted fixture summary must contain $expected."
+done
+printf '%s\n' 'existing summary' > "$fixture_report_dir/summary"
+touch "$fixture_report_dir/written"
+run_fixture_report
+[[ "$(cat "$fixture_report_dir/summary")" == 'existing summary' ]] \
+  || contract_fail 'Interrupted fixture reporting must not duplicate an existing summary.'
 
 require_step_field "$mac_workflow" build-macos 'Restore macOS libraries artifact.' '.run' \
   "bash \"\$REPO_NAME/$macos_libraries_image_script\" pull \"\$MACOS_LIBRARIES_IMAGE\" \"\$GITHUB_WORKSPACE\" \"\$GITHUB_OUTPUT\""

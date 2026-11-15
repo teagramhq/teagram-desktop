@@ -12,7 +12,7 @@ import sys
 import tempfile
 import time
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import macos_perf_fixture as fixture
 
@@ -91,6 +91,11 @@ class FixtureReleaseTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'migration revision'):
             fixture.validate_migration_history(self.manifest, seed_sum, runtime_sum.replace('20261026000006', '20261026000007'))
 
+    def test_restored_database_revision_must_match_the_manifest(self):
+        fixture.validate_restored_revision('1x', '20261026000006', '20261026000006')
+        with self.assertRaisesRegex(ValueError, '100x database migration revision 20261026000005 does not match manifest 20261026000006'):
+            fixture.validate_restored_revision('100x', '20261026000005', '20261026000006')
+
     def test_failure_summary_retains_the_phase_and_elapsed_time(self):
         text = fixture.format_summary(
             'failed', 'restore 100x', {'download': 4.0, 'restore 1x': 2.0},
@@ -144,6 +149,86 @@ class FixtureReleaseTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, 'Go setup failed'):
                 fixture.exercise(self.root, report)
         self.assertIn('temporary postgres failure detail', output.getvalue())
+        output = io.StringIO()
+        with patch.dict(os.environ, env), patch.object(Path, 'read_text', side_effect=OSError('log unreadable')), \
+                contextlib.redirect_stderr(output):
+            report = fixture.Report(time.time())
+            with self.assertRaisesRegex(RuntimeError, 'Go setup failed'):
+                fixture.exercise(self.root, report)
+        self.assertIn('Could not read PostgreSQL log: log unreadable', output.getvalue())
+
+    def test_postgres_stop_failure_preserves_prior_restore_failure(self):
+        migration_sum = 'h1:top\n20261026000006_last.sql h1:last\n'
+
+        def checkout(directory):
+            migrations = directory / 'migrations'
+            migrations.mkdir(parents=True)
+            (migrations / 'atlas.sum').write_text(migration_sum)
+            helper = directory / 'internal/pgtest/pgtest.go'
+            helper.parent.mkdir(parents=True)
+            helper.write_text('func EncKey() []byte { return bytes.Repeat([]byte{0x2a}, 32) }')
+
+        for name, restore_fails, outer_error, server_stop_fails in (
+                ('restore', True, False, False), ('cleanup', False, False, False),
+                ('cleanup-in-except', False, True, False), ('server-stop', False, False, True)):
+            with self.subTest(name=name):
+                case = self.root / name
+                case.mkdir()
+                summary = case / 'summary.md'
+                env = dict(os.environ, RUNNER_TEMP=str(case), PERF_FIXTURE_STARTED_AT='100',
+                           MACOS_JOB_STARTED_AT='50', PERF_GO_OUTCOME='success', PERF_ATLAS_OUTCOME='success',
+                           PERF_FIXTURE_PHASE_FILE=str(case / 'phase'),
+                           PERF_FIXTURE_TIMES_FILE=str(case / 'times'),
+                           PERF_FIXTURE_SUMMARY_FILE=str(case / 'summary-written'),
+                           GITHUB_STEP_SUMMARY=str(summary))
+
+                def run(command, **kwargs):
+                    name = Path(command[0]).name
+                    if name == 'pg_ctl' and command[-1] == 'start':
+                        data = Path(command[command.index('-D') + 1])
+                        data.mkdir(parents=True)
+                        (data / 'postmaster.pid').touch()
+                    if name == 'pg_ctl' and command[-1] == 'stop':
+                        raise subprocess.CalledProcessError(7, command)
+                    if name == 'pg_restore' and restore_fails:
+                        raise RuntimeError('restore failed first')
+                    output = self.manifest['migration_revision'] if '-XAt' in command else ''
+                    return subprocess.CompletedProcess(command, 0, stdout=output)
+
+                error_output = io.StringIO()
+                process = Mock()
+                process.poll.return_value = None if server_stop_fails else 0
+                if server_stop_fails:
+                    process.terminate.side_effect = OSError('server stop failed')
+                with patch.dict(os.environ, env), \
+                        patch.object(fixture, 'download_fixture', return_value=self.manifest), \
+                        patch.object(fixture, 'checkout_server', side_effect=checkout), \
+                        patch.object(fixture, 'urlopen', side_effect=lambda *args, **kwargs: io.BytesIO(migration_sum.encode())), \
+                        patch.object(fixture, 'postgres_binaries', return_value=case / 'pg-bin'), \
+                        patch.object(fixture, 'available_port', side_effect=range(31000, 31010)), \
+                        patch.object(fixture, 'run', side_effect=run), \
+                        patch.object(fixture.subprocess, 'run'), \
+                        patch.object(fixture.subprocess, 'Popen', return_value=process), \
+                        patch.object(fixture, 'wait_for_server', return_value='123'), \
+                        contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(error_output):
+                    if outer_error:
+                        try:
+                            raise ValueError('unrelated caller error')
+                        except ValueError:
+                            result = fixture.main()
+                    else:
+                        result = fixture.main()
+                    self.assertEqual(result, 1)
+                text = summary.read_text()
+                if restore_fails:
+                    self.assertIn('Failed phase: **restore 1x**. restore failed first', text)
+                    self.assertNotIn('pg_ctl', text)
+                    self.assertIn('pg_ctl', error_output.getvalue())
+                else:
+                    self.assertIn('Failed phase: **cleanup**.', text)
+                    self.assertIn('pg_ctl', text)
+                    if server_stop_fails:
+                        self.assertIn('server shutdown failed: server stop failed', text)
 
     def test_server_readiness_requires_a_fingerprint_and_a_live_listener(self):
         class Running:
@@ -157,6 +242,14 @@ class FixtureReleaseTests(unittest.TestCase):
             port = listener.getsockname()[1]
             log.write_text(f'msg="server RSA key" fingerprint=-123\nmsg=listening addr=127.0.0.1:{port}\n')
             self.assertEqual(fixture.wait_for_server(Running(), log, port, timeout=1), '-123')
+            for missing in ('fingerprint', 'listening'):
+                with self.subTest(missing=missing):
+                    line = (f'msg=listening addr=127.0.0.1:{port}\n' if missing == 'fingerprint'
+                            else 'msg="server RSA key" fingerprint=-123\n')
+                    log.write_text(line)
+                    with self.assertRaisesRegex(RuntimeError, 'did not become ready'):
+                        fixture.wait_for_server(Running(), log, port, timeout=0.01)
+            log.write_text(f'msg="server RSA key" fingerprint=-123\nmsg=listening addr=127.0.0.1:{port}\n')
         with self.assertRaisesRegex(RuntimeError, 'did not become ready'):
             fixture.wait_for_server(Running(), log, port, timeout=0.01)
 
