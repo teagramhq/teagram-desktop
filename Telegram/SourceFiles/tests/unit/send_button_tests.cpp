@@ -173,9 +173,19 @@ TEST_CASE(SendButtonDoesNotWaitForPreparingVoiceIcon) {
 				CHECK(pending == Ui::GrabWidgetToImage(&button));
 				button.setState({.type = Ui::SendButton::Type::Round});
 				CHECK(!GateTimedOut(gate));
+				const auto pendingRound = Ui::GrabWidgetToImage(&button);
+				CHECK(!pendingRound.isNull());
+				CHECK(!GateTimedOut(gate));
+				button.setState({.type = Ui::SendButton::Type::Record});
+				button.setState({.type = Ui::SendButton::Type::Round});
+				CHECK(!GateTimedOut(gate));
 			}
 		}
 
+		const auto originalMultiplier = anim::SlowMultiplier();
+		anim::SetSlowMultiplier(10);
+		const auto restoreMultiplier = gsl::finally(
+			[=] { anim::SetSlowMultiplier(originalMultiplier); });
 		{
 			const auto lock = std::lock_guard(gate->mutex);
 			gate->released = true;
@@ -184,16 +194,67 @@ TEST_CASE(SendButtonDoesNotWaitForPreparingVoiceIcon) {
 		ActiveReadGate.store(nullptr);
 
 		auto visible = false;
+		auto animated = false;
+		auto firstFrame = QImage();
 		const auto until = std::chrono::steady_clock::now() + kWaitLimit;
-		while (!visible && std::chrono::steady_clock::now() < until) {
+		while (!animated && std::chrono::steady_clock::now() < until) {
 			QCoreApplication::processEvents();
 			integration.processPostponedCalls();
-			visible = HasVisiblePixel(Ui::GrabWidgetToImage(&button));
-			if (!visible) {
+			const auto frame = Ui::GrabWidgetToImage(&button);
+			if (HasVisiblePixel(frame)) {
+				if (!visible) {
+					firstFrame = frame;
+				} else {
+					animated = (frame != firstFrame);
+				}
+				visible = true;
+			}
+			if (!animated) {
 				std::this_thread::sleep_for(std::chrono::milliseconds(1));
 			}
 		}
 		CHECK(visible);
+		CHECK(animated);
+		CHECK(button.type() == Ui::SendButton::Type::Round);
+		for (const auto type : {
+				 Ui::SendButton::Type::Send,
+				 Ui::SendButton::Type::Schedule,
+				 Ui::SendButton::Type::Save,
+				 Ui::SendButton::Type::Record,
+			 }) {
+			button.setState({.type = type});
+			button.finishAnimating();
+			CHECK(button.type() == type);
+			CHECK(HasVisiblePixel(Ui::GrabWidgetToImage(&button)));
+		}
 	}
+
+	const auto destroyedGate = std::make_shared<ReadGate>();
+	ActiveReadGate.store(destroyedGate);
+	{
+		auto button
+			= std::make_unique<Ui::SendButton>(nullptr, st::historySend);
+		button->setState({.type = Ui::SendButton::Type::Record});
+		auto entered = false;
+		{
+			auto lock = std::unique_lock(destroyedGate->mutex);
+			entered = destroyedGate->changed.wait_for(
+				lock, kWaitLimit, [&] { return destroyedGate->entered; });
+		}
+		CHECK(entered);
+		CHECK(!GateTimedOut(destroyedGate));
+		button->finishAnimating();
+		button->setState({.type = Ui::SendButton::Type::Send});
+		CHECK(!GateTimedOut(destroyedGate));
+		button.reset();
+		CHECK(!GateTimedOut(destroyedGate));
+	}
+	{
+		const auto lock = std::lock_guard(destroyedGate->mutex);
+		destroyedGate->released = true;
+	}
+	destroyedGate->changed.notify_all();
+	ActiveReadGate.store(nullptr);
+	QCoreApplication::processEvents();
 	integration.processPostponedCalls();
 }
