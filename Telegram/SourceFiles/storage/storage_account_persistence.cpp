@@ -13,6 +13,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "base/const_string.h"
 #include "main/main_account.h"
+#include "mtproto/mtproto_auth_key.h"
 #include "mtproto/mtproto_config.h"
 #include "core/mac_protected_path_runtime.h"
 #include "storage/details/storage_file_utilities.h"
@@ -24,6 +25,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <QtCore/QDir>
 #include <QtCore/QFile>
 #include <QtCore/QFileInfo>
+#include <cstring>
 
 namespace Storage {
 namespace {
@@ -80,6 +82,7 @@ constexpr auto kMtpAuthorizationWriteFailedPref
 	= "mtp_authorization_write_failed"_cs;
 const auto kMtpAuthorizationWriteFailedFile
 	= u"mtp_authorization_write_failed"_q;
+const auto kEndpointRefreshRecord = u"mtp_endpoint_refresh"_q;
 const auto kServerCacheBindingFile = u"server_cache_binding"_q;
 const auto kServerReenrollmentTombstonePrefix
 	= u"server_reenrollment_"_q;
@@ -522,6 +525,7 @@ bool Account::completeServerForget() {
 	};
 #endif
 
+	details::Sync();
 	if (interrupted(2) || !ensureServerCacheBinding(*binding)) {
 		return false;
 	}
@@ -531,8 +535,8 @@ bool Account::completeServerForget() {
 			ToFilePart(_dataNameKey))) {
 		return false;
 	}
-	if (interrupted(4)
-		|| !RemoveFileVariants(_basePath, u"config"_q)) {
+	if (interrupted(4) || !RemoveFileVariants(_basePath, u"config"_q)
+		|| !RemoveFileVariants(_basePath, kEndpointRefreshRecord)) {
 		return false;
 	}
 
@@ -542,6 +546,7 @@ bool Account::completeServerForget() {
 	_hasStoredCustomServer = false;
 	_customServerPinUnknown = false;
 	_mtpAuthorizationWriteFailed = false;
+	_endpointRefreshOriginalConfig.reset();
 	if (interrupted(5) || !writePrefs(true)) {
 		return false;
 	}
@@ -646,6 +651,7 @@ bool Account::completeServerReenrollment() {
 	_mapChanged = false;
 	_prefsChanged = false;
 	_locationsChanged = false;
+	details::Sync();
 
 #ifdef TDESKTOP_UNIT_TESTS
 	const auto interrupted = [this](int point) {
@@ -745,6 +751,7 @@ bool Account::completeServerReenrollment() {
 	_hasStoredCustomServer = false;
 	_customServerPinUnknown = false;
 	_mtpAuthorizationWriteFailed = false;
+	_endpointRefreshOriginalConfig.reset();
 	_mapChanged = true;
 	_prefsChanged = false;
 	_locationsChanged = false;
@@ -1115,21 +1122,159 @@ bool Account::writeMtpConfig(bool sync) {
 	return true;
 }
 
-void Account::writeVerifiedEndpointConfig(const MTP::Config &config,
-										  Fn<void(bool)> done) {
+void Account::writeEndpointRefreshRecord(const MTP::Config &original,
+										 const MTP::Config &candidate,
+										 const MTP::AuthKeyPtr &verifiedKey,
+										 bool committed, Fn<void(bool)> done) {
 	Expects(_localKey != nullptr);
 	Expects(done != nullptr);
-	if (config.blocked() || !config.hasCustomServer() || !_hasStoredCustomServer
-		|| _customServerPinUnknown) {
+	if (original.blocked() || candidate.blocked() || !original.hasCustomServer()
+		|| !candidate.hasCustomServer() || !_hasStoredCustomServer
+		|| _customServerPinUnknown || !verifiedKey
+		|| verifiedKey->type() != MTP::AuthKey::Type::ReadFromFile
+		|| verifiedKey->dcId() != original.customServer().dcId
+		|| !original.dcOptions().isAuthorized(verifiedKey->dcId())
+		|| !candidate.dcOptions().isAuthorized(verifiedKey->dcId())
+		|| original.isTestMode() != candidate.isTestMode()
+		|| !MTP::SameCustomServerEndpointRefreshIdentity(
+			original.customServer(), candidate.customServer())) {
 		done(false);
 		return;
 	}
-	const auto serialized = config.serialize();
-	EncryptedDescriptor data(Serialize::bytearraySize(serialized));
-	data.stream << serialized;
-	FileWriteDescriptor file(u"config"_q, _basePath);
+	if (!_endpointRefreshOriginalConfig) {
+		_endpointRefreshOriginalConfig
+			= std::make_unique<MTP::Config>(original);
+	}
+	const auto anchor = _endpointRefreshOriginalConfig->customServer();
+	if (_endpointRefreshOriginalConfig->isTestMode() != original.isTestMode()
+		|| !MTP::SameCustomServerEndpointRefreshIdentity(
+			anchor, original.customServer())) {
+		done(false);
+		return;
+	}
+	auto anchored = MTP::Config(original);
+	if (!MTP::SameCustomServerEndpoint(anchor, original.customServer())
+		&& !anchored.dcOptions().refreshCustomServerEndpoint(
+			original.customServer(), anchor)) {
+		done(false);
+		return;
+	}
+	const auto originalData = anchored.serialize();
+	const auto candidateData = candidate.serialize();
+	auto keyData = QByteArray();
+	{
+		auto stream = QDataStream(&keyData, QIODevice::WriteOnly);
+		verifiedKey->write(stream);
+	}
+	EncryptedDescriptor data(sizeof(quint32) + sizeof(quint8) + sizeof(qint32)
+							 + Serialize::bytearraySize(originalData)
+							 + Serialize::bytearraySize(candidateData)
+							 + Serialize::bytearraySize(keyData));
+	data.stream << quint32(1) << quint8(committed)
+				<< qint32(verifiedKey->dcId()) << originalData << candidateData
+				<< keyData;
+	FileWriteDescriptor file(kEndpointRefreshRecord, _basePath);
 	file.writeEncrypted(data, _localKey);
 	file.finishAsync(std::move(done));
+}
+
+std::unique_ptr<MTP::Config>
+Account::recoverEndpointRefreshConfig(std::unique_ptr<MTP::Config> current,
+									  const std::vector<MTP::AuthKeyPtr> &keys,
+									  bool restoredSession) {
+	if (current && current->blocked()) {
+		return current;
+	}
+	const auto base = _basePath + kEndpointRefreshRecord;
+	auto exists = false;
+	for (const auto suffix : {'s', '0', '1'}) {
+		const auto path = base + suffix;
+		if (!CheckPersistencePath(Operation::Stat, path, Q_FUNC_INFO)) {
+			_customServerPinUnknown = true;
+			return nullptr;
+		}
+		exists = exists || QFileInfo::exists(path);
+	}
+	if (!exists) {
+		return current;
+	}
+	const auto fail = [&]() -> std::unique_ptr<MTP::Config> {
+		LOG(("MTP Error: could not recover the endpoint refresh record."));
+		_customServerPinUnknown = true;
+		return nullptr;
+	};
+	if (!_localKey) {
+		return fail();
+	}
+	FileReadDescriptor record;
+	if (!ReadEncryptedFile(record, kEndpointRefreshRecord, _basePath,
+						   _localKey)) {
+		return fail();
+	}
+	quint32 version = 0;
+	quint8 committed = 0;
+	qint32 dcId = 0;
+	auto originalData = QByteArray();
+	auto candidateData = QByteArray();
+	auto keyData = QByteArray();
+	record.stream >> version >> committed >> dcId >> originalData
+		>> candidateData >> keyData;
+	if (!CheckStreamStatus(record.stream) || !record.stream.atEnd()
+		|| version != 1 || committed > 1
+		|| keyData.size() != MTP::AuthKey::kSize) {
+		return fail();
+	}
+	auto original = MTP::Config::FromSerialized(originalData);
+	auto candidate = MTP::Config::FromSerialized(candidateData);
+	if (!original || !candidate || !current || original->blocked()
+		|| candidate->blocked() || !current->hasCustomServer()
+		|| !original->hasCustomServer() || !candidate->hasCustomServer()
+		|| dcId != original->customServer().dcId
+		|| !original->dcOptions().isAuthorized(dcId)
+		|| !candidate->dcOptions().isAuthorized(dcId)
+		|| original->isTestMode() != candidate->isTestMode()
+		|| original->isTestMode() != current->isTestMode()
+		|| !MTP::SameCustomServerEndpointRefreshIdentity(
+			original->customServer(), candidate->customServer())
+		|| !MTP::SameCustomServerEndpointRefreshIdentity(
+			original->customServer(), current->customServer())) {
+		return fail();
+	}
+	_endpointRefreshOriginalConfig = std::make_unique<MTP::Config>(*original);
+	auto proofData = MTP::AuthKey::Data();
+	std::memcpy(proofData.data(), keyData.constData(), proofData.size());
+	const auto proof = std::make_shared<MTP::AuthKey>(
+		MTP::AuthKey::Type::ReadFromFile, dcId, proofData);
+	auto savedKey = MTP::AuthKeyPtr();
+	auto ambiguousKey = false;
+	for (const auto &key : keys) {
+		if (key && key->dcId() == dcId) {
+			if (savedKey) {
+				ambiguousKey = true;
+			} else {
+				savedKey = key;
+			}
+		}
+	}
+	const auto matchingKey
+		= !ambiguousKey && savedKey
+		  && savedKey->type() == MTP::AuthKey::Type::ReadFromFile
+		  && savedKey->equals(proof);
+	const auto target = (committed && restoredSession && matchingKey)
+							? candidate->customServer()
+							: original->customServer();
+	const auto previous = current->customServer();
+	if (!MTP::SameCustomServerEndpoint(previous, target)) {
+		const auto changed
+			= current->dcOptions().isAuthorized(dcId)
+				  ? current->dcOptions().refreshCustomServerEndpoint(previous,
+																	 target)
+				  : current->dcOptions().setCustomServer(target);
+		if (!changed) {
+			return fail();
+		}
+	}
+	return current;
 }
 
 void Account::clearPref(std::string_view key) {

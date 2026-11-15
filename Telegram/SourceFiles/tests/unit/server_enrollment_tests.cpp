@@ -2145,6 +2145,7 @@ TEST_CASE(VerifiedEndpointConfigWriteReportsDurableResult) {
 	QTemporaryDir directory;
 	CHECK(directory.isValid());
 	const auto key = MakeEnrollmentStorageKey();
+	const auto verifiedKey = MakeEndpointRefreshAuthKey(0x3A);
 	const auto original = MakeEndpointRefreshPin("100.124.236.66");
 	const auto candidate = MakeEndpointRefreshPin("100.112.103.90");
 	auto config = std::make_shared<MTP::Config>(MTP::Environment::Production);
@@ -2166,8 +2167,9 @@ TEST_CASE(VerifiedEndpointConfigWriteReportsDurableResult) {
 	CHECK(account.writeMtpConfig(true));
 	const auto success = std::make_shared<std::optional<bool>>();
 	const auto callbackOnMain = std::make_shared<bool>(false);
-	account.writeVerifiedEndpointConfig(
-		staged, [success, callbackOnMain](bool value) {
+	account.writeEndpointRefreshRecord(
+		*config, staged, verifiedKey, false,
+		[success, callbackOnMain](bool value) {
 			*callbackOnMain = QThread::currentThread()
 							  == QCoreApplication::instance()->thread();
 			*success = value;
@@ -2185,22 +2187,198 @@ TEST_CASE(VerifiedEndpointConfigWriteReportsDurableResult) {
 		const auto restored = MTP::Config::FromSerialized(serialized);
 		CHECK(restored != nullptr);
 		if (restored) {
-			CHECK(SameCustomServerPin(candidate,
+			CHECK(SameCustomServerPin(original,
 									  restored->dcOptions().customServer()));
 		}
 	}
 	CHECK(SameCustomServerPin(original, config->dcOptions().customServer()));
+	auto uncommitted = account.recoverEndpointRefreshConfig(
+		ReadEnrollmentConfig(path, key), {verifiedKey}, true);
+	CHECK(uncommitted != nullptr);
+	if (uncommitted) {
+		CHECK(SameCustomServerPin(original, uncommitted->customServer()));
+	}
+	const auto committed = std::make_shared<std::optional<bool>>();
+	account.writeEndpointRefreshRecord(
+		*config, staged, verifiedKey, true,
+		[committed](bool value) { *committed = value; });
+	CHECK(wait(committed));
+	auto promoted = account.recoverEndpointRefreshConfig(
+		ReadEnrollmentConfig(path, key), {verifiedKey}, true);
+	CHECK(promoted != nullptr);
+	if (promoted) {
+		CHECK(SameCustomServerPin(candidate, promoted->customServer()));
+	}
+	auto ambiguous = account.recoverEndpointRefreshConfig(
+		ReadEnrollmentConfig(path, key),
+		{verifiedKey, MakeEndpointRefreshAuthKey(0x4B)}, true);
+	CHECK(ambiguous != nullptr);
+	if (ambiguous) {
+		CHECK(SameCustomServerPin(original, ambiguous->customServer()));
+	}
+	auto withoutSession = account.recoverEndpointRefreshConfig(
+		ReadEnrollmentConfig(path, key), {verifiedKey}, false);
+	CHECK(withoutSession != nullptr);
+	if (withoutSession) {
+		CHECK(SameCustomServerPin(original, withoutSession->customServer()));
+	}
 
 	const auto failurePath = directory.path() + u"/failure/"_q;
-	CHECK(QDir().mkpath(failurePath + u"configs"_q));
-	CHECK(QDir().mkpath(failurePath + u"config0"_q));
+	CHECK(QDir().mkpath(failurePath + u"mtp_endpoint_refreshs"_q));
+	CHECK(QDir().mkpath(failurePath + u"mtp_endpoint_refresh0"_q));
 	auto failingAccount = Storage::Account(failurePath, key, config, true);
 	const auto failure = std::make_shared<std::optional<bool>>();
-	failingAccount.writeVerifiedEndpointConfig(
-		staged, [failure](bool value) { *failure = value; });
+	failingAccount.writeEndpointRefreshRecord(
+		*config, staged, verifiedKey, false,
+		[failure](bool value) { *failure = value; });
 	CHECK(wait(failure));
 	CHECK(failure->has_value() && !failure->value());
 	CHECK(SameCustomServerPin(original, config->dcOptions().customServer()));
+}
+
+TEST_CASE(EndpointRefreshRestartRejectsAChangedStoredKey) {
+	QTemporaryDir directory;
+	CHECK(directory.isValid());
+	if (!directory.isValid()) {
+		return;
+	}
+	const auto previousDirectory = QDir::currentPath();
+	const auto changedDirectory = QDir::setCurrent(directory.path());
+	CHECK(changedDirectory);
+	if (!changedDirectory) {
+		return;
+	}
+	const auto restoreDirectory
+		= gsl::finally([&] { QDir::setCurrent(previousDirectory); });
+	const auto path = directory.path() + u"/account/"_q;
+	const auto localKey = MakeEnrollmentStorageKey();
+	const auto provenKey = MakeEndpointRefreshAuthKey(0x3A);
+	const auto changedKey = MakeEndpointRefreshAuthKey(0x4B);
+	auto savedAuthorization = SerializeEndpointRefreshAuthKey(provenKey);
+	const auto original = MakeEndpointRefreshPin("100.124.236.66");
+	const auto candidate = MakeEndpointRefreshPin("100.112.103.90");
+	auto config = std::make_shared<MTP::Config>(MTP::Environment::Production);
+	CHECK(config->dcOptions().setCustomServer(original));
+	CHECK(config->dcOptions().markAuthorized(original.dcId));
+	const auto originalConfig = MTP::Config(*config);
+	auto staged = MTP::Config(*config);
+	CHECK(staged.dcOptions().refreshCustomServerEndpoint(original, candidate));
+	const auto wait = [](const auto &result) {
+		auto timer = QElapsedTimer();
+		timer.start();
+		while (!result->has_value() && timer.elapsed() < 5'000) {
+			QCoreApplication::processEvents();
+			QThread::msleep(1);
+		}
+		return result->value_or(false);
+	};
+	{
+		auto account = Storage::Account(path, localKey, config, false,
+										[&] { return savedAuthorization; });
+		CHECK(account.writeMtpConfig(true));
+		CHECK(account.writeMtpData(true));
+		const auto stagedResult = std::make_shared<std::optional<bool>>();
+		account.writeEndpointRefreshRecord(
+			originalConfig, staged, provenKey, false,
+			[stagedResult](bool value) { *stagedResult = value; });
+		CHECK(wait(stagedResult));
+		savedAuthorization = SerializeEndpointRefreshAuthKey(changedKey);
+		CHECK(account.writeMtpData(true));
+		CHECK(config->dcOptions().refreshCustomServerEndpoint(original,
+															  candidate));
+		CHECK(account.writeMtpConfig(true));
+		auto interrupted = account.recoverEndpointRefreshConfig(
+			ReadEnrollmentConfig(path, localKey), {provenKey}, true);
+		CHECK(interrupted != nullptr);
+		if (interrupted) {
+			CHECK(SameCustomServerPin(original, interrupted->customServer()));
+		}
+		const auto committedResult = std::make_shared<std::optional<bool>>();
+		account.writeEndpointRefreshRecord(
+			originalConfig, staged, provenKey, true,
+			[committedResult](bool value) { *committedResult = value; });
+		CHECK(wait(committedResult));
+	}
+	auto restoredAuthorization = QByteArray();
+	auto restarted = Storage::Account(
+		path, localKey, config, false, nullptr,
+		[&](const QByteArray &value) { restoredAuthorization = value; });
+	auto restartConfig = restarted.start(localKey);
+	const auto restoredKey
+		= RestoreEndpointRefreshAuthKey(restoredAuthorization);
+	CHECK(restoredKey && restoredKey->equals(changedKey));
+	auto recovered = restarted.recoverEndpointRefreshConfig(
+		std::move(restartConfig), {restoredKey}, true);
+	CHECK(recovered != nullptr);
+	if (recovered) {
+		CHECK(SameCustomServerPin(original, recovered->customServer()));
+	}
+	const auto stillPromoted = ReadEnrollmentConfig(path, localKey);
+	CHECK(stillPromoted != nullptr);
+	if (stillPromoted) {
+		CHECK(SameCustomServerPin(candidate, stillPromoted->customServer()));
+	}
+	auto recoveredAgain = restarted.recoverEndpointRefreshConfig(
+		ReadEnrollmentConfig(path, localKey), {restoredKey}, true);
+	CHECK(recoveredAgain != nullptr);
+	if (recoveredAgain) {
+		CHECK(SameCustomServerPin(original, recoveredAgain->customServer()));
+	}
+	auto matched = restarted.recoverEndpointRefreshConfig(
+		ReadEnrollmentConfig(path, localKey), {provenKey}, true);
+	CHECK(matched != nullptr);
+	if (matched) {
+		CHECK(SameCustomServerPin(candidate, matched->customServer()));
+		const auto laterCandidate = MakeEndpointRefreshPin("100.112.103.91");
+		auto laterConfig = MTP::Config(*matched);
+		CHECK(laterConfig.dcOptions().refreshCustomServerEndpoint(
+			candidate, laterCandidate));
+		const auto laterStaged = std::make_shared<std::optional<bool>>();
+		restarted.writeEndpointRefreshRecord(
+			*matched, laterConfig, provenKey, false,
+			[laterStaged](bool value) { *laterStaged = value; });
+		CHECK(wait(laterStaged));
+		auto laterInterrupted = restarted.recoverEndpointRefreshConfig(
+			ReadEnrollmentConfig(path, localKey), {restoredKey}, true);
+		CHECK(laterInterrupted != nullptr);
+		if (laterInterrupted) {
+			CHECK(SameCustomServerPin(original,
+									  laterInterrupted->customServer()));
+		}
+		const auto laterCommitted = std::make_shared<std::optional<bool>>();
+		restarted.writeEndpointRefreshRecord(
+			*matched, laterConfig, provenKey, true,
+			[laterCommitted](bool value) { *laterCommitted = value; });
+		CHECK(wait(laterCommitted));
+		auto laterRecovered = restarted.recoverEndpointRefreshConfig(
+			ReadEnrollmentConfig(path, localKey), {restoredKey}, true);
+		CHECK(laterRecovered != nullptr);
+		if (laterRecovered) {
+			CHECK(
+				SameCustomServerPin(original, laterRecovered->customServer()));
+		}
+	}
+}
+
+TEST_CASE(UnreadableEndpointRefreshRecordFailsClosed) {
+	QTemporaryDir directory;
+	CHECK(directory.isValid());
+	const auto path = directory.path() + u"/account/"_q;
+	CHECK(QDir().mkpath(path));
+	QFile record(path + u"mtp_endpoint_refreshs"_q);
+	CHECK(record.open(QIODevice::WriteOnly));
+	CHECK_EQ(record.write("corrupt"), qint64(7));
+	record.close();
+	auto config = std::make_shared<MTP::Config>(MTP::Environment::Production);
+	const auto pin = MakeEndpointRefreshPin("100.124.236.66");
+	CHECK(config->dcOptions().setCustomServer(pin));
+	CHECK(config->dcOptions().markAuthorized(pin.dcId));
+	auto account
+		= Storage::Account(path, MakeEnrollmentStorageKey(), config, true);
+	const auto recovered = account.recoverEndpointRefreshConfig(
+		std::make_unique<MTP::Config>(*config), {}, true);
+	CHECK(recovered == nullptr);
+	CHECK(account.customServerPinUnknown());
 }
 
 TEST_CASE(EnrollmentStepConsumesSpaceOutsideConfirm) {

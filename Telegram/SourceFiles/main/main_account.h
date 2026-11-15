@@ -207,6 +207,8 @@ private:
 	void requestServerEndpointRefresh(MTP::ShiftedDcId shiftedDcId);
 	void serverEndpointRefreshDiscovered(MTP::ServerDiscoveryResult result);
 	void serverEndpointVerificationFinished(bool authenticated);
+	void serverEndpointRecordStaged(uint64 generation, bool staged,
+									const MTP::AuthKeyPtr &verifiedKey);
 	void serverEndpointPersistenceFinished(uint64 generation, bool persisted,
 										   const MTP::AuthKeyPtr &verifiedKey);
 	void scheduleServerEndpointRefreshRetry();

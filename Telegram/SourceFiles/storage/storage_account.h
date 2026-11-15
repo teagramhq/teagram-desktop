@@ -18,6 +18,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "webview/webview_common.h"
 
 #include <QtCore/QStringList>
+#include <vector>
 
 class History;
 
@@ -163,8 +164,14 @@ public:
 	bool writeMtpAuthorizationFailure();
 	bool writeMtpData(bool sync = false);
 	bool writeMtpConfig(bool sync = false);
-	void writeVerifiedEndpointConfig(const MTP::Config &config,
-									 Fn<void(bool)> done);
+	void writeEndpointRefreshRecord(const MTP::Config &original,
+									const MTP::Config &candidate,
+									const MTP::AuthKeyPtr &verifiedKey,
+									bool committed, Fn<void(bool)> done);
+	[[nodiscard]] std::unique_ptr<MTP::Config>
+	recoverEndpointRefreshConfig(std::unique_ptr<MTP::Config> current,
+								 const std::vector<MTP::AuthKeyPtr> &keys,
+								 bool restoredSession);
 	// A durable marker is written before destructive re-enrollment. The
 	// cleanup remains pending until every server-scoped store has been
 	// removed and an empty account can be written back.
@@ -436,6 +443,7 @@ private:
 	bool _customServerPinUnknown = false;
 	bool _mtpAuthorizationWriteFailed = false;
 	bool _serverForgetBlocked = false;
+	std::unique_ptr<MTP::Config> _endpointRefreshOriginalConfig;
 
 	base::flat_map<PeerId, FileKey> _draftsMap;
 	base::flat_map<PeerId, FileKey> _draftCursorsMap;

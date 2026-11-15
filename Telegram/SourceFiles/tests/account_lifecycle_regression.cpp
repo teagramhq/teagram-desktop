@@ -3296,7 +3296,9 @@ class LocalEndpointRefreshDiscoveryStub final {
 		return fail("a successful proof did not commit and resume the account");
 	}
 	const auto moved = mtp.dcOptions().customServer();
-	const auto savedConfig = account->local().readMtpConfigForRegressionTest();
+	const auto savedConfig = account->local().recoverEndpointRefreshConfig(
+		account->local().readMtpConfigForRegressionTest(),
+		mtp.getKeysForWrite(), true);
 	if (AccountLifecycleRegressionAccess::endpointVerificationPending(*account)
 		|| !mtp.isServerEnrollmentNetworkAllowed() || moved.ip != "127.0.0.1"
 		|| moved.ipv6 || moved.port != int(discovery.port()) || !savedConfig

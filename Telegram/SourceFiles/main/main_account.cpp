@@ -240,6 +240,8 @@ void Account::start(std::unique_ptr<MTP::Config> config) {
 		_sessionUserStreamVersion = 0;
 		_storedSessionSettings.reset();
 	}
+	config = _local->recoverEndpointRefreshConfig(
+		std::move(config), _mtpFields.keys, bool(_sessionUserId));
 	_appConfig = std::make_unique<AppConfig>(this);
 
 	// An account pinned to a user-entered endpoint and RSA key must
@@ -1426,15 +1428,16 @@ void Account::serverEndpointVerificationFinished(bool authenticated) {
 	}();
 	if (authenticated && HasStoredEndpointAuthKey(*_mtp, verifiedKey)
 		&& MTP::SameCustomServerPin(original, current)) {
-		auto config = MTP::Config(_mtp->config());
-		if (config.dcOptions().refreshCustomServerEndpoint(original,
-														   candidate)) {
+		auto originalConfig = MTP::Config(_mtp->config());
+		auto candidateConfig = MTP::Config(originalConfig);
+		if (candidateConfig.dcOptions().refreshCustomServerEndpoint(
+				original, candidate)) {
 			_serverEndpointPersistencePending = true;
 			const auto generation = ++_serverEndpointPersistenceGeneration;
-			local().writeVerifiedEndpointConfig(
-				config, crl::guard(this, [=](bool persisted) {
-					serverEndpointPersistenceFinished(generation, persisted,
-													  verifiedKey);
+			local().writeEndpointRefreshRecord(
+				originalConfig, candidateConfig, verifiedKey, false,
+				crl::guard(this, [=](bool staged) {
+					serverEndpointRecordStaged(generation, staged, verifiedKey);
 				}));
 			return;
 		}
@@ -1454,6 +1457,36 @@ void Account::serverEndpointVerificationFinished(bool authenticated) {
 	_endpointRefresh.reset();
 	++_serverEndpointRefreshFailures;
 	scheduleServerEndpointRefreshRetry();
+}
+
+void Account::serverEndpointRecordStaged(uint64 generation, bool staged,
+										 const MTP::AuthKeyPtr &verifiedKey) {
+	if (!_serverEndpointPersistencePending
+		|| generation != _serverEndpointPersistenceGeneration) {
+		return;
+	}
+	if (!staged || !_mtp || !_endpointRefresh.hasCandidate()
+		|| !canRefreshServerEndpoint()
+		|| _mtp->isServerEnrollmentNetworkAllowed()
+		|| !HasStoredEndpointAuthKey(*_mtp, verifiedKey)
+		|| !MTP::SameCustomServerPin(_endpointRefresh.original(),
+									 _mtp->dcOptions().customServer())) {
+		serverEndpointPersistenceFinished(generation, false, verifiedKey);
+		return;
+	}
+	auto originalConfig = MTP::Config(_mtp->config());
+	auto candidateConfig = MTP::Config(originalConfig);
+	if (!candidateConfig.dcOptions().refreshCustomServerEndpoint(
+			_endpointRefresh.original(), _endpointRefresh.candidate())) {
+		serverEndpointPersistenceFinished(generation, false, verifiedKey);
+		return;
+	}
+	local().writeEndpointRefreshRecord(
+		originalConfig, candidateConfig, verifiedKey, true,
+		crl::guard(this, [=](bool persisted) {
+			serverEndpointPersistenceFinished(generation, persisted,
+											  verifiedKey);
+		}));
 }
 
 void Account::serverEndpointPersistenceFinished(
