@@ -11674,6 +11674,9 @@ struct CacheChatSwitchRegressionResult final {
 	bool historyChatModeLayoutWideAfter = false;
 	int historyChatModeResizeCountBefore = -1;
 	int historyChatModeResizeCountAfter = -1;
+	int historyChatModeWindowWidthForWide = -1;
+	int historyChatModeHistoryWidthForWide = -1;
+	bool historyChatModeWindowWasMaximized = false;
 	bool chatSwitchTransitionsSettled = true;
 	bool initialHistorySelectionSchedulerPreemptionProven = false;
 	bool dialogHistoriesReady = false;
@@ -11735,6 +11738,15 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 	if (!historyWidget) {
 		return result;
 	}
+	auto &regressionSettings = Core::App().settings();
+	const auto originalTabbedSelectorSectionEnabled
+		= regressionSettings.tabbedSelectorSectionEnabled();
+	const auto originalThirdSectionInfoEnabled
+		= regressionSettings.thirdSectionInfoEnabled();
+	regressionSettings.setTabbedSelectorSectionEnabled(false);
+	regressionSettings.setThirdSectionInfoEnabled(false);
+	controller->updateColumnLayout();
+	QCoreApplication::processEvents();
 	historyWidget->clearFieldFocusForRegressionTest();
 	historyWidget->setDraftTextForRegressionTest(QString());
 	historyWidget->hideFieldAutocompleteForRegressionTest();
@@ -11839,10 +11851,11 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 	}
 	showPeerHistoryMeasured(firstHistory);
 	settleHistoryUnfocused();
-	showPeerHistoryMeasured(secondHistory);
 	historyWidget->clearFieldFocusForRegressionTest();
+	historyWidget->setDraftTextForRegressionTest(QString());
+	historyWidget->hideFieldAutocompleteForRegressionTest();
 	historyWidget->resetFieldAutocompleteForRegressionTest();
-	historyWidget->initFieldAutocompleteForRegressionTest();
+	showPeerHistoryMeasured(secondHistory);
 	const auto autocompleteBuildsBeforeFocus
 		= historyWidget->fieldAutocompleteBuildCountForRegressionTest();
 	const auto autocompleteDeferredUntilFocus
@@ -11850,6 +11863,14 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		  && (historyWidget->fieldAutocompletePeerForRegressionTest()
 			  == nullptr)
 		  && !historyWidget->fieldFocusedForRegressionTest();
+	const auto secondHistoryTransitionSettled = WaitForRegressionCondition(
+		[&] {
+			return historyWidget->historyTransitionFinishedForRegressionTest();
+		},
+		1500);
+	result.chatSwitchTransitionsSettled
+		= result.chatSwitchTransitionsSettled && secondHistoryTransitionSettled;
+	historyWidget->clearFieldFocusForRegressionTest();
 	historyWidget->focusFieldForRegressionTest();
 	const auto autocompleteBuiltOnFocus = WaitForRegressionCondition(
 		[&] {
@@ -12524,7 +12545,12 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 	}
 	if (originalChatLayoutCaptured) {
 		const auto mainWindowWidget = window->widget();
-		const auto originalWindowSize = mainWindowWidget->size();
+		const auto originalWindowGeometry = mainWindowWidget->normalGeometry();
+		const auto originalWindowState = mainWindowWidget->windowState();
+		result.historyChatModeWindowWasMaximized
+			= mainWindowWidget->isMaximized();
+		mainWindowWidget->showNormal();
+		QCoreApplication::processEvents();
 		Core::App().settings().setAdaptiveForWide(false);
 		controller->adaptive().setChatLayout(
 			Window::Adaptive::ChatLayout::Normal);
@@ -12534,13 +12560,26 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 					   && !firstHistory->layoutChatWideForRegressionTest();
 			},
 			1500);
-		const auto requiredWindowWidth
-			= st::adaptiveChatWideWidth + st::columnMaximalWidthLeft + 40;
-		if (mainWindowWidget->width() < requiredWindowWidth) {
-			mainWindowWidget->resize(requiredWindowWidth,
-									 originalWindowSize.height());
+		for (auto attempt = 0;
+			 attempt != 8 && historyWidget->width() < st::adaptiveChatWideWidth;
+			 ++attempt) {
+			const auto previousWindowWidth = mainWindowWidget->width();
+			const auto missingHistoryWidth
+				= st::adaptiveChatWideWidth - historyWidget->width();
+			mainWindowWidget->resize(previousWindowWidth + missingHistoryWidth
+										 + 40,
+									 originalWindowGeometry.height());
+			QCoreApplication::processEvents();
+			if (mainWindowWidget->width() == previousWindowWidth) {
+				break;
+			}
+		}
+		if (historyWidget->width() < st::adaptiveChatWideWidth) {
+			mainWindowWidget->showMaximized();
 			QCoreApplication::processEvents();
 		}
+		result.historyChatModeWindowWidthForWide = mainWindowWidget->width();
+		result.historyChatModeHistoryWidthForWide = historyWidget->width();
 		Core::App().settings().setAdaptiveForWide(true);
 		controller->adaptive().setChatLayout(
 			Window::Adaptive::ChatLayout::Wide);
@@ -12601,7 +12640,9 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 				  > result.historyChatModeResizeCountBefore);
 		Core::App().settings().setAdaptiveForWide(originalAdaptiveForWide);
 		controller->adaptive().setChatLayout(originalChatLayout);
-		mainWindowWidget->resize(originalWindowSize);
+		mainWindowWidget->showNormal();
+		mainWindowWidget->setGeometry(originalWindowGeometry);
+		mainWindowWidget->setWindowState(originalWindowState);
 		QCoreApplication::processEvents();
 	}
 	auto chatSwitchSchedulerTimeline
@@ -12908,6 +12949,12 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		  && (result.maxRecurringChatSwitchEstimatedWorkNanoseconds
 			  < kMaxChatSwitchNanoseconds)
 		  && MainThreadBlockedWorkBudgetRegressionPasses();
+	regressionSettings.setTabbedSelectorSectionEnabled(
+		originalTabbedSelectorSectionEnabled);
+	regressionSettings.setThirdSectionInfoEnabled(
+		originalThirdSectionInfoEnabled);
+	controller->updateColumnLayout();
+	QCoreApplication::processEvents();
 	return result;
 }
 
@@ -13800,20 +13847,27 @@ void RunAuthenticatedCacheSymlinkCases(
 					initialHistorySelectionTraceLatin1.constData(),
 					chatSwitch
 						.initialHistorySelectionSchedulerPreemptionProven);
-				std::fprintf(stderr,
-							 "History chat mode invalidation: "
-							 "wide_before=%d "
-							 "changed_while_hidden=%d "
-							 "full_resize_before=%d "
-							 "full_resize_after=%d layout_wide_after=%d "
-							 "transitions_settled=%d rebuilt=%d.\n",
-							 chatSwitch.historyChatModeInitiallyWide,
-							 chatSwitch.historyChatModeChangedWhileHidden,
-							 chatSwitch.historyChatModeResizeCountBefore,
-							 chatSwitch.historyChatModeResizeCountAfter,
-							 chatSwitch.historyChatModeLayoutWideAfter,
-							 chatSwitch.chatSwitchTransitionsSettled,
-							 chatSwitch.historyChatModeInvalidationRebuilt);
+				std::fprintf(
+					stderr,
+					"History chat mode invalidation: "
+					"wide_before=%d "
+					"window_maximized_before=%d window_width_for_wide=%d "
+					"history_width_for_wide=%d wide_threshold=%d "
+					"changed_while_hidden=%d "
+					"full_resize_before=%d "
+					"full_resize_after=%d layout_wide_after=%d "
+					"transitions_settled=%d rebuilt=%d.\n",
+					chatSwitch.historyChatModeInitiallyWide,
+					chatSwitch.historyChatModeWindowWasMaximized,
+					chatSwitch.historyChatModeWindowWidthForWide,
+					chatSwitch.historyChatModeHistoryWidthForWide,
+					st::adaptiveChatWideWidth,
+					chatSwitch.historyChatModeChangedWhileHidden,
+					chatSwitch.historyChatModeResizeCountBefore,
+					chatSwitch.historyChatModeResizeCountAfter,
+					chatSwitch.historyChatModeLayoutWideAfter,
+					chatSwitch.chatSwitchTransitionsSettled,
+					chatSwitch.historyChatModeInvalidationRebuilt);
 				std::fprintf(
 					stderr,
 					"Cache chat switch latency regression: "
