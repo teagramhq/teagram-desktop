@@ -169,6 +169,12 @@ enum class StackSample {
 	InSystemEnumeration,
 };
 
+enum class ProbeExit {
+	None,
+	Quit,
+	Failure,
+};
+
 constexpr auto kProbeReportedFrames = 8;
 struct ProbeFrameSnapshot final {
 	void *frames[kProbeReportedFrames] = {};
@@ -730,6 +736,12 @@ void Sandbox::startFontDatabaseWarmup() {
 		= quitRegression ? std::make_shared<std::atomic_bool>(
 							   testFailure == "probe-missed-first")
 						 : nullptr;
+	const auto workerFinished
+		= quitRegression ? std::make_shared<std::atomic_bool>(false) : nullptr;
+	const auto retryCheckpoint
+		= (quitRegression && testFailure == "probe-timeout-retry")
+			  ? std::make_shared<std::atomic_bool>(false)
+			  : nullptr;
 	if (quitRegression) {
 		// The main thread samples the worker stack until it catches the
 		// system font enumeration executing, holds the worker there, and only
@@ -753,7 +765,18 @@ void Sandbox::startFontDatabaseWarmup() {
 		}
 		_fontDatabaseWarmupThread = std::thread([this, quitRegression,
 												 testFailure,
-												 ignoreFirstEnumeration] {
+												 ignoreFirstEnumeration,
+												 workerFinished,
+												 retryCheckpoint] {
+			const auto finished = gsl::finally([=] {
+				if (retryCheckpoint) {
+					fprintf(stderr,
+							"Font shutdown regression: retry_worker_done=1\n");
+				}
+				if (workerFinished) {
+					workerFinished->store(true, std::memory_order_release);
+				}
+			});
 			if (quitRegression && testFailure == "probe-timeout") {
 				// Keep the test worker outside enumeration until sampled.
 				while (!ProbeFinalRelease.load(std::memory_order_acquire)) {
@@ -784,6 +807,25 @@ void Sandbox::startFontDatabaseWarmup() {
 				}
 				const auto fontId = QFontDatabase::addApplicationFont(
 					u":/gui/fonts/OpenSans-Regular.ttf"_q);
+				if (fontId >= 0 && retryCheckpoint) {
+					fprintf(stderr,
+							"Font shutdown regression: retry_checkpoint=1\n");
+					retryCheckpoint->store(true, std::memory_order_release);
+					while (!ProbeFinalRelease.load(std::memory_order_acquire)) {
+						std::this_thread::yield();
+					}
+					if (!QMetaObject::invokeMethod(
+							this,
+							[] {
+								fprintf(stderr, "Font shutdown regression: "
+												"retry_gui_event=1\n");
+							},
+							Qt::BlockingQueuedConnection)) {
+						fprintf(stderr, "Font shutdown regression: "
+										"probe_error=retry_gui_event\n");
+						return;
+					}
+				}
 				if (fontId < 0
 					|| !QFontDatabase::removeApplicationFont(fontId)) {
 					fprintf(stderr, "Font shutdown regression: "
@@ -843,26 +885,53 @@ void Sandbox::startFontDatabaseWarmup() {
 			const auto timer = Ui::CreateChild<QTimer>(this);
 			const auto started = std::make_shared<QElapsedTimer>();
 			const auto lastOtherWork = std::make_shared<ProbeFrameSnapshot>();
+			const auto pendingExit
+				= std::make_shared<ProbeExit>(ProbeExit::None);
+			const auto stopWorker = [=](ProbeExit exitMode) {
+				_launchAfterFontDatabaseWarmup = false;
+				ProbeFinalRelease.store(true, std::memory_order_release);
+				*pendingExit = exitMode;
+			};
 			started->start();
 			connect(timer, &QTimer::timeout, this, [=] {
+				if (*pendingExit != ProbeExit::None) {
+					if (!workerFinished->load(std::memory_order_acquire)) {
+						return;
+					}
+					timer->stop();
+					if (*pendingExit == ProbeExit::Quit) {
+						Core::Quit();
+					} else {
+						QCoreApplication::exit(1);
+					}
+					return;
+				}
+				if (retryCheckpoint) {
+					if (retryCheckpoint->load(std::memory_order_acquire)) {
+						fprintf(stderr,
+								"Font shutdown regression: retry_timeout=1\n");
+						stopWorker(ProbeExit::Quit);
+					} else if (started->elapsed() >= 10000) {
+						fprintf(stderr,
+								"Font shutdown regression: "
+								"probe_error=retry_checkpoint_timeout\n");
+						stopWorker(ProbeExit::Failure);
+					}
+					return;
+				}
 				if (ignoreFirstEnumeration->load(std::memory_order_acquire)) {
 					if (started->elapsed() >= 10000) {
-						timer->stop();
-						ProbeFinalRelease.store(true,
-												std::memory_order_release);
 						fprintf(stderr,
 								"Font shutdown regression: "
 								"probe_error=first_enumeration_timeout\n");
-						QCoreApplication::exit(1);
+						stopWorker(ProbeExit::Failure);
 					}
 					return;
 				}
 				const auto sample = SampleWorkerStack(
 					_fontDatabaseWarmupThread.native_handle(), *lastOtherWork);
 				if (sample == StackSample::Failed) {
-					timer->stop();
-					ProbeFinalRelease.store(true, std::memory_order_release);
-					QCoreApplication::exit(1);
+					stopWorker(ProbeExit::Failure);
 					return;
 				}
 				const auto sampled
@@ -871,12 +940,13 @@ void Sandbox::startFontDatabaseWarmup() {
 					&& started->elapsed() < 10000) {
 					return;
 				}
-				timer->stop();
 				_fontEnumerationOverlapped = sampled;
 				if (!sampled) {
 					PrintProbeFrameSnapshot(*lastOtherWork);
-					ProbeFinalRelease.store(true, std::memory_order_release);
+					stopWorker(ProbeExit::Quit);
+					return;
 				}
+				timer->stop();
 				Core::Quit();
 			});
 			timer->start(1);

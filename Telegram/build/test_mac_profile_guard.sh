@@ -1760,6 +1760,20 @@ run_font_shutdown_regression() {
 	mkdir -p "$(dirname "$font_profile_log")"
 	: > "$font_profile_log"
 	local launch_status=0
+	local -a shutdown_command=("$APP" -noupdate -debug)
+	if [[ "$forced_failure" == probe-timeout-retry ]]; then
+		shutdown_command=(python3 -c '
+import subprocess
+import sys
+
+try:
+    result = subprocess.run(sys.argv[1:], timeout=30)
+except subprocess.TimeoutExpired:
+    print("font shutdown retry timeout process hung", file=sys.stderr)
+    sys.exit(124)
+sys.exit(result.returncode if result.returncode >= 0 else 128 - result.returncode)
+' "$APP" -noupdate -debug)
+	fi
 	if env -u TDESKTOP_FONT_STARTUP_REGRESSION \
 		HOME="$font_home" TMPDIR="$TEST_TMP_BASE" \
 		TDESKTOP_MAC_PROFILE_TEST_HOME="$font_home" \
@@ -1767,7 +1781,7 @@ run_font_shutdown_regression() {
 		TDESKTOP_FONT_STARTUP_QUIT_REGRESSION=1 \
 		TDESKTOP_FONT_STARTUP_TEST_FAILURE="$forced_failure" \
 		FONT_SHUTDOWN_TEST_MODE="${FONT_TEST_MODE:-pass}" \
-		"$APP" -noupdate -debug >"$shutdown_log" 2>&1; then
+		"${shutdown_command[@]}" >"$shutdown_log" 2>&1; then
 		:
 	else
 		launch_status=$?
@@ -2144,6 +2158,26 @@ run_font_startup_regression() {
 		return 1
 	fi
 	printf 'Font shutdown probe timeout diagnostics=PASS\n'
+	local retry_timeout_log="$TEST_HOME/font-probe-retry-timeout.log"
+	if run_font_shutdown_regression probe-timeout-retry >"$retry_timeout_log" 2>&1; then
+		echo 'font shutdown regression accepted a retry timeout' >&2
+		return 1
+	fi
+	if ! awk '
+		/retry_checkpoint=1/ && stage == 0 { stage = 1; next }
+		/retry_timeout=1/ && stage == 1 { stage = 2; next }
+		/retry_gui_event=1/ && stage == 2 { stage = 3; next }
+		/retry_worker_done=1/ && stage == 3 { stage = 4; next }
+		/worker_joined=1 application_created=0 teardown=complete/ && stage == 4 { stage = 5 }
+		END { exit stage != 5 }
+	' "$retry_timeout_log" \
+		|| ! grep -F -q 'font shutdown regression did not quit during an active system font enumeration' \
+			"$retry_timeout_log"; then
+		cat "$retry_timeout_log" >&2
+		echo 'font shutdown retry timeout ordering was not observed' >&2
+		return 1
+	fi
+	printf 'Font shutdown retry timeout ordering=PASS\n'
 	run_font_warmup_thread_failure_regression
 }
 

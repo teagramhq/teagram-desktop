@@ -200,6 +200,14 @@ if [[ "${TDESKTOP_FONT_STARTUP_QUIT_REGRESSION:-}" == 1 ]]; then
 		printf 'Font shutdown regression: quit_observed=1 font_work=active enumeration_overlapped=0\n'
 		exit 0
 	fi
+	if [[ "${TDESKTOP_FONT_STARTUP_TEST_FAILURE:-}" == probe-timeout-retry ]]; then
+		printf 'Font shutdown regression: retry_checkpoint=1\n'
+		printf 'Font shutdown regression: retry_timeout=1\n'
+		printf 'Font shutdown regression: retry_gui_event=1\n'
+		printf 'Font shutdown regression: retry_worker_done=1\n'
+		printf 'Font shutdown regression: worker_joined=1 application_created=0 teardown=complete\n'
+		exit 0
+	fi
 	if [[ "${TDESKTOP_FONT_STARTUP_TEST_FAILURE:-}" == probe-missed-first ]]; then
 		printf 'Font shutdown regression: enumeration_retry=1\n'
 	fi
