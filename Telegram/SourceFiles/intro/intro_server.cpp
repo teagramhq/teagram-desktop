@@ -129,6 +129,15 @@ ServerWidget::ServerWidget(
 		}
 	}, lifetime());
 	layoutContent();
+	account->logoutCleanupChanges()
+		| rpl::on_next(
+			[=] {
+				refreshMode();
+				if (_readOnly) {
+					switchToBound();
+				}
+			},
+			lifetime());
 }
 
 bool ServerWidget::readOnly() const {
@@ -138,7 +147,8 @@ bool ServerWidget::readOnly() const {
 ServerStepState ServerWidget::serverStepState() const {
 	const auto &options = account().mtp().dcOptions();
 	auto result = ServerStepState();
-	result.blocked = options.blocked();
+	result.blocked = options.blocked() || account().loggingOut()
+					 || account().local().endpointRefreshLogoutBlocked();
 	result.hasSession = account().sessionExists();
 	result.hasCustomServer = options.hasCustomServer();
 	result.browserOnlyServerRefused
@@ -233,7 +243,7 @@ void ServerWidget::setupSelection() {
 }
 
 void ServerWidget::setupBound() {
-	const auto blocked = account().mtp().dcOptions().blocked();
+	const auto blocked = serverStepState().blocked;
 	const auto authorized = account().sessionExists();
 	const auto custom = account().mtp().dcOptions().customServer();
 	const auto endpoint = custom.serverSelection.empty()
@@ -299,7 +309,9 @@ void ServerWidget::setupBound() {
 
 	if (blocked) {
 		_savedStatus->setText(
-			tr::lng_intro_server_saved_settings_unreadable(tr::now));
+			account().logoutCleanupPending()
+				? tr::lng_intro_please_wait(tr::now)
+				: tr::lng_intro_server_saved_settings_unreadable(tr::now));
 		_savedStatus->show();
 		_savedContinue->setDisabled(true);
 		_savedAddressLabel->hide();
@@ -326,19 +338,24 @@ void ServerWidget::switchToBound() {
 	_address->hide();
 	_status->hide();
 	_continue->hide();
-	_savedAddressLabel->show();
-	_savedAddress->show();
-	_savedContinue->show();
+	const auto blocked = serverStepState().blocked;
+	_savedAddressLabel->setVisible(!blocked);
+	_savedAddress->setVisible(!blocked);
+	_savedContinue->setVisible(!blocked && !account().sessionExists());
+	_savedContinue->setDisabled(blocked);
 	_addAccount->show();
 	const auto custom = account().mtp().dcOptions().customServer();
 	_savedAddress->setText(custom.serverSelection.empty()
 		? CustomServerEndpoint(custom)
 		: QString::fromStdString(custom.serverSelection));
-	if (account().mtp().dcOptions().blocked()) {
+	if (blocked) {
 		_savedStatus->setText(
-			tr::lng_intro_server_saved_settings_unreadable(tr::now));
+			account().logoutCleanupPending()
+				? tr::lng_intro_please_wait(tr::now)
+				: tr::lng_intro_server_saved_settings_unreadable(tr::now));
 		_savedStatus->show();
-		_savedContinue->setDisabled(true);
+	} else {
+		_savedStatus->hide();
 	}
 	layoutContent();
 }
@@ -373,8 +390,7 @@ int ServerWidget::nextButtonTop() const {
 void ServerWidget::setInnerFocus() {
 	refreshMode();
 	if (_readOnly) {
-		if (account().mtp().dcOptions().blocked()
-			|| account().sessionExists()) {
+		if (serverStepState().blocked || account().sessionExists()) {
 			_addAccount->setFocus(Qt::OtherFocusReason);
 		} else {
 			_savedContinue->setFocus(Qt::OtherFocusReason);
@@ -400,7 +416,7 @@ void ServerWidget::submit() {
 		submitSelection();
 		return;
 	}
-	const auto blocked = account().mtp().dcOptions().blocked();
+	const auto blocked = serverStepState().blocked;
 	const auto hasSession = account().sessionExists();
 	const auto refused = account().mtp().hasBrowserOnlyServerRefusal();
 	const auto show = [=] { showError(tr::lng_intro_server_browser_only()); };
@@ -462,7 +478,7 @@ void ServerWidget::layoutContent() {
 }
 
 QWidget *ServerWidget::firstTabWidget() const {
-	if (_readOnly && account().mtp().dcOptions().blocked()) {
+	if (_readOnly && serverStepState().blocked) {
 		return _addAccount;
 	}
 	return _readOnly
@@ -479,8 +495,7 @@ QWidget *ServerWidget::lastTabWidget() const {
 QWidget *ServerWidget::nextButtonFocusWidget() const {
 	if (!_readOnly) {
 		return _continue;
-	} else if (account().mtp().dcOptions().blocked()
-		|| account().sessionExists()) {
+	} else if (serverStepState().blocked || account().sessionExists()) {
 		return _addAccount;
 	} else {
 		return _savedContinue;

@@ -19,6 +19,7 @@ namespace details {
 [[nodiscard]] bool KeyAlreadyUsed(QString &name);
 [[nodiscard]] FileKey GenerateKey(const QString &basePath);
 void ClearKey(const FileKey &key, const QString &basePath);
+[[nodiscard]] bool PreparingWrites();
 
 [[nodiscard]] bool CheckStreamStatus(QDataStream &stream);
 [[nodiscard]] MTP::AuthKeyPtr CreateLocalKey(
@@ -91,6 +92,8 @@ private:
 #if defined(TDESKTOP_LIFECYCLE_REGRESSION) || defined(TDESKTOP_UNIT_TESTS)
 void SetEndpointConfigWriteHookForRegressionTest(Fn<bool()> hook);
 void SetEndpointRecoveryReadHookForTest(Fn<void()> hook);
+void SetEndpointRecoveryReadHooksForTest(std::vector<Fn<void()>> hooks);
+void SetEndpointRefreshRemovalHookForTest(Fn<bool()> hook);
 #endif
 
 bool ReadFile(
@@ -117,6 +120,7 @@ bool ReadEncryptedFile(
 
 void Sync();
 void RunOnStorageWorker(Fn<void()> task);
+void PrepareWritesAsync(Fn<bool()> prepare, Fn<void(bool)> done);
 void Finish();
 
 } // namespace details

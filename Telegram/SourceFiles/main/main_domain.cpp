@@ -423,7 +423,8 @@ void Domain::closeAccountWindows(not_null<Main::Account*> account) {
 }
 
 bool Domain::removePasscodeIfEmpty() {
-	if (_accounts.size() != 1 || _active.current()->sessionExists()) {
+	if (_accounts.size() != 1 || _active.current()->sessionExists()
+		|| _active.current()->loggingOut()) {
 		return false;
 	}
 	Local::reset();
@@ -450,7 +451,7 @@ void Domain::removeRedundantAccounts() {
 		// headless regression, but dropping it invalidates _active.
 		if (i->account.get() == _active.current()
 			|| Core::App().separateWindowFor(not_null(i->account.get()))
-			|| i->account->sessionExists()) {
+			|| i->account->sessionExists() || i->account->loggingOut()) {
 			++i;
 			continue;
 		}

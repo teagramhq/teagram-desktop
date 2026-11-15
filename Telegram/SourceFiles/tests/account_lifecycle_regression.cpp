@@ -246,6 +246,10 @@ class AccountLifecycleRegressionAccess {
 		return account._mtp != nullptr;
 	}
 	[[nodiscard]] static bool
+	logoutCleanupPending(const Main::Account &account) {
+		return account._logoutCleanupPending;
+	}
+	[[nodiscard]] static bool
 	endpointVerificationPending(const Main::Account &account) {
 		return account._mtpForEndpointVerification != nullptr;
 	}
@@ -3855,6 +3859,15 @@ class RegressionAccountCleanup final {
 			}
 		}
 #endif
+		if (!_retainSession
+			&& !WaitForRegressionCondition(
+				[&] {
+					const auto current = _account.get();
+					return !current || !current->loggingOut();
+				},
+				10'000)) {
+			return false;
+		}
 		if (const auto fallback = _fallback.get();
 			fallback && (&_domain.active() != fallback)) {
 			_domain.activate(not_null<Main::Account *>(fallback));
@@ -4829,6 +4842,86 @@ FindAuthorizationBlockedAccount(const Main::Domain &domain) {
 					MTPlong(), MTPlong(), MTPlong());
 }
 
+[[nodiscard]] bool TwoAccountRecoveryKeepsUiResponsive(Main::Domain &domain) {
+	const auto prefix
+		= u"main-3772-two-"_q + QString::number(qlonglong(crl::now()));
+	const auto localKey = RegressionAuthKey(0x74);
+	const auto prepare = [&](const QString &name, UserId userId) {
+		auto account = std::make_unique<Main::Account>(&domain, name, 0);
+		auto config = account->prepareToStart(localKey);
+		if (!config) {
+			config
+				= std::make_unique<MTP::Config>(MTP::Environment::Production);
+		}
+		account->start(std::move(config));
+		if (!WaitForRegressionCondition(
+				[&] { return !account->startPending(); })
+			|| !ConfigurePinnedServer(not_null<Main::Account *>(account.get()),
+									  RegressionServerKey())) {
+			return std::unique_ptr<Main::Account>();
+		}
+		account->mtp().dcPersistentKeyChanged(2, RegressionAuthKey(0x21));
+		account->setSessionUserId(userId);
+		if (!account->createSession(
+				RegressionUser(userId, true, QString()),
+				std::make_unique<Main::SessionSettings>())) {
+			return std::unique_ptr<Main::Account>();
+		}
+		account->mtp().resume();
+		return account;
+	};
+	const auto firstName = prefix + u"-first"_q;
+	const auto secondName = prefix + u"-second"_q;
+	auto first = prepare(firstName, UserId(377201));
+	auto second = prepare(secondName, UserId(377202));
+	if (!first || !second) {
+		return false;
+	}
+	first.reset();
+	second.reset();
+	Storage::details::Sync();
+	first = std::make_unique<Main::Account>(&domain, firstName, 0);
+	second = std::make_unique<Main::Account>(&domain, secondName, 0);
+	auto firstConfig = first->prepareToStart(localKey);
+	auto secondConfig = second->prepareToStart(localKey);
+	if (!firstConfig || !secondConfig) {
+		return false;
+	}
+	const auto release = std::make_shared<QSemaphore>();
+	const auto waiting = std::make_shared<std::atomic<bool>>(false);
+	const auto releaseOnExit = gsl::finally([=] {
+		release->release();
+		Storage::details::SetEndpointRecoveryReadHookForTest(nullptr);
+	});
+	Storage::details::SetEndpointRecoveryReadHooksForTest({
+		[] {},
+		[=] {
+			waiting->store(true);
+			static_cast<void>(release->tryAcquire(1, 10'000));
+			waiting->store(false);
+		},
+	});
+	first->start(std::move(firstConfig));
+	second->start(std::move(secondConfig));
+	auto responsive = false;
+	auto probe = QTimer();
+	QObject::connect(&probe, &QTimer::timeout, [&] {
+		if (waiting->load()
+			&& AccountLifecycleRegressionAccess::hasMtp(*first)) {
+			responsive = first->startPending() && !first->sessionExists();
+			release->release();
+		}
+	});
+	probe.start(1);
+	const auto completed = WaitForRegressionCondition(
+		[&] { return !first->startPending() && !second->startPending(); });
+	probe.stop();
+	return completed && responsive && first->sessionExists()
+		   && second->sessionExists()
+		   && first->mtp().isServerEnrollmentNetworkAllowed()
+		   && second->mtp().isServerEnrollmentNetworkAllowed();
+}
+
 [[nodiscard]] bool LogoutDuringEndpointWriteRestarts(Main::Domain &domain) {
 	const auto dataName
 		= u"main-3772-logout-"_q + QString::number(qlonglong(crl::now()));
@@ -4881,13 +4974,17 @@ FindAuthorizationBlockedAccount(const Main::Domain &domain) {
 	const auto base = binding.front().chopped(suffix.size());
 	const auto entered = std::make_shared<QSemaphore>();
 	const auto release = std::make_shared<QSemaphore>();
+	const auto waiting = std::make_shared<std::atomic<bool>>(false);
 	const auto releaseOnExit = gsl::finally([=] {
 		release->release();
 		Storage::details::SetEndpointConfigWriteHookForRegressionTest(nullptr);
 	});
 	Storage::details::SetEndpointConfigWriteHookForRegressionTest([=] {
+		waiting->store(true);
 		entered->release();
-		return release->tryAcquire(1, 5'000);
+		const auto released = release->tryAcquire(1, 10'000);
+		waiting->store(false);
+		return released;
 	});
 	const auto staged = std::make_shared<std::optional<bool>>();
 	account->local().writeEndpointRefreshRecord(
@@ -4896,14 +4993,23 @@ FindAuthorizationBlockedAccount(const Main::Domain &domain) {
 	if (!WaitForRegressionCondition([&] { return entered->tryAcquire(); })) {
 		return false;
 	}
-	auto unblock = std::thread([=] {
-		QThread::msleep(100);
+	auto responsive = false;
+	QTimer::singleShot(0, [&] {
+		account->mtp().resume();
+		responsive = waiting->load() && account->loggingOut()
+					 && !account->sessionExists()
+					 && !account->mtp().isServerEnrollmentNetworkAllowed()
+					 && !account->createSession(
+						 RegressionUser(UserId(377205), true, QString()),
+						 std::make_unique<Main::SessionSettings>());
 		release->release();
 	});
 	account->forcedLogOut();
-	unblock.join();
 	QCoreApplication::processEvents();
-	if (!staged->value_or(false)
+	if (!responsive
+		|| !WaitForRegressionCondition([&] { return !account->loggingOut(); },
+									   10'000)
+		|| !staged->value_or(false)
 		|| QFileInfo::exists(base + u"mtp_endpoint_refreshs"_q)
 		|| QFileInfo::exists(base + u"mtp_endpoint_refresh_stageds"_q)
 		|| !WaitForRegressionCondition([&] {
@@ -4935,10 +5041,67 @@ FindAuthorizationBlockedAccount(const Main::Domain &domain) {
 	auto restored = std::make_unique<Main::Account>(&domain, dataName, 0);
 	auto restoredConfig = restored->prepareToStart(localKey);
 	restored->start(std::move(restoredConfig));
-	return WaitForRegressionCondition([&] { return !restored->startPending(); })
-		   && restored->sessionExists()
-		   && MTP::SameCustomServerPin(
-			   newPin, restored->mtp().dcOptions().customServer());
+	if (!WaitForRegressionCondition([&] { return !restored->startPending(); })
+		|| !restored->sessionExists()
+		|| !MTP::SameCustomServerPin(
+			newPin, restored->mtp().dcOptions().customServer())) {
+		return false;
+	}
+	const auto keys = restored->mtp().getKeysForWrite();
+	const auto proof = ranges::find_if(keys, [](const MTP::AuthKeyPtr &key) {
+		return key && key->dcId() == 2
+			   && key->type() == MTP::AuthKey::Type::ReadFromFile;
+	});
+	if (proof == keys.end()) {
+		return false;
+	}
+	const auto restoredPin = MTP::Config(restored->mtp().config());
+	const auto committedAgain = std::make_shared<std::optional<bool>>();
+	restored->local().writeEndpointRefreshRecord(
+		restoredPin, restoredPin, *proof, true,
+		[committedAgain](bool result) { *committedAgain = result; });
+	if (!WaitForRegressionCondition([&] { return committedAgain->has_value(); })
+		|| !committedAgain->value_or(false)) {
+		return false;
+	}
+	const auto removalAttempted = std::make_shared<std::atomic<bool>>(false);
+	Storage::details::SetEndpointRefreshRemovalHookForTest([=] {
+		removalAttempted->store(true);
+		return false;
+	});
+	const auto clearHook = gsl::finally([] {
+		Storage::details::SetEndpointRefreshRemovalHookForTest(nullptr);
+	});
+	restored->forcedLogOut();
+	if (!WaitForRegressionCondition([&] {
+			return removalAttempted->load()
+				   && !AccountLifecycleRegressionAccess::logoutCleanupPending(
+					   *restored);
+		})
+		|| !restored->loggingOut() || restored->sessionExists()
+		|| restored->mtp().isServerEnrollmentNetworkAllowed()
+		|| restored->createSession(
+			RegressionUser(UserId(377206), true, QString()),
+			std::make_unique<Main::SessionSettings>())
+		|| !QFileInfo::exists(base + u"mtp_endpoint_refresh_logouts"_q)) {
+		return false;
+	}
+	restored.reset();
+	Storage::details::Sync();
+	auto blocked = std::make_unique<Main::Account>(&domain, dataName, 0);
+	auto blockedConfig = blocked->prepareToStart(localKey);
+	blocked->start(std::move(blockedConfig));
+	if (!WaitForRegressionCondition([&] { return !blocked->startPending(); })
+		|| blocked->sessionExists() || !blocked->mtp().dcOptions().blocked()
+		|| !blocked->local().endpointRefreshLogoutBlocked()
+		|| !blocked->mtp().dcOptions().setCustomServer(newPin)) {
+		return false;
+	}
+	blocked->mtp().resume();
+	return !blocked->mtp().isServerEnrollmentNetworkAllowed()
+		   && !blocked->createSession(
+			   RegressionUser(UserId(377206), true, QString()),
+			   std::make_unique<Main::SessionSettings>());
 }
 
 [[nodiscard]] bool RunMainDcReconnectDifferenceUnreadRegression(
@@ -9589,6 +9752,7 @@ bool RegressionBoxCloseEventTrace::eventFilter(QObject *watched,
 					 "session teardown.\n");
 		return false;
 	}
+	const auto deferredAccountWeak = base::make_weak(deferred.get());
 	deferred->forcedLogOut();
 	if (!diedSessionWeak.empty()) {
 		std::fprintf(
@@ -9615,6 +9779,10 @@ bool RegressionBoxCloseEventTrace::eventFilter(QObject *watched,
 			"controller.\n");
 		return false;
 	}
+	if (!WaitForRegressionCondition([&] { return deferredAccountWeak.empty(); },
+									10'000)) {
+		return false;
+	}
 	// Closing the old window lets the domain remove its now-sessionless
 	// account, so the replacement must be a fresh account with the same user
 	// id.
@@ -9626,6 +9794,7 @@ bool RegressionBoxCloseEventTrace::eventFilter(QObject *watched,
 	const auto pinnedWasPremium = pinned->session().premium();
 	const auto blankWasPremium = blank->session().premium();
 	auto accountLimitFixtureRestored = false;
+	auto accountLimitCleanupFinished = true;
 	base::weak_ptr<Window::Controller> disposablePrimaryWindowLifetime;
 	const auto restoreAccountLimitFixture = [&] {
 		if (accountLimitFixtureRestored) {
@@ -9640,6 +9809,12 @@ bool RegressionBoxCloseEventTrace::eventFilter(QObject *watched,
 				app.closeWindow(window);
 			}
 		}
+		accountLimitCleanupFinished = WaitForRegressionCondition(
+			[&] {
+				const auto strong = replacementLifetime.get();
+				return !strong || !strong->loggingOut();
+			},
+			10'000);
 		if (const auto window = disposablePrimaryWindowLifetime.get()) {
 			if (app.separateWindowFor(window->id()) == window) {
 				app.closeWindow(window);
@@ -9826,7 +10001,8 @@ bool RegressionBoxCloseEventTrace::eventFilter(QObject *watched,
 	}
 	replacement->forcedLogOut();
 	restoreAccountLimitFixture();
-	const auto fixtureControllersSurvived = !stockControllerLifetime.empty()
+	const auto fixtureControllersSurvived = accountLimitCleanupFinished
+											&& !stockControllerLifetime.empty()
 											&& !pinnedControllerLifetime.empty()
 											&& !blankControllerLifetime.empty();
 	if (!fixtureControllersSurvived) {
@@ -13865,7 +14041,8 @@ RunAiComposeApplyHandlerRegression(not_null<Window::Controller *> window,
 			"destroyed-session event processing enqueued an extra "
 			"live-session update");
 	}
-	if (!discardedLifetime.empty()) {
+	if (!WaitForRegressionCondition([&] { return discardedLifetime.empty(); },
+									10'000)) {
 		return failPrerequisite(
 			"previous-session account survived after its window closed");
 	}
@@ -14993,7 +15170,15 @@ RunAiComposeApplyHandlerRegression(not_null<Window::Controller *> window,
 			std::fprintf(stderr, "Boost entry regression: blocked fixture "
 								 "could not be prepared.\n");
 		}
+		const auto boostWeak = base::make_weak(boostBlocked.get());
 		boostBlocked->forcedLogOut();
+		const auto boostCleanupFinished = WaitForRegressionCondition(
+			[&] {
+				const auto strong = boostWeak.get();
+				return !strong || !strong->loggingOut();
+			},
+			10'000);
+		boostEntryPassed = boostEntryPassed && boostCleanupFinished;
 	} else {
 		std::fprintf(
 			stderr,
@@ -16089,6 +16274,10 @@ RunAiComposeApplyHandlerRegression(not_null<Window::Controller *> window,
 			active, endpointRefreshDiscovery, finalKey)) {
 		return failAccountLifecycle("restored Account did not keep requests "
 									"paused until endpoint proof");
+	}
+	if (!TwoAccountRecoveryKeepsUiResponsive(domain)) {
+		return failAccountLifecycle(
+			"second-account recovery blocked the first account startup");
 	}
 	if (!LogoutDuringEndpointWriteRestarts(domain)) {
 		return failAccountLifecycle("logout did not clear a pending endpoint "

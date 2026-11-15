@@ -19,6 +19,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <QtCore/QMetaObject>
 #include <QtCore/QtEndian>
 #include <QtCore/QSaveFile>
+#include <vector>
 
 namespace Storage {
 namespace details {
@@ -47,7 +48,10 @@ struct WriteEntry {
 	QString base;
 	QByteArray data;
 	QByteArray md5;
+	bool remove = false;
 };
+
+thread_local std::vector<WriteEntry> *PreparedWrites = nullptr;
 
 class WriteManager final {
 public:
@@ -81,6 +85,8 @@ public:
 	void write(WriteEntry &&entry);
 	[[nodiscard]] bool writeSync(WriteEntry &&entry);
 	void writeWithResult(WriteEntry &&entry, Fn<void(bool)> done);
+	void writeBatchWithResult(std::vector<WriteEntry> entries,
+							  Fn<void(bool)> done);
 	void run(Fn<void()> task);
 	void sync();
 	void stop();
@@ -113,6 +119,20 @@ bool WriteManager::writeSync(WriteEntry &&entry) {
 	const auto i = ranges::find(_scheduled, entry.base, &WriteEntry::base);
 	if (i != end(_scheduled)) {
 		_scheduled.erase(i);
+	}
+	if (entry.remove) {
+		for (const auto suffix : {'0', '1', 's'}) {
+			const auto name = entry.base + QChar(suffix);
+			if (!CheckPath(Operation::Stat, name)) {
+				return false;
+			}
+			if (QFileInfo::exists(name)
+				&& (!CheckPath(Operation::Unlink, name)
+					|| !QFile::remove(name))) {
+				return false;
+			}
+		}
+		return true;
 	}
 	return writeNow(std::move(entry));
 }
@@ -249,6 +269,10 @@ void AsyncWriteManager::write(WriteEntry &&entry) {
 
 bool AsyncWriteManager::writeSync(WriteEntry &&entry) {
 	Expects(!_finished);
+	if (PreparedWrites) {
+		PreparedWrites->push_back(std::move(entry));
+		return true;
+	}
 
 	if (!_manager) {
 		_manager.emplace();
@@ -258,6 +282,28 @@ bool AsyncWriteManager::writeSync(WriteEntry &&entry) {
 		result = manager.writeSync(std::move(entry));
 	});
 	return result;
+}
+
+void AsyncWriteManager::writeBatchWithResult(std::vector<WriteEntry> entries,
+											 Fn<void(bool)> done) {
+	Expects(!_finished);
+	if (!_manager) {
+		_manager.emplace();
+	}
+	_manager->with([entries = std::move(entries),
+					done = std::move(done)](WriteManager &manager) mutable {
+		auto success = true;
+		for (auto &entry : entries) {
+			if (!manager.writeSync(std::move(entry))) {
+				success = false;
+				break;
+			}
+		}
+		QMetaObject::invokeMethod(
+			QCoreApplication::instance(),
+			[done = std::move(done), success] { done(success); },
+			Qt::QueuedConnection);
+	});
 }
 
 void AsyncWriteManager::writeWithResult(WriteEntry &&entry,
@@ -366,6 +412,14 @@ FileKey GenerateKey(const QString &basePath) {
 }
 
 void ClearKey(const FileKey &key, const QString &basePath) {
+	if (PreparedWrites) {
+		PreparedWrites->push_back(WriteEntry{
+			.basePath = basePath,
+			.base = basePath + ToFilePart(key),
+			.remove = true,
+		});
+		return;
+	}
 	QString name;
 	name.reserve(basePath.size() + 0x11);
 	name.append(basePath).append(ToFilePart(key)).append('0');
@@ -788,6 +842,24 @@ void Sync() {
 }
 
 void RunOnStorageWorker(Fn<void()> task) { Manager.run(std::move(task)); }
+
+bool PreparingWrites() { return PreparedWrites != nullptr; }
+
+void PrepareWritesAsync(Fn<bool()> prepare, Fn<void(bool)> done) {
+	Expects(prepare != nullptr && done != nullptr && !PreparedWrites);
+	auto entries = std::vector<WriteEntry>();
+	PreparedWrites = &entries;
+	const auto reset = gsl::finally([] { PreparedWrites = nullptr; });
+	const auto prepared = prepare();
+	PreparedWrites = nullptr;
+	if (!prepared) {
+		QMetaObject::invokeMethod(
+			QCoreApplication::instance(),
+			[done = std::move(done)] { done(false); }, Qt::QueuedConnection);
+		return;
+	}
+	Manager.writeBatchWithResult(std::move(entries), std::move(done));
+}
 
 void Finish() {
 	Manager.stop();

@@ -2393,6 +2393,58 @@ TEST_CASE(EndpointRefreshRecoveryReadDoesNotBlockMainThread) {
 	CHECK(account.customServerPinUnknown());
 }
 
+TEST_CASE(StartupAuthorizationWritesDoNotBlockMainThread) {
+	QTemporaryDir directory;
+	CHECK(directory.isValid());
+	if (!directory.isValid()) {
+		return;
+	}
+	const auto previousDirectory = QDir::currentPath();
+	const auto changedDirectory = QDir::setCurrent(directory.path());
+	CHECK(changedDirectory);
+	if (!changedDirectory) {
+		return;
+	}
+	const auto restoreDirectory
+		= gsl::finally([&] { QDir::setCurrent(previousDirectory); });
+	const auto path = directory.path() + u"/account/"_q;
+	const auto localKey = MakeEnrollmentStorageKey();
+	auto config = std::make_shared<MTP::Config>(MTP::Environment::Production);
+	const auto pin = MakeEndpointRefreshPin("100.124.236.66");
+	CHECK(config->dcOptions().setCustomServer(pin));
+	CHECK(config->dcOptions().markAuthorized(pin.dcId));
+	auto account = Storage::Account(path, localKey, config, true, [] {
+		return QByteArray("restored authorization");
+	});
+	const auto entered = std::make_shared<QSemaphore>();
+	const auto release = std::make_shared<QSemaphore>();
+	const auto released = gsl::finally([=] { release->release(); });
+	Storage::details::RunOnStorageWorker([=] {
+		entered->release();
+		static_cast<void>(release->tryAcquire(1, 5'000));
+	});
+	CHECK(entered->tryAcquire(1, 1'000));
+	const auto result = std::make_shared<std::optional<bool>>();
+	Storage::details::PrepareWritesAsync(
+		[&] { return account.writeMtpAuthorization(); },
+		[result](bool success) { *result = success; });
+	const auto responsive = std::make_shared<bool>(false);
+	QTimer::singleShot(0, [=] { *responsive = true; });
+	QCoreApplication::processEvents();
+	CHECK(*responsive);
+	CHECK(!result->has_value());
+	release->release();
+	auto timeout = QElapsedTimer();
+	timeout.start();
+	while (!result->has_value() && timeout.elapsed() < 5'000) {
+		QCoreApplication::processEvents();
+		QThread::msleep(1);
+	}
+	CHECK(result->value_or(false));
+	const auto restored = ReadEnrollmentConfig(path, localKey);
+	CHECK(restored && SameCustomServerPin(pin, restored->customServer()));
+}
+
 TEST_CASE(EndpointRefreshRecoveryIgnoresDestroyedAccount) {
 	QTemporaryDir directory;
 	CHECK(directory.isValid());
@@ -2510,6 +2562,73 @@ TEST_CASE(LogoutClearsDelayedEndpointWritesBeforeReenrollment) {
 	if (recovered) {
 		CHECK(SameCustomServerPin(nextServer, recovered->customServer()));
 	}
+}
+
+TEST_CASE(LogoutJournalRemovalFailureBlocksRestartAndReenrollment) {
+	QTemporaryDir directory;
+	CHECK(directory.isValid());
+	if (!directory.isValid()) {
+		return;
+	}
+	const auto previousDirectory = QDir::currentPath();
+	const auto changedDirectory = QDir::setCurrent(directory.path());
+	CHECK(changedDirectory);
+	if (!changedDirectory) {
+		return;
+	}
+	const auto restoreDirectory
+		= gsl::finally([&] { QDir::setCurrent(previousDirectory); });
+	const auto path = directory.path() + u"/account/"_q;
+	const auto localKey = MakeEnrollmentStorageKey();
+	const auto proofKey = MakeEndpointRefreshAuthKey(0x3A);
+	const auto first = MakeEndpointRefreshPin("100.124.236.66");
+	const auto second = MakeEndpointRefreshPin("100.112.103.90");
+	auto config = std::make_shared<MTP::Config>(MTP::Environment::Production);
+	CHECK(config->dcOptions().setCustomServer(first));
+	CHECK(config->dcOptions().markAuthorized(first.dcId));
+	auto moved = MTP::Config(*config);
+	CHECK(moved.dcOptions().refreshCustomServerEndpoint(first, second));
+	auto account = Storage::Account(path, localKey, config, true);
+	const auto wait = [](const auto &result) {
+		auto timeout = QElapsedTimer();
+		timeout.start();
+		while (!result->has_value() && timeout.elapsed() < 5'000) {
+			QCoreApplication::processEvents();
+			QThread::msleep(1);
+		}
+		return result->has_value();
+	};
+	const auto committed = std::make_shared<std::optional<bool>>();
+	account.writeEndpointRefreshRecord(
+		*config, moved, proofKey, true,
+		[committed](bool value) { *committed = value; });
+	CHECK(wait(committed) && committed->value_or(false));
+	Storage::details::SetEndpointRefreshRemovalHookForTest(
+		[] { return false; });
+	const auto failed = std::make_shared<std::optional<bool>>();
+	account.prepareEndpointRefreshLogout(
+		[failed](bool value) { *failed = value; });
+	CHECK(wait(failed) && !failed->value_or(true));
+	CHECK(QFileInfo::exists(path + u"mtp_endpoint_refresh_logouts"_q));
+	CHECK(QFileInfo::exists(path + u"mtp_endpoint_refreshs"_q));
+	auto restarted = Storage::Account(path, localKey, config, true);
+	const auto refused = restarted.recoverEndpointRefreshConfig(
+		std::make_unique<MTP::Config>(*config), {proofKey}, false);
+	CHECK(!refused);
+	CHECK(restarted.customServerPinUnknown());
+	const auto removed = std::make_shared<std::optional<bool>>();
+	restarted.clearEndpointRefreshRecords(
+		[removed](bool value) { *removed = value; });
+	CHECK(wait(removed) && removed->value_or(false));
+	const auto finished = std::make_shared<std::optional<bool>>();
+	restarted.finishEndpointRefreshLogout(
+		[finished](bool value) { *finished = value; });
+	CHECK(wait(finished) && finished->value_or(false));
+	CHECK(!QFileInfo::exists(path + u"mtp_endpoint_refresh_logouts"_q));
+	auto afterCleanup = Storage::Account(path, localKey, config, true);
+	const auto recovered = afterCleanup.recoverEndpointRefreshConfig(
+		std::make_unique<MTP::Config>(*config), {proofKey}, false);
+	CHECK(recovered && SameCustomServerPin(first, recovered->customServer()));
 }
 
 TEST_CASE(EndpointRefreshRestartRejectsAChangedStoredKey) {
@@ -2869,6 +2988,56 @@ TEST_CASE(TelegramStickerBotTokenUsesEncryptedAccountPreferences) {
 			CHECK(!file.readAll().contains(token.toUtf8()));
 		}
 	}
+}
+
+TEST_CASE(LogoutTokenCleanupDoesNotBlockOnStorageWorker) {
+	QTemporaryDir directory;
+	CHECK(directory.isValid());
+	if (!directory.isValid()) {
+		return;
+	}
+	const auto basePath = directory.path() + u"/account/"_q;
+	const auto key = MakeEnrollmentStorageKey();
+	const auto token = Core::TelegramBotToken::Create(
+		u"12345:AbCdEf0123456789012345678901234567890"_q);
+	CHECK(token.has_value());
+	if (!token) {
+		return;
+	}
+	auto account = MakeEnrollmentStorageAccount(basePath, key);
+	CHECK(account->writeTelegramStickerBotToken(*token));
+	const auto prefsKey = Storage::AccountTestPeer::PrefsKey(*account);
+	CHECK(prefsKey != 0);
+	const auto entered = std::make_shared<QSemaphore>();
+	const auto release = std::make_shared<QSemaphore>();
+	const auto released = gsl::finally([=] { release->release(); });
+	Storage::details::RunOnStorageWorker([=] {
+		entered->release();
+		static_cast<void>(release->tryAcquire(1, 5'000));
+	});
+	CHECK(entered->tryAcquire(1, 1'000));
+	account->forgetTelegramStickerBotTokenForLogout();
+	const auto result = std::make_shared<std::optional<bool>>();
+	account->clearTelegramStickerBotTokenAsync(
+		[result](bool success) { *result = success; });
+	const auto responsive = std::make_shared<bool>(false);
+	QTimer::singleShot(0, [=] { *responsive = true; });
+	QCoreApplication::processEvents();
+	CHECK(*responsive);
+	CHECK(!result->has_value());
+	CHECK(!account->telegramStickerBotToken().has_value());
+	release->release();
+	auto timeout = QElapsedTimer();
+	timeout.start();
+	while (!result->has_value() && timeout.elapsed() < 5'000) {
+		QCoreApplication::processEvents();
+		QThread::msleep(1);
+	}
+	CHECK(result->value_or(false));
+	const auto file = basePath + Storage::details::ToFilePart(prefsKey);
+	CHECK(!QFileInfo::exists(file + '0'));
+	CHECK(!QFileInfo::exists(file + '1'));
+	CHECK(!QFileInfo::exists(file + 's'));
 }
 
 TEST_CASE(TelegramStickerBotTokenRetriesFailedPreferenceWrites) {

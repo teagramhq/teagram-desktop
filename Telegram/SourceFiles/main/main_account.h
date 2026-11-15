@@ -89,6 +89,12 @@ public:
 	void logOut();
 	void forcedLogOut();
 	[[nodiscard]] bool loggingOut() const;
+	[[nodiscard]] bool logoutCleanupPending() const {
+		return _logoutCleanupPending;
+	}
+	[[nodiscard]] rpl::producer<> logoutCleanupChanges() const {
+		return _logoutCleanupChanges.events();
+	}
 
 	[[nodiscard]] AppConfig &appConfig() const {
 		Expects(_appConfig != nullptr);
@@ -187,7 +193,10 @@ private:
 	using Owned = std::unique_ptr<Type>;
 #endif
 
-	void startWithRecoveredConfig(std::unique_ptr<MTP::Config> config);
+	bool startWithRecoveredConfig(std::unique_ptr<MTP::Config> config);
+	void finishRestoredStartup(bool persisted);
+	void finishPendingStartup();
+	void publishSession();
 	bool startMtp(
 		std::unique_ptr<MTP::Config> config,
 		bool startPaused = false);
@@ -220,6 +229,8 @@ private:
 	void cancelServerEndpointRefresh();
 
 	void loggedOut();
+	void continueLogoutCleanup();
+	void finishLogoutCleanup(bool success);
 	void destroySession(DestroyReason reason);
 
 	const not_null<Domain*> _domain;
@@ -237,6 +248,7 @@ private:
 	rpl::event_stream<> _mtpNewSessionCreated;
 	rpl::event_stream<> _serverCacheBindingMismatch;
 	rpl::event_stream<> _startFinished;
+	rpl::event_stream<> _logoutCleanupChanges;
 
 	Owned<AppConfig> _appConfig;
 
@@ -255,7 +267,12 @@ private:
 	std::optional<MTP::CustomServer> _mtpForKeysDestroyPin;
 	MTP::ServerEndpointRefreshTransaction _endpointRefresh;
 	bool _loggingOut = false;
+	bool _logoutCleanupPending = false;
+	bool _logoutCleanupFailed = false;
 	bool _startPending = false;
+	bool _preparingStartup = false;
+	bool _startupAuthorizationAttempted = false;
+	bool _startupSessionPrepared = false;
 	bool _restoredSession = false;
 	bool _serverCacheBindingMismatchPending = false;
 	bool _serverEndpointRefreshIdentityFailure = false;

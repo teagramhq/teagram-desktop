@@ -11,6 +11,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "intro/intro_server_discovery.h"
 #include "core/application.h"
 #include "storage/storage_account.h"
+#include "storage/details/storage_file_utilities.h"
 #include "storage/storage_domain.h" // Storage::StartResult.
 #include "storage/serialize_common.h"
 #include "storage/serialize_peer.h"
@@ -240,7 +241,8 @@ void Account::start(std::unique_ptr<MTP::Config> config) {
 		_sessionUserStreamVersion = 0;
 		_storedSessionSettings.reset();
 	}
-	if (_domain->starting() || (config && config->hasCustomServer())
+	if (_domain->starting() || _sessionUserId
+		|| (config && config->hasCustomServer())
 		|| _local->hasStoredCustomServer()
 		|| _local->customServerPinUnknown()) {
 		_startPending = true;
@@ -251,17 +253,26 @@ void Account::start(std::unique_ptr<MTP::Config> config) {
 			_local->recoverEndpointRefreshConfigAsync(
 				std::move(*pendingConfig), _mtpFields.keys, restoredSession,
 				crl::guard(this, [=](std::unique_ptr<MTP::Config> recovered) {
-					startWithRecoveredConfig(std::move(recovered));
-					_startPending = false;
-					_startFinished.fire({});
+					*pendingConfig = std::move(recovered);
+					Storage::details::PrepareWritesAsync(
+						[=] {
+							_preparingStartup = true;
+							const auto prepared = startWithRecoveredConfig(
+								std::move(*pendingConfig));
+							_preparingStartup = false;
+							return prepared;
+						},
+						crl::guard(this, [=](bool persisted) {
+							finishRestoredStartup(persisted);
+						}));
 				}));
 		});
 		return;
 	}
-	startWithRecoveredConfig(std::move(config));
+	static_cast<void>(startWithRecoveredConfig(std::move(config)));
 }
 
-void Account::startWithRecoveredConfig(std::unique_ptr<MTP::Config> config) {
+bool Account::startWithRecoveredConfig(std::unique_ptr<MTP::Config> config) {
 	_appConfig = std::make_unique<AppConfig>(this);
 
 	// An account pinned to a user-entered endpoint and RSA key must
@@ -405,13 +416,63 @@ void Account::startWithRecoveredConfig(std::unique_ptr<MTP::Config> config) {
 		&& (!customServer.key
 			|| !config->dcOptions().isAuthorized(customServer.dcId));
 	if (!startMtp(std::move(config), startPaused)) {
-		return;
+		return false;
+	}
+	if (_startupSessionPrepared) {
+		return true;
 	}
 	if (!startPaused) {
 		_appConfig->start();
 	}
 	watchProxyChanges();
 	watchSessionChanges();
+	return true;
+}
+
+void Account::finishPendingStartup() {
+	_startPending = false;
+	_startFinished.fire({});
+}
+
+void Account::finishRestoredStartup(bool persisted) {
+	if (!persisted && _startupAuthorizationAttempted) {
+		_startupSessionPrepared = false;
+		_startupAuthorizationAttempted = false;
+		if (_mtp) {
+			_mtp->dcOptions().constructBlocked();
+		}
+		_session.reset();
+		Storage::details::PrepareWritesAsync(
+			[=] { return _local->writeMtpAuthorizationFailure(); },
+			crl::guard(this, [=](bool marked) {
+				if (!marked) {
+					LOG(("MTP Error: could not persist the authorization "
+						 "failure "
+						 "marker; keeping the account blocked."));
+				}
+				finishPendingStartup();
+			}));
+		return;
+	}
+	if (!persisted && _mtp) {
+		_mtp->dcOptions().constructBlocked();
+	}
+	if (persisted && _startupSessionPrepared) {
+		_startupSessionPrepared = false;
+		_startupAuthorizationAttempted = false;
+		publishSession();
+		_sessionUserSerialized = {};
+		_sessionUserStreamVersion = 0;
+		_restoredSession = true;
+		_mtp->resume();
+		_storedSessionSettings = nullptr;
+		_session->changes().sendNotifications();
+		_mtpValue = _mtp.get();
+		_appConfig->start();
+		watchProxyChanges();
+		watchSessionChanges();
+	}
+	finishPendingStartup();
 }
 
 void Account::prepareToStartAdded(
@@ -531,6 +592,10 @@ bool Account::createSession(
 		QByteArray serialized,
 		int streamVersion,
 		std::unique_ptr<SessionSettings> settings) {
+	if (_loggingOut || _local->endpointRefreshLogoutBlocked()
+		|| (_mtp && _mtp->dcOptions().blocked())) {
+		return false;
+	}
 	Expects(_mtp != nullptr);
 	Expects(_session == nullptr);
 	Expects(_sessionValue.current() == nullptr);
@@ -580,19 +645,13 @@ bool Account::createSession(
 			_mtp->dcOptions().constructBlocked();
 		}
 	};
+	if (_preparingStartup) {
+		_startupAuthorizationAttempted = true;
+		_startupSessionPrepared = _local->writeMtpAuthorization();
+		return _startupSessionPrepared;
+	}
 	const auto committed = details::CommitPostAuthMtpAuthorization(
-		_local.get(),
-		[=] {
-			if (!_mtpKeysToDestroy.empty()) {
-				destroyMtpKeys(base::take(_mtpKeysToDestroy));
-			}
-			// Session construction can fail the durable authorization commit.
-			// Register it only after that commit succeeds, while it is still
-			// unpublished and before observers see the session.
-			Core::App().downloadManager().trackSession(_session.get());
-			_sessionValue = _session.get();
-			_sessionUserId = 0;
-		},
+		_local.get(), [=] { publishSession(); },
 		[=] {
 			if (!local().writeMtpAuthorizationFailure()) {
 				LOG(("MTP Error: could not persist the authorization failure "
@@ -614,9 +673,18 @@ bool Account::createSession(
 		return false;
 	}
 
-	Ensures(_session != nullptr);
-	local().writeSelf();
 	return true;
+}
+
+void Account::publishSession() {
+	Ensures(_session != nullptr);
+	if (!_mtpKeysToDestroy.empty()) {
+		destroyMtpKeys(base::take(_mtpKeysToDestroy));
+	}
+	Core::App().downloadManager().trackSession(_session.get());
+	_sessionValue = _session.get();
+	_sessionUserId = 0;
+	local().writeSelf();
 }
 
 void Account::destroySession(DestroyReason reason) {
@@ -890,6 +958,8 @@ bool Account::startMtp(
 	fields.deviceModel = Platform::DeviceModelPretty();
 	fields.systemVersion = Platform::SystemVersionPretty();
 	fields.startPaused = pausedUntilSessionCommit;
+	fields.startEnrollmentHeld
+		= _loggingOut || _local->endpointRefreshLogoutBlocked();
 	_mtp = std::make_unique<MTP::Instance>(
 		MTP::Instance::Mode::Normal,
 		std::move(fields));
@@ -1004,6 +1074,9 @@ bool Account::startMtp(
 				"keeping the account blocked."));
 			return false;
 		}
+		if (_startupSessionPrepared) {
+			return true;
+		}
 		_sessionUserSerialized = {};
 		_sessionUserStreamVersion = 0;
 		_restoredSession = true;
@@ -1042,6 +1115,9 @@ bool Account::checkForNewSession(const MTP::Response &message) {
 
 void Account::logOut() {
 	if (_loggingOut) {
+		if (_logoutCleanupFailed) {
+			loggedOut();
+		}
 		return;
 	}
 	_loggingOut = true;
@@ -1064,19 +1140,41 @@ void Account::forcedLogOut() {
 }
 
 void Account::loggedOut() {
-	_loggingOut = false;
+	if (_logoutCleanupPending) {
+		return;
+	}
+	_loggingOut = true;
+	_logoutCleanupPending = true;
+	_logoutCleanupFailed = false;
 	cancelServerEndpointRefresh();
 	_restoredSession = false;
-	if (!local().clearTelegramStickerBotToken()) {
-		LOG(("Failed to remove saved Telegram sticker bot token at logout."));
+	if (_mtp) {
+		_mtp->holdForServerEnrollment();
 	}
+	local().forgetTelegramStickerBotTokenForLogout();
+	local().prepareEndpointRefreshLogout(crl::guard(this, [=](bool prepared) {
+		if (!prepared) {
+			finishLogoutCleanup(false);
+			return;
+		}
+		local().clearTelegramStickerBotTokenAsync(
+			crl::guard(this, [=](bool cleared) {
+				if (cleared) {
+					continueLogoutCleanup();
+				} else {
+					finishLogoutCleanup(false);
+				}
+			}));
+	}));
 	Media::Player::mixer()->stopAndClear();
 	destroySession(DestroyReason::LoggedOut);
+}
+
+void Account::continueLogoutCleanup() {
 	if (_mtp) {
 		// Logging out returns the account to enrollment. Stop all queued
 		// work and drop the independent key-destroyer before clearing
 		// authorization, so a proxy callback cannot restart the old pin.
-		_mtp->stopForServerEnrollment();
 		discardStaleAuthorizationState();
 		const auto clearedAuthorization = _mtp->dcOptions().clearAuthorized();
 		const auto unbound = !_mtp->dcOptions().blocked()
@@ -1092,8 +1190,52 @@ void Account::loggedOut() {
 		discardStaleAuthorizationState();
 		_mtpFields.keys.clear();
 	}
-	local().reset();
+	local().reset(crl::guard(this, [=](bool cleaned) {
+		if (!cleaned) {
+			finishLogoutCleanup(false);
+			return;
+		}
+		const auto finish = [=] {
+			local().finishEndpointRefreshLogout(crl::guard(
+				this, [=](bool removed) { finishLogoutCleanup(removed); }));
+		};
+		if (!_mtp || _mtp->dcOptions().blocked()) {
+			finish();
+		} else {
+			Storage::details::PrepareWritesAsync(
+				[=] { return local().writeMtpConfig(true); },
+				crl::guard(this, [=](bool persisted) {
+					if (persisted) {
+						finish();
+					} else {
+						finishLogoutCleanup(false);
+					}
+				}));
+		}
+	}));
 	cSetOtherOnline(0);
+}
+
+void Account::finishLogoutCleanup(bool success) {
+	_logoutCleanupPending = false;
+	if (!success) {
+		_logoutCleanupFailed = true;
+		LOG(("MTP Error: logout storage cleanup failed; keeping enrollment "
+			 "blocked."));
+		_logoutCleanupChanges.fire({});
+		return;
+	}
+	_loggingOut = false;
+	if (_mtp) {
+		_mtp->releaseServerEnrollmentHold();
+	}
+	const auto domain = _domain;
+	_logoutCleanupChanges.fire({});
+	crl::on_main(domain, [=] {
+		if (domain->started()) {
+			domain->removeRedundantAccounts();
+		}
+	});
 }
 
 void Account::discardStaleAuthorizationState() {

@@ -542,6 +542,9 @@ base::flat_set<QString> Account::collectGoodNames() const {
 		"mtp_endpoint_refresh_stageds",
 		"mtp_endpoint_refresh_staged0",
 		"mtp_endpoint_refresh_staged1",
+		"mtp_endpoint_refresh_logouts",
+		"mtp_endpoint_refresh_logout0",
+		"mtp_endpoint_refresh_logout1",
 		"server_cache_bindings",
 		"server_cache_binding0",
 		"server_cache_binding1",
@@ -856,7 +859,8 @@ Account::ReadMapResult Account::readMapWith(
 	return ReadMapResult::Success;
 }
 
-void Account::reset() {
+void Account::reset(Fn<void(bool)> done) {
+	Expects(done != nullptr);
 	_writeSearchSuggestionsTimer.cancel();
 
 	auto names = collectGoodNames();
@@ -923,17 +927,30 @@ void Account::reset() {
 	wvclear(_webviewStorageIdOther, wvother);
 
 	_mapChanged = true;
-	writeMap();
-	writeMtpData();
-	clearEndpointRefreshRecords();
+	const auto remaining = std::make_shared<int>(2);
+	const auto succeeded = std::make_shared<bool>(true);
+	const auto complete
+		= [remaining, succeeded, done = std::move(done)](bool ok) {
+			  *succeeded = *succeeded && ok;
+			  if (--*remaining == 0) {
+				  done(*succeeded);
+			  }
+		  };
+	const auto alive = std::weak_ptr<char>(_endpointRecoveryLifetime);
+	details::PrepareWritesAsync(
+		[=] { return writeMap(true) && writeMtpData(true); },
+		[=](bool ok) {
+			if (alive.expired()) {
+				return;
+			}
+			if (!ok) {
+				_mapChanged = true;
+			}
+			complete(ok);
+		});
 
-	crl::async([
-		base = _basePath,
-		temp = _tempPath,
-		names = std::move(names),
-		wvbots,
-		wvother
-	] {
+	crl::async([base = _basePath, temp = _tempPath, names = std::move(names),
+				wvbots, wvother, complete] {
 		for (const auto &name : names) {
 			if (!name.endsWith(u"map0"_q) && !name.endsWith(u"map1"_q)
 				&& !name.endsWith(u"maps"_q) && !name.endsWith(u"configs"_q)
@@ -966,9 +983,10 @@ void Account::reset() {
 							 "Storage::Account::remove")) {
 			QDir(temp).removeRecursively();
 		}
+		QMetaObject::invokeMethod(
+			QCoreApplication::instance(), [complete] { complete(true); },
+			Qt::QueuedConnection);
 	});
-
-	Local::sync();
 }
 
 void Account::writeLocations() {

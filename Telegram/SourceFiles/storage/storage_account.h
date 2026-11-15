@@ -135,6 +135,9 @@ public:
 	[[nodiscard]] bool serverForgetBlocked() const {
 		return _serverForgetBlocked;
 	}
+	[[nodiscard]] bool endpointRefreshLogoutBlocked() const {
+		return _endpointRefreshLogoutBlocked;
+	}
 	// Persist the reason an account had to be blocked, so the block
 	// survives a restart on its own: the blocked config is never
 	// written back, and the prefs that failed to read are deleted.
@@ -154,6 +157,8 @@ public:
 	[[nodiscard]] bool
 	writeTelegramStickerBotToken(const Core::TelegramBotToken &token);
 	[[nodiscard]] bool clearTelegramStickerBotToken();
+	void clearTelegramStickerBotTokenAsync(Fn<void(bool)> done);
+	void forgetTelegramStickerBotTokenForLogout();
 	// The durable authorization boundary used by post-auth and clean teardown.
 	// Both the pin marker/config and the current authorization snapshot are
 	// written synchronously before either lifecycle path exposes or closes it.
@@ -175,7 +180,10 @@ public:
 	void recoverEndpointRefreshConfigAsync(
 		std::unique_ptr<MTP::Config> current, std::vector<MTP::AuthKeyPtr> keys,
 		bool restoredSession, Fn<void(std::unique_ptr<MTP::Config>)> done);
-	void clearEndpointRefreshRecords();
+	void prepareEndpointRefreshLogout(Fn<void(bool)> done);
+	void clearEndpointRefreshRecords(Fn<void(bool)> done = nullptr);
+	void finishEndpointRefreshLogout(Fn<void(bool)> done);
+	void reset(Fn<void(bool)> done);
 	// A durable marker is written before destructive re-enrollment. The
 	// cleanup remains pending until every server-scoped store has been
 	// removed and an empty account can be written back.
@@ -330,8 +338,6 @@ public:
 		uint32 len,
 		const void *key128) const;
 
-	void reset();
-
 private:
 #ifdef TDESKTOP_UNIT_TESTS
 	friend struct AccountTestPeer;
@@ -447,6 +453,7 @@ private:
 	bool _customServerPinUnknown = false;
 	bool _mtpAuthorizationWriteFailed = false;
 	bool _serverForgetBlocked = false;
+	bool _endpointRefreshLogoutBlocked = false;
 	std::unique_ptr<MTP::Config> _endpointRefreshOriginalConfig;
 	std::shared_ptr<char> _endpointRecoveryLifetime = std::make_shared<char>();
 
