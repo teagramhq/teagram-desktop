@@ -9,6 +9,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "lang/lang_keys.h"
 #include "lottie/lottie_common.h"
+#include "lottie/lottie_icon.h"
 #include "styles/style_chat_helpers.h"
 #include "ui/controls/send_button.h"
 #include "ui/effects/animations.h"
@@ -27,10 +28,14 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <rpl/range.h>
 
 #include <atomic>
+#include <cerrno>
 #include <chrono>
 #include <condition_variable>
+#include <cstdlib>
+#include <dlfcn.h>
 #include <memory>
 #include <mutex>
+#include <pthread.h>
 #include <thread>
 #include <utility>
 #include <vector>
@@ -58,6 +63,7 @@ namespace {
 
 const auto kVoiceToVideo = u":/animations/chat/voice_to_video.tgs"_q;
 constexpr auto kWaitLimit = std::chrono::seconds(5);
+constexpr auto kUiBudget = std::chrono::milliseconds(50);
 
 struct ReadGate {
 	std::mutex mutex;
@@ -68,6 +74,13 @@ struct ReadGate {
 };
 
 std::atomic<std::shared_ptr<ReadGate>> ActiveReadGate;
+
+struct ThreadStartProbe {
+	int attempts = 0;
+	int rejected = 0;
+};
+
+thread_local ThreadStartProbe *ActiveThreadStartProbe = nullptr;
 
 class SendButtonIntegration final : public Ui::Integration {
   public:
@@ -109,7 +122,51 @@ class SendButtonIntegration final : public Ui::Integration {
 	return gate->timedOut;
 }
 
+SendButtonIntegration &SetupSendButtonTests() {
+	static auto integration = SendButtonIntegration();
+	Ui::Integration::Set(&integration);
+	static auto mainQueue = Ui::MainQueueProcessor();
+	style::internal::StartFonts();
+	style::StartManager(style::kScaleDefault);
+	return integration;
+}
+
+void WarmSendButton() {
+	auto icon = Lottie::MakeIcon({
+		.path = kVoiceToVideo,
+		.sizeOverride = st::historySend.recordSize,
+		.colorizeUsingAlpha = true,
+	});
+	CHECK(icon->framesCount() > 1);
+	auto button = Ui::SendButton(nullptr, st::historySend);
+	CHECK(HasVisiblePixel(Ui::GrabWidgetToImage(&button)));
+}
+
 } // namespace
+
+// Only the test thread can arm this failure, after the Lottie executor is
+// already running. That makes the rejected creation the button's waiter,
+// while thread starts in the rest of the application keep using pthreads
+// normally. The next waiter start is allowed so recovery can be observed.
+extern "C" int pthread_create(pthread_t *thread,
+							  const pthread_attr_t *attributes,
+							  void *(*start)(void *), void *argument) noexcept {
+	if (const auto probe = ActiveThreadStartProbe) {
+		++probe->attempts;
+		if (!probe->rejected) {
+			++probe->rejected;
+			return EAGAIN;
+		}
+	}
+	using Function = int (*)(pthread_t *, const pthread_attr_t *,
+							 void *(*)(void *), void *);
+	static const auto original
+		= reinterpret_cast<Function>(dlsym(RTLD_NEXT, "pthread_create"));
+	if (!original) {
+		std::abort();
+	}
+	return original(thread, attributes, start, argument);
+}
 
 extern "C" QByteArray
 __real__ZN6Lottie11ReadContentERK10QByteArrayRK7QString(const QByteArray &data,
@@ -142,18 +199,18 @@ TEST_CASE(SendButtonDoesNotWaitForPreparingVoiceIcon) {
 		return;
 	}
 
-	static auto integration = SendButtonIntegration();
-	Ui::Integration::Set(&integration);
-	static auto mainQueue = Ui::MainQueueProcessor();
-	style::internal::StartFonts();
-	style::StartManager(style::kScaleDefault);
+	auto &integration = SetupSendButtonTests();
 	auto animations = Ui::Animations::Manager();
+	WarmSendButton();
 
 	const auto gate = std::make_shared<ReadGate>();
 	ActiveReadGate.store(gate);
 	{
 		auto button = Ui::SendButton(nullptr, st::historySend);
+		const auto stateStart = std::chrono::steady_clock::now();
 		button.setState({.type = Ui::SendButton::Type::Record});
+		const auto stateElapsed = std::chrono::steady_clock::now() - stateStart;
+		CHECK(stateElapsed < kUiBudget);
 
 		auto entered = false;
 		{
@@ -166,15 +223,25 @@ TEST_CASE(SendButtonDoesNotWaitForPreparingVoiceIcon) {
 
 		if (entered && !GateTimedOut(gate)) {
 			button.finishAnimating();
+			const auto grabStart = std::chrono::steady_clock::now();
 			const auto pending = Ui::GrabWidgetToImage(&button);
+			const auto grabElapsed
+				= std::chrono::steady_clock::now() - grabStart;
 			CHECK(!pending.isNull());
+			CHECK(grabElapsed < kUiBudget);
 			CHECK(!GateTimedOut(gate));
 			if (!GateTimedOut(gate)) {
 				CHECK(pending == Ui::GrabWidgetToImage(&button));
+				const auto roundStart = std::chrono::steady_clock::now();
 				button.setState({.type = Ui::SendButton::Type::Round});
+				CHECK(std::chrono::steady_clock::now() - roundStart
+					  < kUiBudget);
 				CHECK(!GateTimedOut(gate));
+				const auto roundGrabStart = std::chrono::steady_clock::now();
 				const auto pendingRound = Ui::GrabWidgetToImage(&button);
 				CHECK(!pendingRound.isNull());
+				CHECK(std::chrono::steady_clock::now() - roundGrabStart
+					  < kUiBudget);
 				CHECK(!GateTimedOut(gate));
 				button.setState({.type = Ui::SendButton::Type::Record});
 				button.setState({.type = Ui::SendButton::Type::Round});
@@ -257,4 +324,47 @@ TEST_CASE(SendButtonDoesNotWaitForPreparingVoiceIcon) {
 	ActiveReadGate.store(nullptr);
 	QCoreApplication::processEvents();
 	integration.processPostponedCalls();
+}
+
+TEST_CASE(SendButtonRetriesAfterWaiterThreadStartFails) {
+	CHECK(qobject_cast<QApplication *>(QCoreApplication::instance())
+		  != nullptr);
+	if (!qobject_cast<QApplication *>(QCoreApplication::instance())) {
+		return;
+	}
+	auto &integration = SetupSendButtonTests();
+	auto animations = Ui::Animations::Manager();
+	WarmSendButton();
+
+	auto probe = ThreadStartProbe();
+	ActiveThreadStartProbe = &probe;
+	const auto clearProbe
+		= gsl::finally([] { ActiveThreadStartProbe = nullptr; });
+	auto button = Ui::SendButton(nullptr, st::historySend);
+	button.setState({.type = Ui::SendButton::Type::Record});
+	button.finishAnimating();
+	CHECK_EQ(probe.rejected, 1);
+
+	const auto until = std::chrono::steady_clock::now() + kWaitLimit;
+	while (probe.attempts < 2 && std::chrono::steady_clock::now() < until) {
+		QCoreApplication::processEvents();
+		integration.processPostponedCalls();
+		std::this_thread::sleep_for(std::chrono::milliseconds(1));
+	}
+	const auto retried = (probe.attempts >= 2);
+	CHECK(retried);
+	ActiveThreadStartProbe = nullptr;
+
+	auto visible = false;
+	const auto readyUntil = std::chrono::steady_clock::now() + kWaitLimit;
+	while (retried && !visible
+		   && std::chrono::steady_clock::now() < readyUntil) {
+		QCoreApplication::processEvents();
+		integration.processPostponedCalls();
+		visible = HasVisiblePixel(Ui::GrabWidgetToImage(&button));
+		if (!visible) {
+			std::this_thread::sleep_for(std::chrono::milliseconds(1));
+		}
+	}
+	CHECK(visible);
 }
