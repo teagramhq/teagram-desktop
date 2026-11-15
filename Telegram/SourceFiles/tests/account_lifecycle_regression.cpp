@@ -16052,9 +16052,9 @@ RunAiComposeApplyHandlerRegression(not_null<Window::Controller *> window,
 		}
 	});
 	recoveryProbe.start(1);
-	const auto restarted = RestartDomain(domain);
+	const auto recoveryRestarted = RestartDomain(domain);
 	recoveryProbe.stop();
-	if (!restarted || !recoveryWasResponsive) {
+	if (!recoveryRestarted || !recoveryWasResponsive) {
 		return failAccountLifecycle(
 			"endpoint recovery blocked the UI or resumed startup early");
 	}
