@@ -37,6 +37,11 @@ NO_BASELINE_EXEMPTION_SCENARIOS = {
     "updates.getDifference (1,000 messages; 50 / 5,000 dialogs)",
 }
 RATIO_EXEMPT_SCENARIOS = {CONTACT_LOAD_SCENARIO}
+CALIBRATION_RATIO_SCENARIOS = (
+    "messages.getDialogs page (100 dialogs)",
+    "contact change + name lookup",
+    "updates.getDifference (1,000 messages; 50 / 5,000 dialogs)",
+)
 ADDITIONAL_SCENARIOS = {
     "private history page (1M messages; 20 / 2,000 loaded)": "private history",
     "jump to date in 1M-message history": "jump to date",
@@ -327,6 +332,7 @@ def evaluate(
     absolute_budget_head_runs=None,
     history_malformed_count=0,
     history_first_error=None,
+    enforce_calibration_ratio=False,
 ):
     history = _valid_records(history)
     if absolute_budget_head_runs is None:
@@ -360,15 +366,46 @@ def evaluate(
         for scenario in SCENARIOS
     }
     if count < MIN_DEV_RUNS:
+        if enforce_calibration_ratio and len(head_runs) < 2:
+            raise ScaleCheckError(
+                "pre-calibration ratio checks require two head samples"
+            )
+        failures = list(contact_load_failures)
+        rows = {}
+        for scenario in SCENARIOS:
+            ratios = [
+                sample["scenarios"][scenario]["hundred_ms"]
+                / sample["scenarios"][scenario]["one_ms"]
+                for sample in head_runs
+                if scenario in sample["scenarios"]
+            ]
+            ratio = statistics.median(ratios) if ratios else None
+            rows[scenario] = {
+                "ratio": ratio,
+                "ratio_sample_count": len(ratios),
+                "ratio_min": min(ratios) if ratios else None,
+                "ratio_max": max(ratios) if ratios else None,
+            }
+            if (
+                enforce_calibration_ratio
+                and scenario in CALIBRATION_RATIO_SCENARIOS
+                and ratio is not None
+                and ratio > MAX_SCALE_RATIO
+            ):
+                failures.append(
+                    f"{scenario}: median 100x/1x ratio is "
+                    f"{ratio:.2f}x (limit {MAX_SCALE_RATIO:.1f}x)"
+                )
         return {
             "record_count": count,
             "calibrating": count,
             "scenario_counts": scenario_counts,
             "exceptions": dict(STATIC_EXCEPTIONS),
             "additional_exceptions": {},
-            "rows": {},
-            "failures": contact_load_failures,
+            "rows": rows,
+            "failures": failures,
             "report_only": True,
+            "calibration_ratio_gate": enforce_calibration_ratio,
             "history_truncated": history_truncated,
             "history_unavailable": history_unavailable,
             "history_malformed_count": history_malformed_count,
@@ -395,6 +432,11 @@ def evaluate(
         ]
         noise_one = _noise(baseline, scenario, "one_ms")
         noise_hundred = _noise(baseline, scenario, "hundred_ms")
+        ratios = [
+            sample["scenarios"][scenario]["hundred_ms"]
+            / sample["scenarios"][scenario]["one_ms"]
+            for sample in head_scenario_runs
+        ]
         row_result = {
             "exception": exceptions.get(scenario),
             "baseline_count": len(baseline_rows),
@@ -404,7 +446,10 @@ def evaluate(
             "head_one_ms": None,
             "base_hundred_ms": None,
             "head_hundred_ms": None,
-            "ratio": None,
+            "ratio": statistics.median(ratios) if ratios else None,
+            "ratio_sample_count": len(ratios),
+            "ratio_min": min(ratios) if ratios else None,
+            "ratio_max": max(ratios) if ratios else None,
             "failures": [],
         }
         if head_scenario_runs:
@@ -416,10 +461,6 @@ def evaluate(
                 sample["scenarios"][scenario]["hundred_ms"]
                 for sample in head_scenario_runs
             )
-            if row_result["head_one_ms"] > 0:
-                row_result["ratio"] = (
-                    row_result["head_hundred_ms"] / row_result["head_one_ms"]
-                )
         if base_scenario_runs:
             row_result["base_one_ms"] = statistics.median(
                 sample["scenarios"][scenario]["one_ms"]
@@ -457,8 +498,8 @@ def evaluate(
             and row_result["ratio"] > MAX_SCALE_RATIO
         ):
             row_result["failures"].append(
-                f"{scenario}: 100x takes {row_result['ratio']:.2f}x as long as 1x "
-                "(limit 1.5x)"
+                f"{scenario}: median 100x/1x ratio is "
+                f"{row_result['ratio']:.2f}x (limit {MAX_SCALE_RATIO:.1f}x)"
             )
         if len(baseline_rows) >= MIN_DEV_RUNS and base_scenario_runs:
             for scale, base_field, head_field, noise in (
@@ -502,10 +543,16 @@ def format_summary(result, current_sample=None, retry_note=None):
             f"Timing thresholds are report-only while calibrating: "
             f"{result['calibrating']}/{MIN_DEV_RUNS}."
         )
+        if result.get("calibration_ratio_gate"):
+            lines.append(
+                "The 1.5x cap for dialogs, contact change and update burst "
+                "uses median PR head ratios."
+            )
     else:
         lines.append(
             f"Noise uses the latest {MIN_DEV_RUNS} valid `dev` runs; "
-            "PR timing comparisons use two interleaved `dev`/head pairs, "
+            "PR timing comparisons use two interleaved `dev`/head pairs; "
+            "head scale ratios are medians of per-run 100x/1x ratios, "
             "with one extra pair after an initial timing failure."
         )
     if result.get("history_unavailable"):
@@ -542,7 +589,8 @@ def format_summary(result, current_sample=None, retry_note=None):
     lines.extend(
         [
             "",
-            "| Scenario | 1x base → head | 100x base → head | Head ratio | "
+            "| Scenario | 1x base → head | 100x base → head | "
+            "Head ratio (median; n; range) | "
             "Absolute budget | Noise band |",
             "| --- | ---: | ---: | ---: | --- | --- |",
         ]
@@ -559,13 +607,14 @@ def format_summary(result, current_sample=None, retry_note=None):
             hundred = _format_ms(current.get("hundred_ms"))
             one_pair = f"n/a → {one}"
             hundred_pair = f"n/a → {hundred}"
-            one_ms = current.get("one_ms")
-            hundred_ms = current.get("hundred_ms")
-            ratio = (
-                f"{hundred_ms / one_ms:.2f}x"
-                if one_ms and hundred_ms is not None
-                else "n/a"
-            )
+            if row.get("ratio") is None:
+                ratio = "n/a (n=0; range n/a)"
+            else:
+                ratio = (
+                    f"{row['ratio']:.2f}x "
+                    f"(n={row['ratio_sample_count']}; range "
+                    f"{row['ratio_min']:.2f}–{row['ratio_max']:.2f}x)"
+                )
             baseline_count = result.get("scenario_counts", {}).get(scenario, 0)
             noise = f"calibrating: {baseline_count}/{MIN_DEV_RUNS}"
         else:
@@ -577,7 +626,14 @@ def format_summary(result, current_sample=None, retry_note=None):
                 f"{_format_ms(row.get('base_hundred_ms'))} → "
                 f"{_format_ms(row.get('head_hundred_ms'))}"
             )
-            ratio = "n/a" if row.get("ratio") is None else f"{row['ratio']:.2f}x"
+            if row.get("ratio") is None:
+                ratio = "n/a (n=0; range n/a)"
+            else:
+                ratio = (
+                    f"{row['ratio']:.2f}x "
+                    f"(n={row['ratio_sample_count']}; range "
+                    f"{row['ratio_min']:.2f}–{row['ratio_max']:.2f}x)"
+                )
             baseline_count = row.get("baseline_count", 0)
             if baseline_count < MIN_DEV_RUNS:
                 noise = f"calibrating: {baseline_count}/{MIN_DEV_RUNS}"
@@ -1040,6 +1096,7 @@ def _cmd_evaluate(args):
         absolute_budget_head_runs,
         args.history_malformed_count,
         args.history_first_error,
+        args.enforce_calibration_ratio,
     )
     _write_json(args.output, result)
     if args.summary_output:
@@ -1105,6 +1162,7 @@ def _build_parser():
     compare.add_argument("--history-unavailable", action="store_true")
     compare.add_argument("--history-malformed-count", type=int, default=0)
     compare.add_argument("--history-first-error")
+    compare.add_argument("--enforce-calibration-ratio", action="store_true")
     compare.set_defaults(function=_cmd_evaluate)
 
     annotate = commands.add_parser("annotate")

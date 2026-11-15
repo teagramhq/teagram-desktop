@@ -261,6 +261,19 @@ TranslateBar::~TranslateBar() = default;
 bool TranslateBar::shouldBeShownForRegressionTest() const {
 	return _shouldBeShown;
 }
+
+bool TranslateBar::controlsCreatedForRegressionTest() const {
+	return _label != nullptr;
+}
+
+int TranslateBar::contentWidthForRegressionTest() const {
+	return _wrap.entity()->width();
+}
+
+void TranslateBar::clickForRegressionTest() {
+	static_cast<Ui::AbstractButton *>(_wrap.entity())
+		->clicked(Qt::NoModifier, Qt::LeftButton);
+}
 #endif
 
 void TranslateBar::setShadowGeometryPostprocess(
@@ -288,67 +301,6 @@ void TranslateBar::setup(not_null<History*> history) {
 	) | rpl::on_next([=](QRect rect) {
 		updateShadowGeometry(rect);
 	}, _wrap.lifetime());
-
-	const auto translateTo = [=](LanguageId id) {
-		history->translateTo(id);
-		if (const auto migrated = history->migrateFrom()) {
-			migrated->translateTo(id);
-		}
-	};
-	const auto button = static_cast<Ui::AbstractButton*>(_wrap.entity());
-	button->resize(0, st::historyTranslateBarHeight);
-	button->setAttribute(Qt::WA_OpaquePaintEvent);
-
-	button->paintRequest(
-	) | rpl::on_next([=](QRect clip) {
-		QPainter(button).fillRect(clip, st::historyComposeButtonBg);
-	}, button->lifetime());
-
-	button->setClickedCallback([=] {
-		translateTo(history->translatedTo() ? LanguageId() : _to.current());
-	});
-
-	const auto label = Ui::CreateChild<Ui::FlatLabel>(
-		button,
-		st::historyTranslateLabel);
-	const auto icon = Ui::CreateChild<Ui::RpWidget>(button);
-	label->setAttribute(Qt::WA_TransparentForMouseEvents);
-	icon->setAttribute(Qt::WA_TransparentForMouseEvents);
-	icon->resize(st::historyTranslateIcon.size());
-	icon->paintRequest() | rpl::on_next([=] {
-		auto p = QPainter(icon);
-		st::historyTranslateIcon.paint(p, 0, 0, icon->width());
-	}, icon->lifetime());
-	const auto settings = Ui::CreateChild<Ui::IconButton>(
-		button,
-		st::historyTranslateSettings);
-	settings->setClickedCallback([=] { showMenu(createMenu(settings)); });
-
-	const auto updateLabelGeometry = [=] {
-		const auto full = _wrap.width() - icon->width();
-		const auto skip = st::semiboldFont->spacew * 2;
-		const auto natural = label->textMaxWidth();
-		const auto top = [&] {
-			return (_wrap.height() - label->height()) / 2;
-		};
-		if (natural <= full - 2 * (settings->width() + skip)) {
-			label->resizeToWidth(natural);
-			label->moveToRight((full - label->width()) / 2, top());
-		} else {
-			const auto available = full - settings->width() - 2 * skip;
-			label->resizeToWidth(std::min(natural, available));
-			label->moveToRight(settings->width() + skip, top());
-		}
-		icon->move(
-			label->x() - icon->width(),
-			(_wrap.height() - icon->height()) / 2);
-	};
-
-	_wrap.sizeValue() | rpl::on_next([=](QSize size) {
-		settings->moveToRight(0, 0, size.width());
-		updateLabelGeometry();
-	}, lifetime());
-
 	_overridenTo = history->translatedTo();
 	_to = rpl::combine(
 		Core::App().settings().translateToValue(),
@@ -407,13 +359,83 @@ void TranslateBar::setup(not_null<History*> history) {
 	) | rpl::on_next([=](QString phrase) {
 		_shouldBeShown = !phrase.isEmpty();
 		if (_shouldBeShown) {
-			label->setText(phrase);
-			updateLabelGeometry();
+			if (!_label) {
+				setupControls();
+			}
+			_label->setText(phrase);
+			_updateLabelGeometry();
 		}
 		if (!_forceHidden) {
 			_wrap.toggle(_shouldBeShown, anim::type::normal);
 		}
 	}, lifetime());
+}
+
+void TranslateBar::translateTo(LanguageId id) {
+	_history->translateTo(id);
+	if (const auto migrated = _history->migrateFrom()) {
+		migrated->translateTo(id);
+	}
+}
+
+void TranslateBar::setupControls() {
+	const auto history = _history;
+	const auto button = static_cast<Ui::AbstractButton *>(_wrap.entity());
+	button->resize(button->width(), st::historyTranslateBarHeight);
+	button->setAttribute(Qt::WA_OpaquePaintEvent);
+
+	button->paintRequest()
+		| rpl::on_next(
+			[=](QRect clip) {
+				QPainter(button).fillRect(clip, st::historyComposeButtonBg);
+			},
+			button->lifetime());
+
+	button->setClickedCallback([=] {
+		translateTo(history->translatedTo() ? LanguageId() : _to.current());
+	});
+
+	_label = Ui::CreateChild<Ui::FlatLabel>(button, st::historyTranslateLabel);
+	const auto label = _label;
+	const auto icon = Ui::CreateChild<Ui::RpWidget>(button);
+	label->setAttribute(Qt::WA_TransparentForMouseEvents);
+	icon->setAttribute(Qt::WA_TransparentForMouseEvents);
+	icon->resize(st::historyTranslateIcon.size());
+	icon->paintRequest()
+		| rpl::on_next(
+			[=] {
+				auto p = QPainter(icon);
+				st::historyTranslateIcon.paint(p, 0, 0, icon->width());
+			},
+			icon->lifetime());
+	const auto settings
+		= Ui::CreateChild<Ui::IconButton>(button, st::historyTranslateSettings);
+	settings->setClickedCallback([=] { showMenu(createMenu(settings)); });
+
+	_updateLabelGeometry = [=] {
+		const auto full = _wrap.width() - icon->width();
+		const auto skip = st::semiboldFont->spacew * 2;
+		const auto natural = label->textMaxWidth();
+		const auto top = [&] { return (_wrap.height() - label->height()) / 2; };
+		if (natural <= full - 2 * (settings->width() + skip)) {
+			label->resizeToWidth(natural);
+			label->moveToRight((full - label->width()) / 2, top());
+		} else {
+			const auto available = full - settings->width() - 2 * skip;
+			label->resizeToWidth(std::min(natural, available));
+			label->moveToRight(settings->width() + skip, top());
+		}
+		icon->move(label->x() - icon->width(),
+				   (_wrap.height() - icon->height()) / 2);
+	};
+
+	_wrap.sizeValue()
+		| rpl::on_next(
+			[=](QSize size) {
+				settings->moveToRight(0, 0, size.width());
+				_updateLabelGeometry();
+			},
+			lifetime());
 }
 
 base::unique_qptr<Ui::PopupMenu> TranslateBar::createMenu(

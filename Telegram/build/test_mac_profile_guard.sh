@@ -81,6 +81,120 @@ process_alive() {
 	[[ -n "$state" && "$state" != *Z* ]]
 }
 
+work_value_within_budget() {
+	local work_ns="$1"
+	local budget_ns="$2"
+	(( work_ns >= 0 && work_ns < budget_ns ))
+}
+
+main_thread_cpu_work_within_budget() {
+	work_value_within_budget "$1" "$2"
+}
+
+main_thread_work_estimate_within_budget() {
+	local main_thread_cpu_ns="$1"
+	local wall_ns="$2"
+	local trace="$3"
+	local budget_ns="$4"
+	local offsets_csv="${5:-}"
+	local before_state="${6:-}"
+	local before_distance="${7:-}"
+	local after_state="${8:-}"
+	local after_distance="${9:-}"
+	local estimate_ns
+	if [[ "$trace" == none || -z "$trace" ]]; then
+		estimate_ns="$wall_ns"
+	else
+		(( main_thread_cpu_ns >= 0 )) || return 1
+		local sample_count="${#trace}"
+		local -a scheduler_offsets=()
+		IFS=, read -r -a scheduler_offsets <<< "$offsets_csv"
+		local samples_valid=true
+		if (( ${#scheduler_offsets[@]} != sample_count )); then
+			samples_valid=false
+		fi
+		local previous_offset=0
+		local has_previous=false
+		local blocked_ns=0
+		local last_in_window_offset=0
+		local previous_state=""
+		local has_in_window_sample=false
+		local maximum_sample_gap_ns=25000000
+		for ((i = 0; i < sample_count; ++i)); do
+			[[ "$samples_valid" == true ]] || break
+			local offset="${scheduler_offsets[i]}"
+			if [[ ! "$offset" =~ ^-?[0-9]+$ ]]; then
+				samples_valid=false
+				break
+			fi
+			if (( offset < 0 )); then
+				samples_valid=false
+				break
+			fi
+			if [[ "$has_previous" == true ]] \
+				&& (( offset < previous_offset )); then
+				samples_valid=false
+				break
+			fi
+			if (( offset <= wall_ns )); then
+				local state="${trace:i:1}"
+				if [[ "$state" != R && "$state" != W && "$state" != U ]]; then
+					samples_valid=false
+					break
+				fi
+				local gap="$((offset - last_in_window_offset))"
+				if (( gap > maximum_sample_gap_ns )); then
+					samples_valid=false
+					break
+				fi
+				if [[ "$has_in_window_sample" != true ]] && (( gap > 0 )) \
+					&& [[ -n "$before_state" || -n "$before_distance" ]]; then
+					if [[ ! "$before_distance" =~ ^[0-9]+$ ]] \
+						|| [[ "$before_state" != R && "$before_state" != W && "$before_state" != U ]] \
+						|| (( before_distance > maximum_sample_gap_ns - gap )); then
+						samples_valid=false
+						break
+					fi
+					if [[ "$before_state" != R || "$state" != R ]]; then
+						blocked_ns="$((blocked_ns + gap))"
+					fi
+				elif [[ "$has_in_window_sample" != true || "$previous_state" != R || "$state" != R ]]; then
+					blocked_ns="$((blocked_ns + gap))"
+				fi
+				last_in_window_offset="$offset"
+				previous_state="$state"
+				has_in_window_sample=true
+			fi
+			previous_offset="$offset"
+			has_previous=true
+		done
+		if [[ "$samples_valid" == true ]] \
+			&& [[ "$has_in_window_sample" == true ]] \
+			&& (( wall_ns - last_in_window_offset <= maximum_sample_gap_ns )); then
+			local tail="$((wall_ns - last_in_window_offset))"
+			if (( tail > 0 )) && [[ -n "$after_state" || -n "$after_distance" ]]; then
+				if [[ ! "$after_distance" =~ ^[0-9]+$ ]] \
+					|| [[ "$after_state" != R && "$after_state" != W && "$after_state" != U ]] \
+					|| (( after_distance > maximum_sample_gap_ns - tail )); then
+					samples_valid=false
+				elif [[ "$previous_state" != R || "$after_state" != R ]]; then
+					blocked_ns="$((blocked_ns + tail))"
+				fi
+			else
+				blocked_ns="$((blocked_ns + tail))"
+			fi
+			if [[ "$samples_valid" == true ]]; then
+				estimate_ns="$((main_thread_cpu_ns + blocked_ns))"
+			else
+				estimate_ns="$wall_ns"
+			fi
+		else
+			estimate_ns="$wall_ns"
+		fi
+	fi
+	(( estimate_ns >= 0 && estimate_ns < budget_ns ))
+}
+
 fixture_unchanged() {
 	local fixture="$1"
 	local is_file="$2"
@@ -275,6 +389,18 @@ run_bundle_keyed_probe() {
 	fi
 }
 
+capture_stuck_profile_process() {
+	local pid="$1"
+	local output="$2"
+	if command -v sample >/dev/null 2>&1; then
+		sample "$pid" 5 -file "$output" >"$output.log" 2>&1 || true
+		printf 'profile_process_sample_log=%s\n' "$output.log"
+		if [[ -s "$output" ]]; then
+			printf 'profile_process_sample=%s\n' "$output"
+		fi
+	fi
+}
+
 run_spoiler_cache_symlink_case() {
 	local case_name="$1"
 	local link_name="$2"
@@ -403,6 +529,7 @@ run_spoiler_cache_symlink_case() {
 	done
 	if kill -0 "$FIRST_PID" 2>/dev/null; then
 		report_result "${case_name}_first_instance_exit" false "pid=$FIRST_PID still_alive=1" || true
+		capture_stuck_profile_process "$FIRST_PID" "$case_home/first-instance.sample.txt"
 		return 1
 	fi
 	set +e
@@ -1413,24 +1540,72 @@ if ! grep -F -q \
 	exit 1
 fi
 for cache in cache media_cache; do
-	if ! grep -E \
-		"^Cache access latency regression: cache=$cache seeded_directories=125 seeded_files=169 closed_clear_missing_active=1 cache_initialization_ns=[0-9]+ initialization_allowed=1 queued_ops_before_ready=1 queued_ops_passed=1 cache_usable_ns=[0-9]+ under_10s=1 max_main_thread_stall_ns=[0-9]+ under_100ms=[01] first_access_ns=[0-9]+ under_50ms=1 root_swap_refused=1 direct_fallback_closed=1 root_restored=1 startup_walks=2 main_thread_walks=0\\.$" \
-		"$AUTH_LOG"; then
+	local cache_latency_evidence
+	cache_latency_evidence="$(grep -E \
+		"^Cache access latency regression: cache=$cache seeded_directories=125 seeded_files=169 closed_clear_missing_active=1 cache_initialization_ns=[0-9]+ initialization_allowed=1 queued_ops_before_ready=1 queued_ops_passed=1 cache_usable_ns=[0-9]+ under_10s=1 max_main_thread_work_ns=[0-9]+ max_startup_estimated_work_ns=[0-9]+ max_heartbeat_gap_ns=[0-9]+ max_heartbeat_gap_work_ns=[0-9]+ heartbeat_gap_process_work_ns=[0-9]+ heartbeat_gap_started_at=[^ ]+ startup_heartbeat_gap_count=[0-9]+ startup_uncovered_heartbeat_gaps=[0-9]+ startup_heartbeat_gap_coverage_proven=[01] startup_stall_count=[0-9]+ max_startup_stall_ns=[0-9]+ startup_stall_main_thread_work_ns=[0-9]+ startup_stall_process_work_ns=[0-9]+ startup_stall_started_at=([^ ]+) startup_stall_heartbeat_gap_started_at=([^ ]+) startup_stall_scheduler_samples=[0-9]+ startup_stall_scheduler_running=[0-9]+ startup_stall_scheduler_waiting=[0-9]+ startup_stall_scheduler_uninterruptible=[0-9]+ startup_stall_scheduler_other=[0-9]+ startup_stall_scheduler_trace=([[:alpha:]?]+|none) startup_stall_stack_captured=[01] startup_stall_evidence_matched=[01] startup_stall_scheduler_preemption_proven=[01] under_100ms=[01] first_access_ns=[0-9]+ under_50ms=1 root_swap_refused=1 direct_fallback_closed=1 root_restored=1 startup_walks=2 main_thread_walks=0\\.$" \
+		"$AUTH_LOG" || true)"
+	if [[ -z "$cache_latency_evidence" ]]; then
 		cat "$AUTH_LOG" >&2
 		printf 'seeded cache access latency evidence missing for %s.\n' "$cache" >&2
 		exit 1
 	fi
+	local max_startup_estimated_work_ns
+	max_startup_estimated_work_ns="$(sed -E \
+		's/.*max_startup_estimated_work_ns=([0-9]+).*/\1/' \
+		<<<"$cache_latency_evidence")"
+	if ! work_value_within_budget \
+		"$max_startup_estimated_work_ns" 100000000; then
+		cat "$AUTH_LOG" >&2
+		printf 'seeded cache estimated startup work exceeded 100 ms for %s.\n' "$cache" >&2
+		exit 1
+	fi
+	local under_100ms
+	under_100ms="$(sed -E 's/.*under_100ms=([01]).*/\1/' \
+		<<<"$cache_latency_evidence")"
+	if (( under_100ms != 1 )); then
+		cat "$AUTH_LOG" >&2
+		printf 'seeded cache startup work exceeded 100 ms for %s.\n' "$cache" >&2
+		exit 1
+	fi
 done
 if ! grep -E -q \
-	'^First messages\.getDialogs handler latency regression: seeded_directories=125 seeded_files=169 requests=1 parsed=1 chats=2 dialogs=1 messages=73 documents=73 cache_walks=2 max_handler_ns=[0-9]+ under_50ms=1\.$' \
+	'^First messages\.getDialogs handler latency regression: seeded_directories=125 seeded_files=169 requests=1 parsed=1 chats=2 dialogs=1 messages=73 documents=73 cache_walks=2 max_handler_ns=[0-9]+ main_thread_cpu_ns=-?[0-9]+ blocked_estimate_ns=-?[0-9]+ estimated_work_ns=[0-9]+ trace=([[:alpha:]?]+|none) under_50ms=1\.$' \
 	"$AUTH_LOG"; then
 	cat "$AUTH_LOG" >&2
 	echo "first messages.getDialogs handler evidence missing or over 50 ms." >&2
 	exit 1
 fi
+local initial_history_selection
+initial_history_selection="$(grep -E \
+	'^Initial history selection: peer_id=[0-9]+ wall_ns=[0-9]+ main_thread_work_ns=[0-9]+ blocked_estimate_ns=(-1|[0-9]+) estimated_work_ns=[0-9]+ budget_ns=50000000 trace=([[:alpha:]?]+|none) scheduler_preemption_proven=[01]\.$' \
+	"$AUTH_LOG" || true)"
+if [[ -z "$initial_history_selection" ]]; then
+	cat "$AUTH_LOG" >&2
+	echo "initial history selection evidence missing." >&2
+	exit 1
+fi
+local initial_history_selection_work_ns
+initial_history_selection_work_ns="$(sed -E \
+	's/.*estimated_work_ns=([0-9]+).*/\1/' \
+	<<<"$initial_history_selection")"
+local initial_history_selection_blocked_ns
+initial_history_selection_blocked_ns="$(sed -E \
+	's/.*blocked_estimate_ns=(-?[0-9]+).*/\1/' \
+	<<<"$initial_history_selection")"
+if [[ "$initial_history_selection_blocked_ns" == -1 ]]; then
+	initial_history_selection_work_ns="$(sed -E \
+		's/.*wall_ns=([0-9]+).*/\1/' \
+		<<<"$initial_history_selection")"
+fi
+if ! work_value_within_budget \
+	"$initial_history_selection_work_ns" 50000000; then
+	cat "$AUTH_LOG" >&2
+	echo "initial history selection estimated work exceeded its 50 ms budget." >&2
+	exit 1
+fi
 local chat_switch_evidence
 chat_switch_evidence="$(grep -E \
-	'^Cache chat switch latency regression: seeded_directories=125 seeded_files=169 reactions=73 hydrated_documents=292 chat_switches=73 minimized_restore=1 minimized_switch_ns=[0-9]+ minimized_restore_budget_ns=50000000 max_hydration_ns=[0-9]+ max_switch_ns=[0-9]+ max_stall_ns=[0-9]+ under_50ms=[01]\.$' \
+	'^Cache chat switch latency regression: seeded_directories=125 seeded_files=169 reactions=73 hydrated_documents=292 chat_switches=73 attach_menu_bot_count=[0-9]+ minimized_restore=1 minimized_switch_ns=[0-9]+ minimized_restore_budget_ns=50000000 max_hydration_ns=[0-9]+ max_hydration_work_ns=[0-9]+ hydration_scheduler_preemption_proven=[01] max_switch_ns=[0-9]+ max_switch_work_ns=[0-9]+ max_recurring_switch_work_ns=[0-9]+ max_switch_estimated_work_ns=[0-9]+ max_recurring_switch_estimated_work_ns=[0-9]+ max_switch_index=[0-9]+ max_switch_peer_id=[0-9]+ switch_scheduler_preemption_proven=[01] attach_menu_first_hover_ns=[0-9]+ attach_menu_hover_ns=[0-9]+ attach_menu_update_hover_ns=[0-9]+ attach_menu_uncached_peer_ns=[0-9]+ attach_menu_first_hover_callback_cpu_ns=[0-9]+ attach_menu_update_hover_callback_cpu_ns=[0-9]+ attach_menu_uncached_peer_callback_cpu_ns=[0-9]+ attach_menu_first_hover_callback_wall_ns=[0-9]+ attach_menu_update_hover_callback_wall_ns=[0-9]+ attach_menu_uncached_peer_callback_wall_ns=[0-9]+ attach_menu_scheduler_preemption_proven=[01] attach_menu_cached=1 attach_menu_invalidated=1 attach_menu_build_deferred=1 attach_menu_uncached_ready=1 attach_menu_uncached_deferred_failures=0 attach_menu_uncached_missing_bot_failures=0 attach_menu_uncached_build_count_failures=0 attach_menu_cache_bound=1 pending_reveal_after_controls_geometry=1 chat_switch_compose_ui_reused=1 field_autocomplete_suggestions_ready=1 menu_commands_unfocused=[01] bot_commands_unfocused=1 history_chat_mode_invalidation_rebuilt=1 dialog_histories_ready=1 synthetic_histories_ready=1 max_stall_ns=[0-9]+ within_budgets=1\.$' \
 	"$AUTH_LOG" || true)"
 if [[ -z "$chat_switch_evidence" ]]; then
 	cat "$AUTH_LOG" >&2
@@ -1438,6 +1613,113 @@ if [[ -z "$chat_switch_evidence" ]]; then
 	exit 1
 fi
 printf '%s\n' "$chat_switch_evidence"
+local max_hydration_work_ns
+max_hydration_work_ns="$(sed -E \
+	's/.*max_hydration_work_ns=([0-9]+).*/\1/' \
+	<<<"$chat_switch_evidence")"
+if ! main_thread_cpu_work_within_budget \
+	"$max_hydration_work_ns" 50000000; then
+	cat "$AUTH_LOG" >&2
+	echo "reaction hydration main-thread CPU exceeded 50 ms." >&2
+	exit 1
+fi
+local max_chat_switch_estimated_work_ns
+max_chat_switch_estimated_work_ns="$(sed -E \
+	's/.*max_switch_estimated_work_ns=([0-9]+).*/\1/' \
+	<<<"$chat_switch_evidence")"
+if ! work_value_within_budget \
+	"$max_chat_switch_estimated_work_ns" 50000000; then
+	cat "$AUTH_LOG" >&2
+	echo "maximum seeded chat switch estimated work exceeded 50 ms." >&2
+	exit 1
+fi
+local max_recurring_chat_switch_estimated_work_ns
+max_recurring_chat_switch_estimated_work_ns="$(sed -E \
+	's/.*max_recurring_switch_estimated_work_ns=([0-9]+).*/\1/' \
+	<<<"$chat_switch_evidence")"
+if ! work_value_within_budget \
+	"$max_recurring_chat_switch_estimated_work_ns" 50000000; then
+	cat "$AUTH_LOG" >&2
+	echo "recurrent seeded chat switch estimated work exceeded 50 ms." >&2
+	exit 1
+fi
+local attach_menu_first_hover_callback_cpu_ns
+attach_menu_first_hover_callback_cpu_ns="$(sed -E \
+	's/.*attach_menu_first_hover_callback_cpu_ns=([0-9]+).*/\1/' \
+	<<<"$chat_switch_evidence")"
+if ! main_thread_cpu_work_within_budget \
+	"$attach_menu_first_hover_callback_cpu_ns" 50000000; then
+	cat "$AUTH_LOG" >&2
+	echo "first-hover attach-menu callback main-thread CPU exceeded 50 ms." >&2
+	exit 1
+fi
+local attach_menu_update_hover_callback_cpu_ns
+attach_menu_update_hover_callback_cpu_ns="$(sed -E \
+	's/.*attach_menu_update_hover_callback_cpu_ns=([0-9]+).*/\1/' \
+	<<<"$chat_switch_evidence")"
+if ! main_thread_cpu_work_within_budget \
+	"$attach_menu_update_hover_callback_cpu_ns" 50000000; then
+	cat "$AUTH_LOG" >&2
+	echo "updated attach-menu callback main-thread CPU exceeded 50 ms." >&2
+	exit 1
+fi
+local attach_menu_uncached_peer_callback_cpu_ns
+attach_menu_uncached_peer_callback_cpu_ns="$(sed -E 's/.*attach_menu_uncached_peer_callback_cpu_ns=([0-9]+).*/\1/' <<<"$chat_switch_evidence")"
+if ! main_thread_cpu_work_within_budget \
+	"$attach_menu_uncached_peer_callback_cpu_ns" 50000000; then
+	cat "$AUTH_LOG" >&2
+	echo "uncached attach-menu callback main-thread CPU exceeded 50 ms." >&2
+	exit 1
+fi
+local attach_menu_callback_work
+attach_menu_callback_work="$(grep -E \
+	'^Attach-menu callback work: cached_hover_wall_ns=[0-9]+ cached_hover_estimated_work_ns=[0-9]+ first_hover_estimated_work_ns=[0-9]+ invalidation_estimated_work_ns=[0-9]+ uncached_peer_estimated_work_ns=[0-9]+ budget_ns=50000000\.$' \
+	"$AUTH_LOG" || true)"
+if [[ -z "$attach_menu_callback_work" ]]; then
+	cat "$AUTH_LOG" >&2
+	echo "attach-menu callback estimated-work evidence missing." >&2
+	exit 1
+fi
+local attach_menu_cached_hover_estimated_work_ns
+attach_menu_cached_hover_estimated_work_ns="$(sed -E \
+	's/.*cached_hover_estimated_work_ns=([0-9]+).*/\1/' \
+	<<<"$attach_menu_callback_work")"
+if ! work_value_within_budget \
+	"$attach_menu_cached_hover_estimated_work_ns" 50000000; then
+	cat "$AUTH_LOG" >&2
+	echo "cached attach-menu hover estimated work exceeded 50 ms." >&2
+	exit 1
+fi
+local attach_menu_first_hover_estimated_work_ns
+attach_menu_first_hover_estimated_work_ns="$(sed -E \
+	's/.*first_hover_estimated_work_ns=([0-9]+).*/\1/' \
+	<<<"$attach_menu_callback_work")"
+if ! work_value_within_budget \
+	"$attach_menu_first_hover_estimated_work_ns" 50000000; then
+	cat "$AUTH_LOG" >&2
+	echo "first-hover attach-menu estimated work exceeded 50 ms." >&2
+	exit 1
+fi
+local attach_menu_invalidation_estimated_work_ns
+attach_menu_invalidation_estimated_work_ns="$(sed -E \
+	's/.*invalidation_estimated_work_ns=([0-9]+).*/\1/' \
+	<<<"$attach_menu_callback_work")"
+if ! work_value_within_budget \
+	"$attach_menu_invalidation_estimated_work_ns" 50000000; then
+	cat "$AUTH_LOG" >&2
+	echo "attach-menu invalidation estimated work exceeded 50 ms." >&2
+	exit 1
+fi
+local attach_menu_uncached_peer_estimated_work_ns
+attach_menu_uncached_peer_estimated_work_ns="$(sed -E \
+	's/.*uncached_peer_estimated_work_ns=([0-9]+).*/\1/' \
+	<<<"$attach_menu_callback_work")"
+if ! work_value_within_budget \
+	"$attach_menu_uncached_peer_estimated_work_ns" 50000000; then
+	cat "$AUTH_LOG" >&2
+	echo "uncached attach-menu estimated work exceeded 50 ms." >&2
+	exit 1
+fi
 if ! grep -F -q \
 	"Authenticated refused download history regression passed: entry without a live message remained unpublished." \
 	"$AUTH_LOG"; then

@@ -606,6 +606,8 @@ void Sandbox::launchApplication() {
 						"TDESKTOP_UI_STALL_WATCHDOG_CACHE_REGRESSION"),
 					.disableRateLimit = qEnvironmentVariableIsSet(
 						"TDESKTOP_FONT_STARTUP_REGRESSION"),
+					.captureSchedulerTrace = qEnvironmentVariableIsSet(
+						"TDESKTOP_UI_STALL_WATCHDOG_CACHE_REGRESSION"),
 				});
 		}
 #endif // Q_OS_LINUX || Q_OS_MAC
