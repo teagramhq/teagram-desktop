@@ -54,6 +54,12 @@ public:
 		const Options &options);
 
 	void raise();
+	void markKeyPress();
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+	[[nodiscard]] int customEmojiScansForRegressionTest() const;
+	[[nodiscard]] bool hasSelectionForRegressionTest() const;
+	[[nodiscard]] bool consumeReturnForRegressionTest();
+#endif
 	[[nodiscard]] bool shown() const {
 		return _shown && !_forceHidden;
 	}

@@ -71,6 +71,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "storage/storage_account.h"
 #include "support/support_helper.h"
 #include "ui/image/image.h"
+#include "ui/style/style_core.h"
 #include "ui/text/text_options.h"
 #include "ui/text/text_utilities.h"
 #include "ui/toast/toast.h"
@@ -3792,25 +3793,43 @@ HistoryItem *History::lastEditableMessage() const {
 	return nullptr;
 }
 
-void History::resizeToWidth(int newWidth) {
+void History::resizeToWidth(int newWidth, bool chatWide) {
 	using Request = HistoryBlock::ResizeRequest;
-	const auto request = (_flags & Flag::PendingAllItemsResize)
-		? Request::ReinitAll
-		: (_width != newWidth)
-		? Request::ResizeAll
-		: Request::ResizePending;
+	const auto layoutScale = style::Scale();
+	const auto layoutDevicePixelRatio = style::DevicePixelRatio();
+	const auto layoutPaletteVersion = style::PaletteVersion();
+	const auto layoutKeyChanged = needsResizeFor(newWidth, chatWide);
+	const auto request
+		= (_flags & Flag::PendingAllItemsResize)	   ? Request::ReinitAll
+		  : ((_width != newWidth) || layoutKeyChanged) ? Request::ResizeAll
+													   : Request::ResizePending;
 	if (request == Request::ResizePending && !hasPendingResizedItems()) {
 		return;
+	}
+	if (request != Request::ResizePending) {
+		++_layoutFullResizeCount;
 	}
 	_flags &= ~(Flag::HasPendingResizedItems | Flag::PendingAllItemsResize);
 
 	_width = newWidth;
+	_layoutScale = layoutScale;
+	_layoutDevicePixelRatio = layoutDevicePixelRatio;
+	_layoutPaletteVersion = layoutPaletteVersion;
+	_layoutChatWide = chatWide;
 	int y = 0;
 	for (const auto &block : blocks) {
 		block->setY(y);
 		y += block->resizeGetHeight(newWidth, request);
 	}
 	_height = y;
+}
+
+bool History::needsResizeFor(int newWidth, bool chatWide) const {
+	return (_width != newWidth) || (_layoutScale != style::Scale())
+		   || (_layoutDevicePixelRatio != style::DevicePixelRatio())
+		   || (_layoutPaletteVersion != style::PaletteVersion())
+		   || (_layoutChatWide != chatWide)
+		   || (_flags & Flag::PendingAllItemsResize);
 }
 
 void History::forceFullResize() {

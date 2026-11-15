@@ -179,6 +179,9 @@ void GroupCallBar::refreshOpenBrush() {
 }
 
 void GroupCallBar::refreshScheduledProcess() {
+	if (!_content.shown && !_join && !_open) {
+		return;
+	}
 	const auto date = _content.scheduleDate;
 	if (!date) {
 		if (_scheduledProcess) {
