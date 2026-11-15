@@ -1,0 +1,1302 @@
+/*
+This file is part of Telegram Desktop,
+the official desktop application for the Telegram messaging service.
+
+For license and copyright information please follow this link:
+https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
+*/
+#include "core/sandbox.h"
+
+#include "base/platform/base_platform_info.h"
+#include "platform/platform_specific.h"
+#include "mainwidget.h"
+#include "mainwindow.h"
+#include "storage/localstorage.h"
+#include "window/notifications_manager.h"
+#include "window/window_controller.h"
+#include "core/crash_reports.h"
+#include "core/crash_report_window.h"
+#include "core/application.h"
+#include "core/external_control.h"
+#include "core/launcher.h"
+#include "core/local_url_handlers.h"
+#include "core/update_checker.h"
+#include "core/deadlock_detector.h"
+#include "core/ui_stall_watchdog.h"
+#include "logs.h"
+#ifdef Q_OS_MAC
+#include "window/main_window.h"
+#include "core/mac_protected_path_runtime.h"
+#include "ui/style/style_core_font.h"
+#endif // Q_OS_MAC
+#include "base/timer.h"
+#include "base/concurrent_timer.h"
+#include "base/invoke_queued.h"
+#include "base/options.h"
+#include "base/qthelp_url.h"
+#include "base/qthelp_regex.h"
+#include "ui/ui_utility.h"
+#include "ui/effects/animations.h"
+
+#ifdef Q_OS_MAC
+#include "platform/mac/global_menu_mac.h"
+#endif // Q_OS_MAC
+
+#include <QtCore/QLockFile>
+#include <QtCore/QFileInfo>
+#include <QtCore/QMetaObject>
+#include <QtGui/QSessionManager>
+#include <QtGui/QScreen>
+#ifdef Q_OS_MAC
+#include <QtCore/QPoint>
+#include <QtCore/QRect>
+#include <QtCore/QTimer>
+#include <QtGui/QBackingStore>
+#include <QtGui/QExposeEvent>
+#include <QtGui/QFont>
+#include <QtGui/QFontDatabase>
+#include <QtGui/QFontMetrics>
+#include <QtGui/QImage>
+#include <QtGui/QPalette>
+#include <QtGui/QPainter>
+#include <QtGui/QRegion>
+#include <QtGui/QResizeEvent>
+#include <QtGui/QWindow>
+#endif // Q_OS_MAC
+#include <QtGui/qpa/qplatformscreen.h>
+
+#ifdef Q_OS_MAC
+#include <cstdio>
+#include <dlfcn.h>
+#include <execinfo.h>
+#include <pthread.h>
+#include <sched.h>
+#include <signal.h>
+#include <functional>
+#include <algorithm>
+#include <chrono>
+#include <memory>
+#include <system_error>
+#include <thread>
+#include <sys/un.h>
+#endif // Q_OS_MAC
+
+namespace Core {
+namespace {
+
+base::options::toggle OptionDeadlockDetector({
+	.id = kOptionDeadlockDetector,
+	.name = "Deadlock Detector",
+	.description = "Check once every 30 seconds that main thread is still responsive.",
+});
+
+constexpr auto kCleanupIpcTimeout = 10 * crl::time(1000);
+constexpr auto kCleanupQuitTimeout = 30 * crl::time(1000);
+#ifdef Q_OS_MAC
+constexpr auto kFontStartupSplashExposureTimeout = 1000;
+#endif // Q_OS_MAC
+
+#ifdef Q_OS_MAC
+constexpr auto kProbeMaxFrames = 64;
+void *ProbeFrames[kProbeMaxFrames];
+std::atomic_int ProbeDepth = -1;
+
+// The main thread decides from the captured frames whether the worker stays
+// parked: Wait until decided, then Release returns at once while Hold keeps
+// the worker inside this handler, and so inside whatever it was executing,
+// until the quit has been observed.
+enum ProbeDecisionValue {
+	ProbeWait = 0,
+	ProbeRelease = 1,
+	ProbeHold = 2,
+};
+std::atomic_int ProbeDecision = ProbeWait;
+std::atomic_bool ProbeFinalRelease = false;
+std::atomic_bool ProbeInHandler = false;
+
+void ProbeSignal(int) {
+	ProbeInHandler.store(true, std::memory_order_release);
+	const auto depth = backtrace(ProbeFrames, kProbeMaxFrames);
+	ProbeDepth.store(depth, std::memory_order_release);
+	while (ProbeDecision.load(std::memory_order_acquire) == ProbeWait) {
+		sched_yield();
+	}
+	if (ProbeDecision.load(std::memory_order_acquire) == ProbeHold) {
+		while (!ProbeFinalRelease.load(std::memory_order_acquire)) {
+			sched_yield();
+		}
+	}
+	ProbeInHandler.store(false, std::memory_order_release);
+}
+
+[[nodiscard]] bool InstallProbeSignal() {
+	// The first backtrace() call may allocate, so make it outside a handler.
+	void *primed[1];
+	static_cast<void>(backtrace(primed, 1));
+	struct sigaction action = {};
+	action.sa_handler = ProbeSignal;
+	sigemptyset(&action.sa_mask);
+	action.sa_flags = SA_RESTART;
+	return sigaction(SIGUSR1, &action, nullptr) == 0;
+}
+
+[[nodiscard]] bool FramesInSystemEnumeration(void *const *frames, int depth) {
+	for (auto i = 0; i != depth; ++i) {
+		auto info = Dl_info();
+		if (!dladdr(frames[i], &info) || !info.dli_sname) {
+			continue;
+		}
+		const auto name = QByteArray(info.dli_sname);
+		// Only the system family enumeration: registering an application
+		// font also runs populateFromDescriptor, which is not it.
+		if (name.contains("CTFontManagerCopyAvailableFontFamilyNames")) {
+			return true;
+		}
+	}
+	return false;
+}
+
+enum class StackSample {
+	Failed,
+	OtherWork,
+	InSystemEnumeration,
+};
+
+// Signals the worker and waits until its capture completes, however long the
+// signal takes, then scans a bounded copy of the captured frames. A worker
+// caught inside the system enumeration is held there until the final release.
+[[nodiscard]] StackSample SampleWorkerStack(pthread_t worker) {
+	using Clock = std::chrono::steady_clock;
+	const auto deadline = Clock::now() + std::chrono::seconds(2);
+	// The previous handler must have seen its Release and returned before
+	// the decision is reset, or it would park again for this sample.
+	while (ProbeInHandler.load(std::memory_order_acquire)) {
+		if (Clock::now() >= deadline) {
+			return StackSample::Failed;
+		}
+		std::this_thread::yield();
+	}
+	ProbeDepth.store(-1, std::memory_order_release);
+	ProbeDecision.store(ProbeWait, std::memory_order_release);
+	if (pthread_kill(worker, SIGUSR1) != 0) {
+		return StackSample::Failed;
+	}
+	auto depth = -1;
+	while ((depth = ProbeDepth.load(std::memory_order_acquire)) < 0) {
+		if (Clock::now() >= deadline) {
+			ProbeDecision.store(ProbeRelease, std::memory_order_release);
+			return StackSample::Failed;
+		}
+		std::this_thread::yield();
+	}
+	depth = std::min(depth, kProbeMaxFrames);
+	void *frames[kProbeMaxFrames];
+	std::copy(ProbeFrames, ProbeFrames + depth, frames);
+	const auto inEnumeration = FramesInSystemEnumeration(frames, depth);
+	ProbeDecision.store(inEnumeration ? ProbeHold : ProbeRelease,
+						std::memory_order_release);
+	return inEnumeration ? StackSample::InSystemEnumeration
+						 : StackSample::OtherWork;
+}
+
+class FontStartupSplash final : public QWindow {
+  public:
+	explicit FontStartupSplash(std::function<void()> onShown)
+		: _backingStore(this), _onShown(std::move(onShown)),
+		  _logo(Window::Logo()) {
+		setFlags(Qt::SplashScreen | Qt::FramelessWindowHint);
+		resize(_logo.size());
+		if (const auto screen = QGuiApplication::primaryScreen()) {
+			const auto geometry = screen->availableGeometry();
+			setPosition(geometry.center() - QPoint(width() / 2, height() / 2));
+		}
+	}
+
+  protected:
+	void exposeEvent(QExposeEvent *event) override {
+		QWindow::exposeEvent(event);
+		if (!isExposed()) {
+			return;
+		}
+		paint();
+		if (qEnvironmentVariableIsSet(
+				"TDESKTOP_FONT_STARTUP_REGRESSION_SKIP_EXPOSE_CALLBACK")) {
+			return;
+		}
+		if (_onShown) {
+			auto onShown = std::move(_onShown);
+			_onShown = nullptr;
+			onShown();
+		}
+	}
+
+	void resizeEvent(QResizeEvent *event) override {
+		QWindow::resizeEvent(event);
+		paint();
+	}
+
+  private:
+	void paint() {
+		if (!isExposed()) {
+			return;
+		}
+		const auto bounds = QRect(QPoint(), size());
+		const auto region = QRegion(bounds);
+		_backingStore.resize(size());
+		_backingStore.beginPaint(region);
+		{
+			auto painter = QPainter(_backingStore.paintDevice());
+			painter.fillRect(
+				bounds, QGuiApplication::palette().color(QPalette::Window));
+			painter.drawImage(bounds, _logo);
+		}
+		_backingStore.endPaint();
+		_backingStore.flush(region, this);
+	}
+
+	QBackingStore _backingStore;
+	std::function<void()> _onShown;
+	const QImage &_logo;
+};
+#endif // Q_OS_MAC
+
+} // namespace
+
+const char kOptionDeadlockDetector[] = "deadlock-detector";
+
+bool Sandbox::QuitOnStartRequested = false;
+bool Sandbox::SystemShuttingDown = false;
+
+Sandbox::Sandbox(int &argc, char **argv)
+: QApplication(argc, argv)
+, _mainThreadId(QThread::currentThreadId()) {
+#ifdef Q_OS_MAC
+	_fontStartupTimer.start();
+#endif // Q_OS_MAC
+}
+
+int Sandbox::start() {
+	{
+		const auto d = QFile::encodeName(QDir(cWorkingDir()).absolutePath());
+		char h[33] = { 0 };
+		hashMd5Hex(d.constData(), d.size(), h);
+		_localServerName = Platform::SingleInstanceLocalServerName(h);
+	}
+
+#ifdef Q_OS_MAC
+	if (_localServerName.isEmpty()) {
+		LOG(("Mac local socket directory is unavailable."));
+		return 1;
+	}
+	const auto encodedSocketName = QFile::encodeName(_localServerName);
+	auto socketAddress = sockaddr_un();
+	const auto socketPathLimit = sizeof(socketAddress.sun_path) - 1;
+	if (size_t(encodedSocketName.size()) > socketPathLimit) {
+		LOG(("Mac local socket path too long: %1 bytes exceeds %2: %3")
+				.arg(encodedSocketName.size())
+				.arg(socketPathLimit)
+				.arg(_localServerName));
+		return 1;
+	}
+	if (MacProtectedPath::IsActive()) {
+		const auto socketDirectory = QFileInfo(_localServerName).absolutePath();
+		if (!MacProtectedPath::CheckPath(MacProtectedPath::Operation::Open,
+										 _localServerName, Q_FUNC_INFO)
+			|| !MacProtectedPath::CheckPath(
+				MacProtectedPath::Operation::OpenDir, socketDirectory,
+				Q_FUNC_INFO)
+			|| !MacProtectedPath::CheckPath(MacProtectedPath::Operation::Mkdir,
+											socketDirectory, Q_FUNC_INFO)
+			|| !QDir().mkpath(socketDirectory)) {
+			LOG(("Could not prepare single-instance IPC path."));
+			return 1;
+		}
+	}
+#endif // Q_OS_MAC
+
+	if (cLaunchMode() == LaunchModeCleanup) {
+		const auto result = stopRunningInstance();
+		psCleanup();
+		closeApplication();
+		return result;
+	}
+
+	if (!Core::UpdaterDisabled()) {
+		_updateChecker = std::make_unique<Core::UpdateChecker>();
+	}
+
+	{
+		const auto d = QFile::encodeName(cExeDir() + cExeName());
+		QByteArray h;
+		h.resize(32);
+		hashMd5Hex(d.constData(), d.size(), h.data());
+#ifdef Q_OS_MAC
+		const auto ipcDirectory = MacProtectedPath::IpcDirectory();
+		if (ipcDirectory.isEmpty()) {
+			LOG(("Mac IPC directory is unavailable for the instance lock."));
+			return 1;
+		}
+		const auto lockPath = MacProtectedPath::IsActive()
+								  ? ipcDirectory + u"/Teagram-lock-"_q
+										+ QString::fromLatin1(h.left(16))
+								  : ipcDirectory + '/' + h + '-' + cGUIDStr();
+		if (MacProtectedPath::IsActive()) {
+			if (!MacProtectedPath::CheckPath(MacProtectedPath::Operation::Stat,
+											 lockPath, Q_FUNC_INFO)
+				|| !MacProtectedPath::CheckPath(
+					MacProtectedPath::Operation::Unlink, lockPath, Q_FUNC_INFO)
+				|| !MacProtectedPath::CheckPath(
+					MacProtectedPath::Operation::Lock, lockPath, Q_FUNC_INFO)) {
+				return 1;
+			}
+		}
+		_lockFile = std::make_unique<QLockFile>(lockPath);
+#else  // Q_OS_MAC
+		_lockFile = std::make_unique<QLockFile>(QDir::tempPath() + '/' + h + '-' + cGUIDStr());
+#endif // !Q_OS_MAC
+		_lockFile->setStaleLockTime(0);
+		if (!_lockFile->tryLock()
+			&& Launcher::Instance().customWorkingDir()) {
+			// On Windows, QLockFile has problems detecting a stale lock
+			// if the machine's hostname contains characters outside the US-ASCII character set.
+			if constexpr (Platform::IsWindows()) {
+				// QLockFile::removeStaleLockFile returns false on Windows,
+				// when the application owning the lock is still running.
+				if (!_lockFile->removeStaleLockFile()) {
+					gManyInstance = true;
+				}
+			} else {
+				gManyInstance = true;
+			}
+		}
+	}
+
+#if defined Q_OS_LINUX && QT_VERSION >= QT_VERSION_CHECK(6, 2, 0)
+	_localServer.setSocketOptions(QLocalServer::AbstractNamespaceOption);
+	_localSocket.setSocketOptions(QLocalSocket::AbstractNamespaceOption);
+#endif // Q_OS_LINUX && Qt >= 6.2.0
+
+	connect(
+		&_localSocket,
+		&QLocalSocket::connected,
+		[=] { socketConnected(); });
+	connect(
+		&_localSocket,
+		&QLocalSocket::disconnected,
+		[=] { socketDisconnected(); });
+	connect(
+		&_localSocket,
+		&QLocalSocket::errorOccurred,
+		[=](QLocalSocket::LocalSocketError error) { socketError(error); });
+	connect(
+		&_localSocket,
+		&QLocalSocket::bytesWritten,
+		[=](qint64 bytes) { socketWritten(bytes); });
+	connect(
+		&_localSocket,
+		&QLocalSocket::readyRead,
+		[=] { socketReading(); });
+	connect(
+		&_localServer,
+		&QLocalServer::newConnection,
+		[=] { newInstanceConnected(); });
+
+	crl::on_main(this, [=] { checkForQuit(); });
+	connect(this, &QCoreApplication::aboutToQuit, [=] {
+		// On Windows, Qt emits aboutToQuit synchronously from its
+		// WM_ENDSESSION handler (QWindowsContext::windowsProc). Running
+		// closeApplication() there destroys QWindows mid-dispatch and
+		// later WM_ENDSESSION messages delivered to other top-level
+		// HWNDs crash on virtual dispatch through stale QWindow*. Detect
+		// that path and defer cleanup to the next main-loop tick so Qt
+		// finishes delivering shutdown messages on still-live windows.
+		// On a normal quit (Ctrl+Q etc.) aboutToQuit fires from the
+		// exec() epilogue after the event loop has exited and queued
+		// events would not run, so we keep the synchronous teardown.
+		if (SystemShuttingDown) {
+			QMetaObject::invokeMethod(this, [=] {
+				customEnterFromEventLoop([&] {
+					closeApplication();
+				});
+			}, Qt::QueuedConnection);
+		} else {
+			customEnterFromEventLoop([&] {
+				closeApplication();
+			});
+		}
+	});
+
+	// https://github.com/telegramdesktop/tdesktop/issues/948
+	// and https://github.com/telegramdesktop/tdesktop/issues/5022
+	connect(this, &QGuiApplication::saveStateRequest, [](auto &manager) {
+		manager.setRestartHint(QSessionManager::RestartNever);
+	});
+
+	LOG(("Connecting local socket to %1...").arg(_localServerName));
+#ifdef Q_OS_MAC
+	if (!MacProtectedPath::CheckPath(MacProtectedPath::Operation::Open,
+									 _localServerName, Q_FUNC_INFO)) {
+		return 1;
+	}
+#endif // Q_OS_MAC
+	_localSocket.connectToServer(_localServerName);
+
+	if (QuitOnStartRequested) {
+		closeApplication();
+		return 0;
+	}
+	_started = true;
+	const auto result = exec();
+#ifdef Q_OS_MAC
+	// closeApplication() has run from aboutToQuit by now. Wait for the font
+	// warmup worker so it never outlives the Qt and style state it touches.
+	if (_fontDatabaseWarmupThread.joinable()) {
+		_fontDatabaseWarmupThread.join();
+	}
+	if (qEnvironmentVariableIsSet("TDESKTOP_FONT_STARTUP_QUIT_REGRESSION")) {
+		fprintf(stderr,
+				"Font shutdown regression: worker_joined=1 "
+				"application_created=%d teardown=complete\n",
+				_applicationCreated ? 1 : 0);
+	}
+#endif // Q_OS_MAC
+	return result;
+}
+
+int Sandbox::stopRunningInstance() {
+	LOG(("Cleanup: connecting to %1...").arg(_localServerName));
+#ifdef Q_OS_MAC
+	if (!MacProtectedPath::CheckPath(MacProtectedPath::Operation::Open,
+									 _localServerName, Q_FUNC_INFO)) {
+		return 1;
+	}
+#endif // Q_OS_MAC
+	_localSocket.connectToServer(_localServerName);
+	if (!_localSocket.waitForConnected(int(kCleanupIpcTimeout))) {
+		if (_localSocket.error() == QLocalSocket::ServerNotFoundError) {
+			LOG(("Cleanup: no running instance found."));
+			return 0;
+		}
+		LOG(("Cleanup: connect error %1.").arg(_localSocket.error()));
+		return 1;
+	}
+	_localSocket.write("CMD:quit;");
+	if (!_localSocket.waitForBytesWritten(int(kCleanupIpcTimeout))) {
+		LOG(("Cleanup: could not send the quit command."));
+		return 1;
+	}
+	auto response = QByteArray();
+	const auto deadline = crl::now() + kCleanupIpcTimeout;
+	while (!response.contains(';')) {
+		const auto timeout = deadline - crl::now();
+		if (timeout <= 0 || !_localSocket.waitForReadyRead(int(timeout))) {
+			LOG(("Cleanup: no response to the quit command."));
+			return 1;
+		}
+		response.append(_localSocket.readAll());
+	}
+	const auto match = QRegularExpression(u"RES:(\\d+)_(\\d+);"_q).match(
+		QString::fromLatin1(response));
+	if (!match.hasMatch()) {
+		LOG(("Cleanup: bad response to the quit command."));
+		return 1;
+	}
+#ifdef Q_OS_MAC
+	if (MacProtectedPath::IntegrationTestActive()) {
+		fprintf(stderr, "Mac profile IPC cleanup response: %s\n",
+				response.constData());
+	}
+#endif // Q_OS_MAC
+	const auto processId = match.capturedView(1).toULongLong();
+	LOG(("Cleanup: waiting for process %1 to quit...").arg(processId));
+	if (!Platform::WaitForProcessExit(processId, kCleanupQuitTimeout)) {
+		LOG(("Cleanup: the process did not quit in time."));
+		return 1;
+	}
+	LOG(("Cleanup: the running instance quit."));
+	return 0;
+}
+
+void Sandbox::NotifySystemShuttingDown() {
+	SystemShuttingDown = true;
+}
+
+void Sandbox::QuitWhenStarted() {
+	if (!QApplication::instance() || !Instance()._started) {
+		QuitOnStartRequested = true;
+	} else {
+		// Use exit(0) instead of quit() to avoid recursive
+		// [NSApp terminate:] on macOS. Since Qt 6.0, quit() routes
+		// through QCocoaIntegration::quit() -> [NSApp terminate:],
+		// which when called from within applicationShouldTerminate:
+		// causes a nested terminate that leads to exit() being called
+		// directly, bypassing normal cleanup. exit(0) properly exits
+		// event loops without going through the platform plugin.
+		QCoreApplication::exit(0);
+	}
+}
+
+void Sandbox::launchApplication() {
+	InvokeQueued(this, [=] {
+		if (Quitting()) {
+			quit();
+		} else if (_application) {
+			return;
+		}
+#if defined(Q_OS_LINUX) || defined(Q_OS_MAC)
+		if (!_uiStallWatchdog) {
+			_uiStallWatchdog = std::make_unique<UiStallWatchdog>(
+				[](const QString &line, bool update) {
+					Logs::writeMainUiStall(line, update);
+				},
+				UiStallWatchdog::Settings{
+					.captureShortStalls = qEnvironmentVariableIsSet(
+						"TDESKTOP_UI_STALL_WATCHDOG_CACHE_REGRESSION"),
+					.disableRateLimit = qEnvironmentVariableIsSet(
+						"TDESKTOP_FONT_STARTUP_REGRESSION"),
+				});
+		}
+#endif // Q_OS_LINUX || Q_OS_MAC
+#ifdef Q_OS_MAC
+		if (!_fontStartupWindow) {
+			_launchAfterFontDatabaseWarmup = true;
+			_fontStartupWindow = std::make_unique<FontStartupSplash>([this] {
+				if (qEnvironmentVariableIsSet(
+						"TDESKTOP_FONT_STARTUP_REGRESSION")) {
+					const auto visible = _fontStartupWindow->isVisible()
+										 && _fontStartupWindow->isExposed();
+					fprintf(stderr,
+							"Font startup splash "
+							"regression: visible=%d "
+							"wall_ns=%lld\n",
+							visible ? 1 : 0,
+							static_cast<long long>(
+								_fontStartupTimer.nsecsElapsed()));
+				}
+				startFontDatabaseWarmup();
+			});
+			_fontStartupWindow->show();
+			QTimer::singleShot(kFontStartupSplashExposureTimeout, this, [this] {
+				if (_fontDatabaseWarmupStarted || Quitting()) {
+					return;
+				}
+				if (qEnvironmentVariableIsSet(
+						"TDESKTOP_FONT_STARTUP_REGRESSION")) {
+					fprintf(stderr,
+							"Font startup exposure timeout regression: "
+							"wall_ns=%lld\n",
+							static_cast<long long>(
+								_fontStartupTimer.nsecsElapsed()));
+				}
+				startFontDatabaseWarmup();
+			});
+			return;
+		}
+		if (!_fontDatabaseWarmupDone) {
+			_launchAfterFontDatabaseWarmup = true;
+			return;
+		}
+		if (qEnvironmentVariableIsSet("TDESKTOP_FONT_STARTUP_REGRESSION")) {
+			fprintf(stderr, "Font database warmup regression: ready=%d\n",
+					_fontDatabaseWarmupSucceeded ? 1 : 0);
+		}
+		Platform::CreateGlobalMenu();
+#endif // Q_OS_MAC
+		setupScreenScale();
+
+		rpl::single(
+			rpl::empty
+		) | rpl::then(
+			OptionDeadlockDetector.changes()
+		) | rpl::on_next([=] {
+			using DeadlockDetector::PingThread;
+			// The test agent always wants a stuck main thread to crash with a
+			// report instead of hanging silently, so force it on for -testagent.
+			_deadlockDetector = (OptionDeadlockDetector.value() || cTestAgent())
+				? std::make_unique<PingThread>(this)
+				: nullptr;
+		}, _lifetime);
+
+#ifdef Q_OS_MAC
+		_applicationCreated = true;
+#endif // Q_OS_MAC
+		_application = std::make_unique<Application>();
+
+		// Ideally this should go to constructor.
+		// But we want to catch all native events and Application installs
+		// its own filter that can filter out some of them. So we install
+		// our filter after the Application constructor installs his.
+		installNativeEventFilter(this);
+
+		_application->run();
+#ifdef Q_OS_MAC
+		if (_fontStartupWindow) {
+			_fontStartupWindow->close();
+			_fontStartupWindow.reset();
+		}
+#endif // Q_OS_MAC
+	});
+}
+
+#ifdef Q_OS_MAC
+void Sandbox::startFontDatabaseWarmup() {
+	if (_fontDatabaseWarmupStarted) {
+		return;
+	}
+	_fontDatabaseWarmupStarted = true;
+	const auto quitRegression
+		= qEnvironmentVariableIsSet("TDESKTOP_FONT_STARTUP_QUIT_REGRESSION");
+	if (quitRegression) {
+		// The main thread samples the worker stack until it catches the
+		// system font enumeration executing, holds the worker there, and only
+		// then requests the real quit. The worker is released after
+		// aboutToQuit, so teardown runs with the enumeration still in flight.
+		if (!InstallProbeSignal()) {
+			fprintf(stderr, "Font shutdown regression: probe=unavailable\n");
+		}
+		connect(this, &QCoreApplication::aboutToQuit, [=] {
+			_fontStartupQuitObserved = true;
+			ProbeFinalRelease.store(true, std::memory_order_release);
+		});
+	}
+	try {
+		_fontDatabaseWarmupThread = std::thread([this, quitRegression] {
+			const auto openSansLoaded = style::internal::PreloadCustomFonts();
+			{
+#if QT_VERSION < QT_VERSION_CHECK(6, 0, 0)
+				const auto families = QFontDatabase().families();
+#else  // Qt < 6.0.0
+				const auto families = QFontDatabase::families();
+#endif // Qt < 6.0.0
+				Q_UNUSED(families);
+			}
+			const auto prewarmFontMetrics = [](QString family) {
+				auto font = QFont(std::move(family));
+				font.setPixelSize(16);
+				const auto metrics = QFontMetricsF(font);
+				static_cast<void>(metrics.ascent());
+				static_cast<void>(metrics.height());
+				static_cast<void>(metrics.tightBoundingRect(
+					u"bdfghijklpqtyBDFGHIJKLPQTY1234567890[]{}()"_q));
+			};
+			prewarmFontMetrics(QFont().family());
+			prewarmFontMetrics(u"Open Sans"_q);
+			if (quitRegression) {
+				fprintf(stderr,
+						"Font shutdown regression: quit_observed=%d "
+						"font_work=active enumeration_overlapped=%d\n",
+						_fontStartupQuitObserved ? 1 : 0,
+						_fontEnumerationOverlapped ? 1 : 0);
+			}
+			if (qEnvironmentVariableIsSet("TDESKTOP_FONT_STARTUP_REGRESSION")) {
+				fprintf(stderr,
+						"Font database metrics warmup regression: ready=1\n");
+			}
+			QMetaObject::invokeMethod(
+				this,
+				[this, openSansLoaded] {
+					style::internal::SetPreloadedCustomFonts(openSansLoaded);
+					_fontDatabaseWarmupDone = true;
+					_fontDatabaseWarmupSucceeded = true;
+					if (qEnvironmentVariableIsSet(
+							"TDESKTOP_FONT_STARTUP_REGRESSION")) {
+						fprintf(stderr,
+								"Font database warmup regression: ready=1 "
+								"custom-fonts=1\n");
+					}
+					if (_launchAfterFontDatabaseWarmup && !Quitting()) {
+						_launchAfterFontDatabaseWarmup = false;
+						launchApplication();
+					}
+				},
+				Qt::QueuedConnection);
+		});
+		if (qEnvironmentVariableIsSet("TDESKTOP_FONT_STARTUP_REGRESSION")) {
+			fprintf(stderr, "Font database warmup regression: started=1\n");
+		}
+		if (quitRegression) {
+			const auto timer = Ui::CreateChild<QTimer>(this);
+			const auto started = std::make_shared<QElapsedTimer>();
+			started->start();
+			connect(timer, &QTimer::timeout, this, [=] {
+				const auto sample = SampleWorkerStack(
+					_fontDatabaseWarmupThread.native_handle());
+				const auto sampled
+					= (sample == StackSample::InSystemEnumeration);
+				if (!sampled && started->elapsed() < 10000) {
+					return;
+				}
+				timer->stop();
+				_fontEnumerationOverlapped = sampled;
+				if (!sampled) {
+					ProbeFinalRelease.store(true, std::memory_order_release);
+				}
+				Core::Quit();
+			});
+			timer->start(1);
+		}
+	} catch (const std::system_error &error) {
+		_fontDatabaseWarmupDone = true;
+		if (qEnvironmentVariableIsSet("TDESKTOP_FONT_STARTUP_REGRESSION")) {
+			fprintf(stderr, "Font database warmup regression: started=0\n");
+		}
+		LOG(("Font database warmup could not start: %1")
+				.arg(QString::fromLocal8Bit(error.what())));
+		if (_launchAfterFontDatabaseWarmup && !Quitting()) {
+			_launchAfterFontDatabaseWarmup = false;
+			launchApplication();
+		}
+	}
+}
+#endif // Q_OS_MAC
+
+void Sandbox::setupScreenScale() {
+	const auto ratio = devicePixelRatio();
+	LOG(("Global devicePixelRatio: %1").arg(ratio));
+	const auto logEnv = [](const char *name) {
+		const auto value = qEnvironmentVariable(name);
+		if (!value.isEmpty()) {
+			LOG(("%1: %2").arg(name, value));
+		}
+	};
+	logEnv("QT_DEVICE_PIXEL_RATIO");
+	logEnv("QT_AUTO_SCREEN_SCALE_FACTOR");
+	logEnv("QT_ENABLE_HIGHDPI_SCALING");
+	logEnv("QT_SCALE_FACTOR");
+	logEnv("QT_SCREEN_SCALE_FACTORS");
+	logEnv("QT_SCALE_FACTOR_ROUNDING_POLICY");
+	logEnv("QT_DPI_ADJUSTMENT_POLICY");
+	logEnv("QT_USE_PHYSICAL_DPI");
+	logEnv("QT_FONT_DPI");
+
+	const auto useRatio = std::clamp(qCeil(ratio), 1, 3);
+	style::SetDevicePixelRatio(useRatio);
+
+	const auto screen = Sandbox::primaryScreen();
+	const auto dpi = screen->logicalDotsPerInch();
+	const auto basePair = screen->handle()->logicalBaseDpi();
+	const auto base = (basePair.first + basePair.second) * 0.5;
+	const auto screenScaleExact = dpi / base;
+	const auto screenScale = int(base::SafeRound(screenScaleExact * 20)) * 5;
+	LOG(("Primary screen DPI: %1, Base: %2.").arg(dpi).arg(base));
+	LOG(("Computed screen scale: %1").arg(screenScale));
+	if (Platform::IsMac()) {
+		// 110% for Retina screens by default.
+		cSetScreenScale((useRatio == 2) ? 110 : style::kScaleDefault);
+	} else {
+		cSetScreenScale(std::clamp(
+			screenScale,
+			style::kScaleMin,
+			style::MaxScaleForRatio(useRatio)));
+	}
+	LOG(("DevicePixelRatio: %1").arg(useRatio));
+	LOG(("ScreenScale: %1").arg(cScreenScale()));
+}
+
+Sandbox::~Sandbox() {
+#ifdef Q_OS_MAC
+	if (_fontDatabaseWarmupThread.joinable()) {
+		_fontDatabaseWarmupThread.join();
+	}
+	Platform::DestroyGlobalMenu();
+#endif // Q_OS_MAC
+}
+
+bool Sandbox::event(QEvent *e) {
+	if (e->type() == QEvent::Quit) {
+		if (Quitting()) {
+			return QCoreApplication::event(e);
+		}
+		Quit(QuitReason::QtQuitEvent);
+		e->ignore();
+		return false;
+	} else if (e->type() == QEvent::Close) {
+		Quit();
+	} else if (e->type() == DeadlockDetector::PingPongEvent::Type()) {
+		postEvent(
+			static_cast<DeadlockDetector::PingPongEvent*>(e)->sender(),
+			new DeadlockDetector::PingPongEvent(this));
+	}
+	return QApplication::event(e);
+}
+
+void Sandbox::socketConnected() {
+	LOG(("Socket connected, this is not the first application instance, sending show command..."));
+	_secondInstance = true;
+
+	QString commands;
+	if (qEnvironmentVariableIsSet("XDG_ACTIVATION_TOKEN")) {
+		commands += u"XDG_ACTIVATION_TOKEN:"_q + qgetenv("XDG_ACTIVATION_TOKEN").toBase64() + ';';
+	}
+	for (const auto &url : cRefStartUrls()) {
+		commands += u"OPEN:"_q + url.toString(QUrl::FullyEncoded) + ';';
+	}
+	if (cQuit()) {
+		commands += u"CMD:quit;"_q;
+	} else if (cRefStartUrls().isEmpty()) {
+		commands += u"CMD:show;"_q;
+	}
+
+	DEBUG_LOG(("Sandbox Info: writing commands %1").arg(commands));
+	_localSocket.write(commands.toLatin1());
+}
+
+void Sandbox::socketWritten(qint64/* bytes*/) {
+	if (_localSocket.state() != QLocalSocket::ConnectedState) {
+		LOG(("Socket is not connected %1").arg(_localSocket.state()));
+		return;
+	}
+	if (_localSocket.bytesToWrite()) {
+		return;
+	}
+	LOG(("Show command written, waiting response..."));
+}
+
+void Sandbox::socketReading() {
+	if (_localSocket.state() != QLocalSocket::ConnectedState) {
+		LOG(("Socket is not connected %1").arg(_localSocket.state()));
+		return;
+	}
+	_localSocketReadData.append(_localSocket.readAll());
+	const auto m = QRegularExpression(u"RES:(\\d+)_(\\d+);"_q).match(
+		_localSocketReadData);
+	if (!m.hasMatch()) {
+		return;
+	}
+	const auto processId = m.capturedView(1).toULongLong();
+	const auto windowId = m.capturedView(2).toULongLong();
+	if (windowId) {
+		Platform::ActivateOtherProcess(processId, windowId);
+	}
+	LOG(("Show command response received, processId = %1, windowId = %2, "
+		"activating and quitting..."
+		).arg(processId
+		).arg(windowId));
+	return Quit();
+}
+
+void Sandbox::socketError(QLocalSocket::LocalSocketError e) {
+	if (Quitting()) return;
+
+	if (_secondInstance) {
+		LOG(("Could not write show command, error %1, quitting...").arg(e));
+		return Quit();
+	}
+
+	if (e == QLocalSocket::ServerNotFoundError) {
+		LOG(("This is the only instance of Telegram, starting server and app..."));
+	} else {
+		LOG(("Socket connect error %1, starting server and app...").arg(e));
+	}
+	_localSocket.close();
+
+	// Local server does not work in WinRT build.
+#ifndef Q_OS_WINRT
+#ifdef Q_OS_MAC
+	if (!MacProtectedPath::CheckPath(MacProtectedPath::Operation::Stat,
+									 _localServerName, Q_FUNC_INFO)
+		|| !MacProtectedPath::CheckPath(MacProtectedPath::Operation::Unlink,
+										_localServerName, Q_FUNC_INFO)
+		|| !MacProtectedPath::CheckPath(MacProtectedPath::Operation::Open,
+										_localServerName, Q_FUNC_INFO)) {
+		return Quit();
+	}
+#endif // Q_OS_MAC
+	psCheckLocalSocket(_localServerName);
+
+	if (!_localServer.listen(_localServerName)) {
+		LOG(("Failed to start listening to %1 server: %2").arg(_localServerName, _localServer.errorString()));
+		return Quit();
+	}
+#ifdef Q_OS_MAC
+	if (MacProtectedPath::IntegrationTestActive()) {
+		const auto fullServerName = _localServer.fullServerName().toUtf8();
+		fprintf(stderr,
+				"Mac profile IPC ready: listening=%d full_server_name=%s\n",
+				_localServer.isListening() ? 1 : 0, fullServerName.constData());
+	}
+#endif // Q_OS_MAC
+#endif // !Q_OS_WINRT
+
+	if (!Core::UpdaterDisabled()
+		&& !cNoStartUpdate()
+		&& Core::checkReadyUpdate()) {
+		cSetRestartingUpdate(true);
+		DEBUG_LOG(("Sandbox Info: installing update instead of starting app..."));
+		return Quit();
+	}
+
+	if (cQuit()) {
+		return Quit();
+	}
+
+	singleInstanceChecked();
+}
+
+void Sandbox::singleInstanceChecked() {
+	if (cManyInstance()) {
+		LOG(("App Info: Detected another instance"));
+	}
+
+	refreshGlobalProxy();
+	if (!Logs::started() || !Logs::instanceChecked()) {
+		new NotStartedWindow();
+		return;
+	}
+	const auto result = CrashReports::Start();
+	v::match(result, [&](CrashReports::Status status) {
+		if (status == CrashReports::CantOpen) {
+			new NotStartedWindow();
+		} else {
+			launchApplication();
+		}
+	}, [&](const QByteArray &crashdump) {
+		// If crash dump is empty with that status it means that we
+		// didn't close the application properly. Just ignore for now.
+		if (crashdump.isEmpty()) {
+			if (CrashReports::Restart() == CrashReports::CantOpen) {
+				new NotStartedWindow();
+			} else {
+				launchApplication();
+			}
+			return;
+		}
+		_lastCrashDump = crashdump;
+		auto window = new LastCrashedWindow(
+			_lastCrashDump,
+			[=] { launchApplication(); });
+		window->proxyChanges(
+		) | rpl::on_next([=](MTP::ProxyData &&proxy) {
+			_sandboxProxy = std::move(proxy);
+			refreshGlobalProxy();
+		}, window->lifetime());
+	});
+}
+
+void Sandbox::socketDisconnected() {
+	if (_secondInstance) {
+		DEBUG_LOG(("Sandbox Error: socket disconnected before command response received, quitting..."));
+		return Quit();
+	}
+}
+
+void Sandbox::newInstanceConnected() {
+	DEBUG_LOG(("Sandbox Info: new local socket connected"));
+	for (auto client = _localServer.nextPendingConnection(); client; client = _localServer.nextPendingConnection()) {
+		_localClients.push_back(LocalClient(client, QByteArray()));
+		connect(
+			client,
+			&QLocalSocket::readyRead,
+			[=] { readClients(); });
+		connect(
+			client,
+			&QLocalSocket::disconnected,
+			[=] { removeClients(); });
+	}
+}
+
+void Sandbox::readClients() {
+	// This method can be called before Application is constructed.
+	QList<QUrl> startUrls;
+	for (LocalClients::iterator i = _localClients.begin(), e = _localClients.end(); i != e; ++i) {
+		i->second.append(i->first->readAll());
+		if (i->second.size()) {
+			bool activationRequired = false;
+			bool quitAfterResponse = false;
+			QString cmds(QString::fromLatin1(i->second));
+			int32 from = 0, l = cmds.length();
+			for (int32 to = cmds.indexOf(QChar(';'), from); to >= from; to = (from < l) ? cmds.indexOf(QChar(';'), from) : -1) {
+				auto cmd = base::StringViewMid(cmds, from, to - from);
+				if (cmd.startsWith(u"CMD:"_q)) {
+					const auto processId = QApplication::applicationPid();
+					const auto command = cmds.mid(from + 4, to - from - 4);
+					auto windowId = uint64(0);
+					if (command == u"quit"_q) {
+						quitAfterResponse = true;
+					} else {
+						windowId = execExternal(command);
+					}
+					const auto response = u"RES:%1_%2;"_q.arg(processId).arg(windowId).toLatin1();
+					i->first->write(response.data(), response.size());
+				} else if (cmd.startsWith(u"XDG_ACTIVATION_TOKEN:"_q)) {
+					qputenv("XDG_ACTIVATION_TOKEN", QByteArray::fromBase64(cmds.mid(from + 21, to - from - 21).toLatin1()));
+				} else if (cmd.startsWith(u"OPEN:"_q)) {
+					const auto raw
+						= cmds.mid(from + 5, to - from - 5).mid(0, 8192);
+					const auto url = QUrl(raw);
+#ifdef Q_OS_MAC
+					if ((url.scheme() == u"file"_q && !url.isLocalFile()
+						 && MacProtectedPath::IsActive())
+						|| (url.isLocalFile()
+							&& !MacProtectedPath::CheckExternalPath(
+								MacProtectedPath::Operation::Open,
+								url.toLocalFile(), "sandbox.open"))
+						|| (url.scheme().isEmpty()
+							&& !MacProtectedPath::CheckExternalPath(
+								MacProtectedPath::Operation::Open, raw,
+								"sandbox.open"))) {
+						from = to + 1;
+						continue;
+					}
+#endif // Q_OS_MAC
+					startUrls.append(url);
+					if (!activationRequired) {
+						activationRequired = StartUrlRequiresActivate(startUrls.back().toString());
+					}
+				} else if (cmd.startsWith(u"CTRL:"_q)) {
+					const auto payload = HandleExternalControl(
+						cmds.mid(from + 5, to - from - 5));
+					const auto response = QByteArray("DATA:")
+						+ payload.toBase64()
+						+ ';';
+					i->first->write(response);
+				} else {
+					LOG(("Sandbox Error: unknown command %1 passed in local socket").arg(cmd.toString()));
+				}
+				from = to + 1;
+			}
+			if (from > 0) {
+				i->second = i->second.mid(from);
+			}
+			const auto processId = QApplication::applicationPid();
+			const auto windowId = activationRequired
+				? execExternal("show")
+				: 0;
+			const auto response = u"RES:%1_%2;"_q.arg(processId).arg(windowId).toLatin1();
+			i->first->write(response.data(), response.size());
+			if (quitAfterResponse) {
+				const auto client = i->first;
+				const auto quitWhenFlushed = [=] {
+					if (!client->bytesToWrite()) {
+						Quit();
+					}
+				};
+				if (client->bytesToWrite()) {
+					connect(client, &QLocalSocket::bytesWritten, this,
+							[=](qint64) { quitWhenFlushed(); });
+					connect(client, &QLocalSocket::disconnected, this,
+							[=] { Quit(); });
+				} else {
+					QMetaObject::invokeMethod(this, quitWhenFlushed,
+											  Qt::QueuedConnection);
+				}
+			}
+		}
+	}
+	cRefStartUrls() << base::take(startUrls);
+	if (_application) {
+		_application->checkStartUrls();
+	}
+}
+
+void Sandbox::removeClients() {
+	DEBUG_LOG(("Sandbox Info: remove clients slot called, clients %1"
+		).arg(_localClients.size()));
+	for (auto i = _localClients.begin(), e = _localClients.end(); i != e;) {
+		if (i->first->state() != QLocalSocket::ConnectedState) {
+			DEBUG_LOG(("Sandbox Info: removing client"));
+			i = _localClients.erase(i);
+			e = _localClients.end();
+		} else {
+			++i;
+		}
+	}
+}
+
+void Sandbox::checkForQuit() {
+	if (Quitting()) {
+		quit();
+	}
+}
+
+void Sandbox::refreshGlobalProxy() {
+	const auto proxy = !Core::IsAppLaunched()
+		? _sandboxProxy
+		: Core::App().settings().proxy().isEnabled()
+		? Core::App().settings().proxy().selected()
+		: MTP::ProxyData();
+	if (proxy.type == MTP::ProxyData::Type::Socks5
+		|| proxy.type == MTP::ProxyData::Type::Http) {
+		QNetworkProxy::setApplicationProxy(
+			MTP::ToNetworkProxy(MTP::ToDirectIpProxy(proxy)));
+	} else if (!Core::IsAppLaunched()
+		|| Core::App().settings().proxy().isSystem()) {
+		QNetworkProxyFactory::setUseSystemConfiguration(true);
+	} else {
+		QNetworkProxy::setApplicationProxy(QNetworkProxy::NoProxy);
+	}
+}
+
+void Sandbox::checkForEmptyLoopNestingLevel() {
+	// _loopNestingLevel == _eventNestingLevel means that we had a
+	// native event in a nesting loop that didn't get a notify() call
+	// after. That means we already have exited the nesting loop and
+	// there must not be any postponed calls with that nesting level.
+	if (_loopNestingLevel == _eventNestingLevel) {
+		Assert(_postponedCallsDeferred
+			|| _postponedCalls.empty()
+			|| _postponedCalls.back().loopNestingLevel < _loopNestingLevel);
+		Assert(!_previousLoopNestingLevels.empty());
+
+		_loopNestingLevel = _previousLoopNestingLevels.back();
+		_previousLoopNestingLevels.pop_back();
+	}
+}
+
+void Sandbox::postponeCall(FnMut<void()> &&callable) {
+	Expects(callable != nullptr);
+	Expects(_eventNestingLevel >= _loopNestingLevel);
+
+	checkForEmptyLoopNestingLevel();
+	_postponedCalls.push_back({
+		_loopNestingLevel,
+		std::move(callable)
+	});
+}
+
+void Sandbox::incrementEventNestingLevel() {
+	++_eventNestingLevel;
+}
+
+void Sandbox::decrementEventNestingLevel() {
+	Expects(_eventNestingLevel >= _loopNestingLevel);
+
+	if (_eventNestingLevel == _loopNestingLevel) {
+		_loopNestingLevel = _previousLoopNestingLevels.back();
+		_previousLoopNestingLevels.pop_back();
+	}
+	const auto processTillLevel = _eventNestingLevel - 1;
+	processPostponedCalls(processTillLevel);
+	checkForEmptyLoopNestingLevel();
+	_eventNestingLevel = processTillLevel;
+
+	Ensures(_eventNestingLevel >= _loopNestingLevel);
+}
+
+void Sandbox::registerEnterFromEventLoop() {
+	Expects(_eventNestingLevel >= _loopNestingLevel);
+
+	if (_eventNestingLevel > _loopNestingLevel) {
+		_previousLoopNestingLevels.push_back(_loopNestingLevel);
+		_loopNestingLevel = _eventNestingLevel;
+	}
+}
+
+bool Sandbox::notify(QObject *receiver, QEvent *e) {
+	if (QThread::currentThreadId() != _mainThreadId) {
+		return QApplication::notify(receiver, e);
+	}
+
+	const auto wrap = createEventNestingLevel();
+	if (e->type() == QEvent::UpdateRequest) {
+		const auto weak = QPointer<QObject>(receiver);
+		_widgetUpdateRequests.fire({});
+		if (!weak) {
+			return true;
+		}
+	}
+	return QApplication::notify(receiver, e);
+}
+
+void Sandbox::processPostponedCalls(int level) {
+	if (_postponedCallsDeferred) {
+		return;
+	}
+	while (!_postponedCalls.empty()) {
+		auto &last = _postponedCalls.back();
+		if (last.loopNestingLevel != level) {
+			break;
+		}
+		auto taken = std::move(last);
+		_postponedCalls.pop_back();
+		taken.callable();
+	}
+}
+
+void Sandbox::drainPostponedCalls() {
+	Expects(QThread::currentThreadId() == _mainThreadId);
+
+	if (!cTestAgent()) {
+		return;
+	}
+	const auto wasDeferred = std::exchange(_postponedCallsDeferred, true);
+	const auto guard = gsl::finally([&] {
+		_postponedCallsDeferred = wasDeferred;
+	});
+	while (!_postponedCalls.empty()) {
+		auto taken = std::move(_postponedCalls.back());
+		_postponedCalls.pop_back();
+		taken.callable();
+	}
+}
+
+void Sandbox::setPostponedCallsDeferred(bool deferred) {
+	Expects(QThread::currentThreadId() == _mainThreadId);
+
+	if (!cTestAgent()) {
+		return;
+	}
+	_postponedCallsDeferred = deferred;
+}
+
+bool Sandbox::nativeEventFilter(
+		const QByteArray &eventType,
+		void *message,
+		native_event_filter_result *result) {
+	registerEnterFromEventLoop();
+	return false;
+}
+
+rpl::producer<> Sandbox::widgetUpdateRequests() const {
+	return _widgetUpdateRequests.events();
+}
+
+MTP::ProxyData Sandbox::sandboxProxy() const {
+	return _sandboxProxy;
+}
+
+void Sandbox::closeApplication() {
+	if (CurrentLaunchState() == LaunchState::QuitProcessed) {
+		return;
+	}
+	SetLaunchState(LaunchState::QuitProcessed);
+
+	_application = nullptr;
+
+	_localServer.close();
+	for (const auto &localClient : base::take(_localClients)) {
+		localClient.first->close();
+	}
+	_localClients.clear();
+
+	_localSocket.close();
+
+	_updateChecker = nullptr;
+}
+
+uint64 Sandbox::execExternal(const QString &cmd) {
+	DEBUG_LOG(("Sandbox Info: executing external command '%1'").arg(cmd));
+	if (cmd == "show") {
+		if (Core::IsAppLaunched() && Core::App().activePrimaryWindow()) {
+			const auto window = Core::App().activePrimaryWindow();
+			window->activate();
+			return Platform::ActivationWindowId(window->widget());
+		} else if (const auto window = PreLaunchWindow::instance()) {
+			window->activate();
+			return Platform::ActivationWindowId(window);
+		}
+	} else if (cmd == "quit") {
+		Quit();
+	}
+	return 0;
+}
+
+} // namespace Core
+
+namespace crl {
+
+rpl::producer<> on_main_update_requests() {
+	return Core::Sandbox::Instance().widgetUpdateRequests();
+}
+
+} // namespace crl
