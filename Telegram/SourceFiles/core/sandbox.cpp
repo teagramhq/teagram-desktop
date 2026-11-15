@@ -42,6 +42,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "platform/mac/global_menu_mac.h"
 #endif // Q_OS_MAC
 
+#include <QtCore/QDir>
 #include <QtCore/QLockFile>
 #include <QtCore/QFileInfo>
 #include <QtCore/QMetaObject>
@@ -90,23 +91,38 @@ constexpr auto kFontStartupSplashExposureTimeout = 1000;
 #endif // Q_OS_MAC
 
 #ifdef Q_OS_MAC
-void KeepFontWorkUntilQuit(const std::atomic_bool &quitObserved,
-						   bool quitDuringEnumeration) {
+// Repeats a real system font-family enumeration: registering an application
+// font invalidates the Qt font database, so the next families() call
+// enumerates the system families again. The quit is requested once the first
+// enumeration has begun, and the loop runs until aboutToQuit has fired.
+void EnumerateUntilQuit(std::atomic_int &started, std::atomic_int &finished,
+						const std::atomic_bool &quitObserved,
+						const std::function<void()> &requestQuit) {
 	using Clock = std::chrono::steady_clock;
+	const auto files = QDir(u":/gui/fonts/"_q).entryInfoList();
+	const auto path
+		= files.isEmpty() ? QString() : files.front().canonicalFilePath();
 	const auto deadline = Clock::now() + std::chrono::seconds(10);
+	auto requested = false;
 	while (!quitObserved && Clock::now() < deadline) {
+		++started;
+		if (!requested) {
+			requested = true;
+			requestQuit();
+		}
+		const auto id
+			= path.isEmpty() ? -1 : QFontDatabase::addApplicationFont(path);
 #if QT_VERSION < QT_VERSION_CHECK(6, 0, 0)
 		const auto families = QFontDatabase().families();
 #else  // Qt < 6.0.0
 		const auto families = QFontDatabase::families();
 #endif // Qt < 6.0.0
 		Q_UNUSED(families);
+		if (id >= 0) {
+			QFontDatabase::removeApplicationFont(id);
+		}
+		++finished;
 	}
-	const auto observed = quitObserved.load() ? 1 : 0;
-	fprintf(stderr, "Font shutdown regression: quit_observed=%d ", observed);
-	fprintf(stderr, "font_work=active ");
-	fprintf(stderr, "enumeration_overlapped=%d\n",
-			quitDuringEnumeration ? 1 : 0);
 }
 
 class FontStartupSplash final : public QWindow {
@@ -557,23 +573,18 @@ void Sandbox::startFontDatabaseWarmup() {
 	const auto quitRegression
 		= qEnvironmentVariableIsSet("TDESKTOP_FONT_STARTUP_QUIT_REGRESSION");
 	if (quitRegression) {
-		// The worker requests the real quit as it starts enumerating and
-		// keeps using the font database until aboutToQuit has run, so the
-		// worker is active while the process tears down.
-		connect(this, &QCoreApplication::aboutToQuit,
-				[=] { _fontStartupQuitObserved = true; });
+		// The worker requests the real quit as its first repeated
+		// enumeration begins and keeps enumerating until aboutToQuit has
+		// run. aboutToQuit records whether an enumeration was active.
+		connect(this, &QCoreApplication::aboutToQuit, [=] {
+			_fontEnumerationOverlapped
+				= _fontEnumerationsStarted > _fontEnumerationsFinished;
+			_fontStartupQuitObserved = true;
+		});
 	}
 	try {
 		_fontDatabaseWarmupThread = std::thread([this, quitRegression] {
-			if (quitRegression) {
-				// Request the real quit only once the worker is about to
-				// enumerate, then keep it using the font database until
-				// the quit has been observed.
-				QMetaObject::invokeMethod(
-					this, [] { Core::Quit(); }, Qt::QueuedConnection);
-			}
 			const auto openSansLoaded = style::internal::PreloadCustomFonts();
-			auto quitDuringEnumeration = false;
 			{
 #if QT_VERSION < QT_VERSION_CHECK(6, 0, 0)
 				const auto families = QFontDatabase().families();
@@ -581,7 +592,6 @@ void Sandbox::startFontDatabaseWarmup() {
 				const auto families = QFontDatabase::families();
 #endif // Qt < 6.0.0
 				Q_UNUSED(families);
-				quitDuringEnumeration = _fontStartupQuitObserved.load();
 			}
 			const auto prewarmFontMetrics = [](QString family) {
 				auto font = QFont(std::move(family));
@@ -595,8 +605,17 @@ void Sandbox::startFontDatabaseWarmup() {
 			prewarmFontMetrics(QFont().family());
 			prewarmFontMetrics(u"Open Sans"_q);
 			if (quitRegression) {
-				KeepFontWorkUntilQuit(_fontStartupQuitObserved,
-									  quitDuringEnumeration);
+				EnumerateUntilQuit(
+					_fontEnumerationsStarted, _fontEnumerationsFinished,
+					_fontStartupQuitObserved, [this] {
+						QMetaObject::invokeMethod(
+							this, [] { Core::Quit(); }, Qt::QueuedConnection);
+					});
+				fprintf(stderr,
+						"Font shutdown regression: quit_observed=%d "
+						"font_work=active enumeration_overlapped=%d\n",
+						_fontStartupQuitObserved ? 1 : 0,
+						_fontEnumerationOverlapped ? 1 : 0);
 			}
 			if (qEnvironmentVariableIsSet("TDESKTOP_FONT_STARTUP_REGRESSION")) {
 				fprintf(stderr,

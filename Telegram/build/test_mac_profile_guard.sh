@@ -1491,10 +1491,10 @@ run_font_shutdown_regression() {
 			"$launch_status" >&2
 		return 1
 	fi
-	if ! grep -F -q 'Font shutdown regression: quit_observed=1 font_work=active' \
+	if ! grep -F -q 'Font shutdown regression: quit_observed=1 font_work=active enumeration_overlapped=1' \
 		"$shutdown_log"; then
 		cat "$shutdown_log" >&2
-		echo "font shutdown regression did not quit while the font worker was active" >&2
+		echo "font shutdown regression did not quit during an active system font enumeration" >&2
 		return 1
 	fi
 	local in_flight_position

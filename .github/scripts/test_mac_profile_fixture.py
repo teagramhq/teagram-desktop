@@ -114,6 +114,9 @@ if [[ "${TDESKTOP_FONT_STARTUP_QUIT_REGRESSION:-}" == 1 ]]; then
     if [[ "$FONT_SHUTDOWN_TEST_MODE" == shutdown-not-in-flight ]]; then
         printf 'Font shutdown regression: quit_observed=0 font_work=active enumeration_overlapped=0\\n'
         printf 'Font shutdown regression: worker_joined=1 application_created=0 teardown=complete\\n'
+    elif [[ "$FONT_SHUTDOWN_TEST_MODE" == shutdown-no-overlap ]]; then
+        printf 'Font shutdown regression: quit_observed=1 font_work=active enumeration_overlapped=0\\n'
+        printf 'Font shutdown regression: worker_joined=1 application_created=0 teardown=complete\\n'
     elif [[ "$FONT_SHUTDOWN_TEST_MODE" == shutdown-order ]]; then
         printf 'Font shutdown regression: worker_joined=1 application_created=0 teardown=complete\\n'
         printf 'Font shutdown regression: quit_observed=1 font_work=active enumeration_overlapped=1\\n'
@@ -333,8 +336,12 @@ assert 'bundled fonts were not preloaded before app initialization' \
     in font_startup_missing_custom_fonts
 font_startup_shutdown_not_in_flight = run_font_startup_fixture(
     50_000_000, 50_000_000, 1, mode='shutdown-not-in-flight')
-assert 'font shutdown regression did not quit while the font worker was active' \
+assert 'font shutdown regression did not quit during an active system font enumeration' \
     in font_startup_shutdown_not_in_flight
+font_startup_shutdown_no_overlap = run_font_startup_fixture(
+    50_000_000, 50_000_000, 1, mode='shutdown-no-overlap')
+assert 'font shutdown regression did not quit during an active system font enumeration' \
+    in font_startup_shutdown_no_overlap
 font_startup_shutdown_order = run_font_startup_fixture(
     50_000_000, 50_000_000, 1, mode='shutdown-order')
 assert 'font shutdown did not join the worker and tear down without starting the application' \
