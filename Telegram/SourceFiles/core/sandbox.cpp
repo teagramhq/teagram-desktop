@@ -25,7 +25,10 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/ui_stall_watchdog.h"
 #include "logs.h"
 #ifdef Q_OS_MAC
+#include "window/main_window.h"
+#include "core/core_settings.h"
 #include "core/mac_protected_path_runtime.h"
+#include "ui/style/style_core_font.h"
 #endif // Q_OS_MAC
 #include "base/timer.h"
 #include "base/concurrent_timer.h"
@@ -42,12 +45,43 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include <QtCore/QLockFile>
 #include <QtCore/QFileInfo>
+#include <QtCore/QMetaObject>
 #include <QtGui/QSessionManager>
 #include <QtGui/QScreen>
+#ifdef Q_OS_MAC
+#include <QtCore/QPoint>
+#include <QtCore/QRect>
+#include <QtCore/QTimer>
+#include <QtGui/QBackingStore>
+#include <QtGui/QExposeEvent>
+#include <QtGui/QFont>
+#include <QtGui/QFontDatabase>
+#include <QtGui/QFontMetrics>
+#include <QtGui/QImage>
+#include <QtGui/QPalette>
+#include <QtGui/QPainter>
+#include <QtGui/QRegion>
+#include <QtGui/QResizeEvent>
+#include <QtGui/QWindow>
+#endif // Q_OS_MAC
 #include <QtGui/qpa/qplatformscreen.h>
 
 #ifdef Q_OS_MAC
+#include <cstdint>
 #include <cstdio>
+#include <cstdlib>
+#include <cxxabi.h>
+#include <dlfcn.h>
+#include <execinfo.h>
+#include <pthread.h>
+#include <sched.h>
+#include <signal.h>
+#include <functional>
+#include <algorithm>
+#include <chrono>
+#include <memory>
+#include <system_error>
+#include <thread>
 #include <sys/un.h>
 #endif // Q_OS_MAC
 
@@ -62,6 +96,221 @@ base::options::toggle OptionDeadlockDetector({
 
 constexpr auto kCleanupIpcTimeout = 10 * crl::time(1000);
 constexpr auto kCleanupQuitTimeout = 30 * crl::time(1000);
+#ifdef Q_OS_MAC
+constexpr auto kFontStartupSplashExposureTimeout = 1000;
+#endif // Q_OS_MAC
+
+#ifdef Q_OS_MAC
+constexpr auto kProbeMaxFrames = 64;
+void *ProbeFrames[kProbeMaxFrames];
+std::atomic_int ProbeDepth = -1;
+
+// The main thread decides from the captured frames whether the worker stays
+// parked: Wait until decided, then Release returns at once while Hold keeps
+// the worker inside this handler, and so inside whatever it was executing,
+// until the quit has been observed.
+enum ProbeDecisionValue {
+	ProbeWait = 0,
+	ProbeRelease = 1,
+	ProbeHold = 2,
+};
+std::atomic_int ProbeDecision = ProbeWait;
+std::atomic_bool ProbeFinalRelease = false;
+std::atomic_bool ProbeInHandler = false;
+
+void ProbeSignal(int) {
+	ProbeInHandler.store(true, std::memory_order_release);
+	const auto depth = backtrace(ProbeFrames, kProbeMaxFrames);
+	ProbeDepth.store(depth, std::memory_order_release);
+	while (ProbeDecision.load(std::memory_order_acquire) == ProbeWait) {
+		sched_yield();
+	}
+	if (ProbeDecision.load(std::memory_order_acquire) == ProbeHold) {
+		while (!ProbeFinalRelease.load(std::memory_order_acquire)) {
+			sched_yield();
+		}
+	}
+	ProbeInHandler.store(false, std::memory_order_release);
+}
+
+[[nodiscard]] bool InstallProbeSignal(bool forceFailure) {
+	if (forceFailure) {
+		return false;
+	}
+	// The first backtrace() call may allocate, so make it outside a handler.
+	void *primed[1];
+	static_cast<void>(backtrace(primed, 1));
+	struct sigaction action = {};
+	action.sa_handler = ProbeSignal;
+	sigemptyset(&action.sa_mask);
+	action.sa_flags = SA_RESTART;
+	return sigaction(SIGUSR1, &action, nullptr) == 0;
+}
+
+[[nodiscard]] bool FramesInSystemEnumeration(void *const *frames, int depth) {
+	for (auto i = 0; i != depth; ++i) {
+		auto info = Dl_info();
+		if (!dladdr(frames[i], &info) || !info.dli_sname) {
+			continue;
+		}
+		const auto name = QByteArray(info.dli_sname);
+		// Only the system family enumeration: registering an application
+		// font also runs populateFromDescriptor, which is not it.
+		if (name.contains("CTFontManagerCopyAvailableFontFamilyNames")) {
+			return true;
+		}
+	}
+	return false;
+}
+
+enum class StackSample {
+	Failed,
+	OtherWork,
+	InSystemEnumeration,
+};
+
+constexpr auto kProbeReportedFrames = 8;
+struct ProbeFrameSnapshot final {
+	void *frames[kProbeReportedFrames] = {};
+	int count = 0;
+};
+
+void PrintProbeFrameSnapshot(const ProbeFrameSnapshot &snapshot) {
+	auto line = QByteArray("Font shutdown regression: last_other_work_frames=");
+	if (!snapshot.count) {
+		line += "unavailable";
+	}
+	for (auto i = 0; i != snapshot.count; ++i) {
+		const auto address
+			= reinterpret_cast<std::uintptr_t>(snapshot.frames[i]);
+		const auto lookup = address ? reinterpret_cast<void *>(address - 1)
+									: snapshot.frames[i];
+		auto info = Dl_info();
+		if (i) {
+			line += " <- ";
+		}
+		if (dladdr(lookup, &info) && info.dli_sname) {
+			auto status = 0;
+			const auto demangled = abi::__cxa_demangle(info.dli_sname, nullptr,
+													   nullptr, &status);
+			line += (status == 0 && demangled) ? demangled : info.dli_sname;
+			std::free(demangled);
+		} else {
+			line += "0x" + QByteArray::number(qulonglong(address), 16);
+		}
+	}
+	fprintf(stderr, "%s\n", line.constData());
+}
+
+// Signals the worker and waits until its capture completes, however long the
+// signal takes, then scans a bounded copy of the captured frames. A worker
+// caught inside the system enumeration is held there until the final release.
+[[nodiscard]] StackSample SampleWorkerStack(pthread_t worker,
+											ProbeFrameSnapshot &lastOtherWork) {
+	using Clock = std::chrono::steady_clock;
+	const auto deadline = Clock::now() + std::chrono::seconds(2);
+	// The previous handler must have seen its Release and returned before
+	// the decision is reset, or it would park again for this sample.
+	while (ProbeInHandler.load(std::memory_order_acquire)) {
+		if (Clock::now() >= deadline) {
+			fprintf(stderr, "Font shutdown regression: "
+							"probe_error=handler_release_timeout\n");
+			return StackSample::Failed;
+		}
+		std::this_thread::yield();
+	}
+	ProbeDepth.store(-1, std::memory_order_release);
+	ProbeDecision.store(ProbeWait, std::memory_order_release);
+	if (const auto error = pthread_kill(worker, SIGUSR1)) {
+		fprintf(stderr,
+				"Font shutdown regression: probe_error=pthread_kill code=%d\n",
+				error);
+		return StackSample::Failed;
+	}
+	auto depth = -1;
+	while ((depth = ProbeDepth.load(std::memory_order_acquire)) < 0) {
+		if (Clock::now() >= deadline) {
+			ProbeDecision.store(ProbeRelease, std::memory_order_release);
+			fprintf(stderr, "Font shutdown regression: "
+							"probe_error=handler_ack_timeout\n");
+			return StackSample::Failed;
+		}
+		std::this_thread::yield();
+	}
+	depth = std::min(depth, kProbeMaxFrames);
+	void *frames[kProbeMaxFrames];
+	std::copy(ProbeFrames, ProbeFrames + depth, frames);
+	const auto inEnumeration = FramesInSystemEnumeration(frames, depth);
+	if (!inEnumeration) {
+		lastOtherWork.count = std::min(depth, kProbeReportedFrames);
+		std::copy_n(frames, lastOtherWork.count, lastOtherWork.frames);
+	}
+	ProbeDecision.store(inEnumeration ? ProbeHold : ProbeRelease,
+						std::memory_order_release);
+	return inEnumeration ? StackSample::InSystemEnumeration
+						 : StackSample::OtherWork;
+}
+
+class FontStartupSplash final : public QWindow {
+  public:
+	explicit FontStartupSplash(std::function<void()> onShown)
+		: _backingStore(this), _onShown(std::move(onShown)),
+		  _logo(Window::Logo()) {
+		setFlags(Qt::SplashScreen | Qt::FramelessWindowHint);
+		resize(_logo.size());
+		if (const auto screen = QGuiApplication::primaryScreen()) {
+			const auto geometry = screen->availableGeometry();
+			setPosition(geometry.center() - QPoint(width() / 2, height() / 2));
+		}
+	}
+
+  protected:
+	void exposeEvent(QExposeEvent *event) override {
+		QWindow::exposeEvent(event);
+		if (!isExposed()) {
+			return;
+		}
+		paint();
+		if (qEnvironmentVariableIsSet(
+				"TDESKTOP_FONT_STARTUP_REGRESSION_SKIP_EXPOSE_CALLBACK")) {
+			return;
+		}
+		if (_onShown) {
+			auto onShown = std::move(_onShown);
+			_onShown = nullptr;
+			onShown();
+		}
+	}
+
+	void resizeEvent(QResizeEvent *event) override {
+		QWindow::resizeEvent(event);
+		paint();
+	}
+
+  private:
+	void paint() {
+		if (!isExposed()) {
+			return;
+		}
+		const auto bounds = QRect(QPoint(), size());
+		const auto region = QRegion(bounds);
+		_backingStore.resize(size());
+		_backingStore.beginPaint(region);
+		{
+			auto painter = QPainter(_backingStore.paintDevice());
+			painter.fillRect(
+				bounds, QGuiApplication::palette().color(QPalette::Window));
+			painter.drawImage(bounds, _logo);
+		}
+		_backingStore.endPaint();
+		_backingStore.flush(region, this);
+	}
+
+	QBackingStore _backingStore;
+	std::function<void()> _onShown;
+	const QImage &_logo;
+};
+#endif // Q_OS_MAC
 
 } // namespace
 
@@ -74,7 +323,7 @@ Sandbox::Sandbox(int &argc, char **argv)
 : QApplication(argc, argv)
 , _mainThreadId(QThread::currentThreadId()) {
 #ifdef Q_OS_MAC
-	Platform::CreateGlobalMenu();
+	_fontStartupTimer.start();
 #endif // Q_OS_MAC
 }
 
@@ -249,7 +498,21 @@ int Sandbox::start() {
 		return 0;
 	}
 	_started = true;
-	return exec();
+	const auto result = exec();
+#ifdef Q_OS_MAC
+	// closeApplication() has run from aboutToQuit by now. Wait for the font
+	// warmup worker so it never outlives the Qt and style state it touches.
+	if (_fontDatabaseWarmupThread.joinable()) {
+		_fontDatabaseWarmupThread.join();
+	}
+	if (qEnvironmentVariableIsSet("TDESKTOP_FONT_STARTUP_QUIT_REGRESSION")) {
+		fprintf(stderr,
+				"Font shutdown regression: worker_joined=1 "
+				"application_created=%d teardown=complete\n",
+				_applicationCreated ? 1 : 0);
+	}
+#endif // Q_OS_MAC
+	return result;
 }
 
 int Sandbox::stopRunningInstance() {
@@ -341,11 +604,58 @@ void Sandbox::launchApplication() {
 				UiStallWatchdog::Settings{
 					.captureShortStalls = qEnvironmentVariableIsSet(
 						"TDESKTOP_UI_STALL_WATCHDOG_CACHE_REGRESSION"),
+					.disableRateLimit = qEnvironmentVariableIsSet(
+						"TDESKTOP_FONT_STARTUP_REGRESSION"),
 					.captureSchedulerTrace = qEnvironmentVariableIsSet(
 						"TDESKTOP_UI_STALL_WATCHDOG_CACHE_REGRESSION"),
 				});
 		}
 #endif // Q_OS_LINUX || Q_OS_MAC
+#ifdef Q_OS_MAC
+		if (!_fontStartupWindow) {
+			_launchAfterFontDatabaseWarmup = true;
+			_fontStartupWindow = std::make_unique<FontStartupSplash>([this] {
+				if (qEnvironmentVariableIsSet(
+						"TDESKTOP_FONT_STARTUP_REGRESSION")) {
+					const auto visible = _fontStartupWindow->isVisible()
+										 && _fontStartupWindow->isExposed();
+					fprintf(stderr,
+							"Font startup splash "
+							"regression: visible=%d "
+							"wall_ns=%lld\n",
+							visible ? 1 : 0,
+							static_cast<long long>(
+								_fontStartupTimer.nsecsElapsed()));
+				}
+				startFontDatabaseWarmup();
+			});
+			_fontStartupWindow->show();
+			QTimer::singleShot(kFontStartupSplashExposureTimeout, this, [this] {
+				if (_fontDatabaseWarmupStarted || Quitting()) {
+					return;
+				}
+				if (qEnvironmentVariableIsSet(
+						"TDESKTOP_FONT_STARTUP_REGRESSION")) {
+					fprintf(stderr,
+							"Font startup exposure timeout regression: "
+							"wall_ns=%lld\n",
+							static_cast<long long>(
+								_fontStartupTimer.nsecsElapsed()));
+				}
+				startFontDatabaseWarmup();
+			});
+			return;
+		}
+		if (!_fontDatabaseWarmupDone) {
+			_launchAfterFontDatabaseWarmup = true;
+			return;
+		}
+		if (qEnvironmentVariableIsSet("TDESKTOP_FONT_STARTUP_REGRESSION")) {
+			fprintf(stderr, "Font database warmup regression: ready=%d\n",
+					_fontDatabaseWarmupSucceeded ? 1 : 0);
+		}
+		Platform::CreateGlobalMenu();
+#endif // Q_OS_MAC
 		setupScreenScale();
 
 		rpl::single(
@@ -361,6 +671,9 @@ void Sandbox::launchApplication() {
 				: nullptr;
 		}, _lifetime);
 
+#ifdef Q_OS_MAC
+		_applicationCreated = true;
+#endif // Q_OS_MAC
 		_application = std::make_unique<Application>();
 
 		// Ideally this should go to constructor.
@@ -370,8 +683,179 @@ void Sandbox::launchApplication() {
 		installNativeEventFilter(this);
 
 		_application->run();
+#ifdef Q_OS_MAC
+		const auto trayRegression
+			= MacProtectedPath::IntegrationTestActive()
+			  && qEnvironmentVariableIsSet(
+				  "TDESKTOP_MAC_START_IN_TRAY_REGRESSION");
+		const auto splashVisible = trayRegression && _fontStartupWindow
+								   && _fontStartupWindow->isVisible();
+		_fontStartupWindow.reset();
+		if (trayRegression) {
+			QTimer::singleShot(500, this, [=] {
+				const auto window = _application
+										? _application->activePrimaryWindow()
+										: nullptr;
+				fprintf(stderr,
+						"Mac start-in-tray regression: startup=complete "
+						"start_intray=%d window_and_tray=%d hidden=%d "
+						"splash_visible=%d "
+						"splash_destroyed=%d\n",
+						cStartInTray() ? 1 : 0,
+						(_application
+						 && _application->settings().workMode()
+								== Core::Settings::WorkMode::WindowAndTray)
+							? 1
+							: 0,
+						(window && !window->widget()->isVisible()) ? 1 : 0,
+						splashVisible ? 1 : 0, _fontStartupWindow ? 0 : 1);
+			});
+		}
+#endif // Q_OS_MAC
 	});
 }
+
+#ifdef Q_OS_MAC
+void Sandbox::startFontDatabaseWarmup() {
+	if (_fontDatabaseWarmupStarted) {
+		return;
+	}
+	_fontDatabaseWarmupStarted = true;
+	const auto quitRegression
+		= qEnvironmentVariableIsSet("TDESKTOP_FONT_STARTUP_QUIT_REGRESSION");
+	const auto testFailure = MacProtectedPath::IntegrationTestActive()
+								 ? qgetenv("TDESKTOP_FONT_STARTUP_TEST_FAILURE")
+								 : QByteArray();
+	if (quitRegression) {
+		// The main thread samples the worker stack until it catches the
+		// system font enumeration executing, holds the worker there, and only
+		// then requests the real quit. The worker is released after
+		// aboutToQuit, so teardown runs with the enumeration still in flight.
+		if (!InstallProbeSignal(testFailure == "signal-install")) {
+			fprintf(stderr, "Font shutdown regression: probe=unavailable\n");
+			QCoreApplication::exit(1);
+			return;
+		}
+		connect(this, &QCoreApplication::aboutToQuit, [=] {
+			_fontStartupQuitObserved = true;
+			ProbeFinalRelease.store(true, std::memory_order_release);
+		});
+	}
+	try {
+		if (testFailure == "thread-start"
+			&& qEnvironmentVariableIsSet("TDESKTOP_FONT_STARTUP_REGRESSION")) {
+			throw std::system_error(std::make_error_code(
+				std::errc::resource_unavailable_try_again));
+		}
+		_fontDatabaseWarmupThread = std::thread([this, quitRegression,
+												 testFailure] {
+			if (quitRegression && testFailure == "probe-timeout") {
+				// Keep the test worker outside enumeration until sampled.
+				while (!ProbeFinalRelease.load(std::memory_order_acquire)) {
+					std::this_thread::yield();
+				}
+				return;
+			}
+			const auto openSansLoaded = style::internal::PreloadCustomFonts();
+			{
+#if QT_VERSION < QT_VERSION_CHECK(6, 0, 0)
+				const auto families = QFontDatabase().families();
+#else  // Qt < 6.0.0
+				const auto families = QFontDatabase::families();
+#endif // Qt < 6.0.0
+				Q_UNUSED(families);
+			}
+			const auto prewarmFontMetrics = [](QString family) {
+				auto font = QFont(std::move(family));
+				font.setPixelSize(16);
+				const auto metrics = QFontMetricsF(font);
+				static_cast<void>(metrics.ascent());
+				static_cast<void>(metrics.height());
+				static_cast<void>(metrics.tightBoundingRect(
+					u"bdfghijklpqtyBDFGHIJKLPQTY1234567890[]{}()"_q));
+			};
+			prewarmFontMetrics(QFont().family());
+			prewarmFontMetrics(u"Open Sans"_q);
+			if (quitRegression) {
+				fprintf(stderr,
+						"Font shutdown regression: quit_observed=%d "
+						"font_work=active enumeration_overlapped=%d\n",
+						_fontStartupQuitObserved ? 1 : 0,
+						_fontEnumerationOverlapped ? 1 : 0);
+			}
+			if (qEnvironmentVariableIsSet("TDESKTOP_FONT_STARTUP_REGRESSION")) {
+				fprintf(stderr,
+						"Font database metrics warmup regression: ready=1\n");
+			}
+			QMetaObject::invokeMethod(
+				this,
+				[this, openSansLoaded] {
+					style::internal::SetPreloadedCustomFonts(openSansLoaded);
+					_fontDatabaseWarmupDone = true;
+					_fontDatabaseWarmupSucceeded = true;
+					if (qEnvironmentVariableIsSet(
+							"TDESKTOP_FONT_STARTUP_REGRESSION")) {
+						fprintf(stderr,
+								"Font database warmup regression: ready=1 "
+								"custom-fonts=1\n");
+					}
+					if (_launchAfterFontDatabaseWarmup && !Quitting()) {
+						_launchAfterFontDatabaseWarmup = false;
+						launchApplication();
+					}
+				},
+				Qt::QueuedConnection);
+		});
+		if (qEnvironmentVariableIsSet("TDESKTOP_FONT_STARTUP_REGRESSION")) {
+			fprintf(stderr, "Font database warmup regression: started=1\n");
+		}
+		if (quitRegression) {
+			const auto timer = Ui::CreateChild<QTimer>(this);
+			const auto started = std::make_shared<QElapsedTimer>();
+			const auto lastOtherWork = std::make_shared<ProbeFrameSnapshot>();
+			started->start();
+			connect(timer, &QTimer::timeout, this, [=] {
+				const auto sample = SampleWorkerStack(
+					_fontDatabaseWarmupThread.native_handle(), *lastOtherWork);
+				if (sample == StackSample::Failed) {
+					timer->stop();
+					ProbeFinalRelease.store(true, std::memory_order_release);
+					QCoreApplication::exit(1);
+					return;
+				}
+				const auto sampled
+					= (sample == StackSample::InSystemEnumeration);
+				if (!sampled && testFailure != "probe-timeout"
+					&& started->elapsed() < 10000) {
+					return;
+				}
+				timer->stop();
+				_fontEnumerationOverlapped = sampled;
+				if (!sampled) {
+					PrintProbeFrameSnapshot(*lastOtherWork);
+					ProbeFinalRelease.store(true, std::memory_order_release);
+				}
+				Core::Quit();
+			});
+			timer->start(1);
+		}
+	} catch (const std::system_error &error) {
+		_fontDatabaseWarmupDone = true;
+		if (qEnvironmentVariableIsSet("TDESKTOP_FONT_STARTUP_REGRESSION")) {
+			fprintf(stderr,
+					"Font database warmup regression: started=0 "
+					"error=%s\n",
+					error.what());
+		}
+		LOG(("Font database warmup could not start: %1")
+				.arg(QString::fromLocal8Bit(error.what())));
+		if (_launchAfterFontDatabaseWarmup && !Quitting()) {
+			_launchAfterFontDatabaseWarmup = false;
+			launchApplication();
+		}
+	}
+}
+#endif // Q_OS_MAC
 
 void Sandbox::setupScreenScale() {
 	const auto ratio = devicePixelRatio();
@@ -418,6 +902,9 @@ void Sandbox::setupScreenScale() {
 
 Sandbox::~Sandbox() {
 #ifdef Q_OS_MAC
+	if (_fontDatabaseWarmupThread.joinable()) {
+		_fontDatabaseWarmupThread.join();
+	}
 	Platform::DestroyGlobalMenu();
 #endif // Q_OS_MAC
 }
