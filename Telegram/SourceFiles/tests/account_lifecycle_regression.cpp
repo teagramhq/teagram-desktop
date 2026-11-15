@@ -11851,11 +11851,12 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 	}
 	showPeerHistoryMeasured(firstHistory);
 	settleHistoryUnfocused();
+	showPeerHistoryMeasured(secondHistory);
 	historyWidget->clearFieldFocusForRegressionTest();
 	historyWidget->setDraftTextForRegressionTest(QString());
 	historyWidget->hideFieldAutocompleteForRegressionTest();
 	historyWidget->resetFieldAutocompleteForRegressionTest();
-	showPeerHistoryMeasured(secondHistory);
+	historyWidget->initFieldAutocompleteForRegressionTest();
 	const auto autocompleteBuildsBeforeFocus
 		= historyWidget->fieldAutocompleteBuildCountForRegressionTest();
 	const auto autocompleteDeferredUntilFocus
