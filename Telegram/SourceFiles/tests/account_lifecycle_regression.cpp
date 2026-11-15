@@ -11288,7 +11288,10 @@ struct MainThreadWorkEstimate final {
 		> std::numeric_limits<qint64>::max() - blockedNanoseconds) {
 		return {};
 	}
-	return {blockedNanoseconds, mainThreadCpuNanoseconds + blockedNanoseconds};
+	return {blockedNanoseconds,
+			std::max(mainThreadCpuNanoseconds,
+					 std::min(wallNanoseconds,
+							  mainThreadCpuNanoseconds + blockedNanoseconds))};
 }
 
 [[nodiscard]] bool MainThreadWorkEstimateWithinBudget(
@@ -11481,6 +11484,14 @@ void AccumulateMainThreadWorkEstimate(qint64 &aggregateNanoseconds,
 	const auto overCpuBudget = EstimateMainThreadWork(
 		52'000'000, bracketedWindow.durationNanoseconds, bracketed.trace,
 		bracketed.sampleOffsetsNanoseconds, bracketed.before, bracketed.after);
+	const auto overlappingSampleIntervals
+		= EstimateMainThreadWork(9'463'000, 43'293'250, u"RWWWWWW"_q,
+								 {1'150'125, 11'912'542, 15'821'250, 24'153'917,
+								  33'195'292, 34'667'417, 40'819'542},
+								 SchedulerBoundarySample{'R', 9'084'042},
+								 SchedulerBoundarySample{'U', 5'872'708});
+	const auto cpuOverWall = EstimateMainThreadWork(
+		52'000'000, 49'000'000, u"WWW"_q, {0, 24'500'000, 49'000'000});
 	const auto callbackOffsets = coveredOffsets(200'000'000);
 	const auto blockedAttachMenuCallback = EstimateMainThreadWork(
 		12'000'000, 200'000'000,
@@ -11779,6 +11790,13 @@ void AccumulateMainThreadWorkEstimate(qint64 &aggregateNanoseconds,
 		   && (unknownBeforeEstimate.estimatedWorkNanoseconds == 60'000'000)
 		   && (withoutBoundaries.estimatedWorkNanoseconds == 55'000'000)
 		   && (overCpuBudget.estimatedWorkNanoseconds == 52'000'000)
+		   && (overlappingSampleIntervals.blockedNanoseconds == 42'143'125)
+		   && (overlappingSampleIntervals.estimatedWorkNanoseconds
+			   == 43'293'250)
+		   && MainThreadEstimatedWorkWithinBudget(
+			   overlappingSampleIntervals.estimatedWorkNanoseconds,
+			   kMaxChatSwitchNanoseconds)
+		   && (cpuOverWall.estimatedWorkNanoseconds >= 52'000'000)
 		   && !MainThreadWorkEstimateWithinBudget(
 			   18'000'000, 225'000'000, u"RRR"_q,
 			   {226'000'000, 227'000'000, 228'000'000}, 100'000'000)

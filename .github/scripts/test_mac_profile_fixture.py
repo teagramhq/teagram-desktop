@@ -59,6 +59,9 @@ if [[ "${TDESKTOP_FONT_STARTUP_QUIT_REGRESSION:-}" == 1 ]]; then
         printf 'Font shutdown regression: quit_observed=1 font_work=active enumeration_overlapped=0\\n'
         exit 0
     fi
+    if [[ "${TDESKTOP_FONT_STARTUP_TEST_FAILURE:-}" == probe-missed-first ]]; then
+        printf 'Font shutdown regression: enumeration_retry=1\\n'
+    fi
     printf 'Font shutdown regression: quit_observed=1 font_work=active enumeration_overlapped=1\\n'
     printf 'Font shutdown regression: worker_joined=1 application_created=0 teardown=complete\\n'
     exit 0
@@ -169,6 +172,10 @@ if [[ "${TDESKTOP_FONT_STARTUP_QUIT_REGRESSION:-}" == 1 ]]; then
         printf 'Font shutdown regression: quit_observed=1 font_work=active enumeration_overlapped=1\\n'
         exit 139
     else
+        if [[ "${TDESKTOP_FONT_STARTUP_TEST_FAILURE:-}" == probe-missed-first \\
+            && "$FONT_SHUTDOWN_TEST_MODE" != retry-injection-ignored ]]; then
+            printf 'Font shutdown regression: enumeration_retry=1\\n'
+        fi
         printf 'Font shutdown regression: quit_observed=1 font_work=active enumeration_overlapped=1\\n'
         printf 'Font shutdown regression: worker_joined=1 application_created=0 teardown=complete\\n'
     fi
@@ -312,6 +319,7 @@ assert 'fallback=PASS font_stall_gate=PASS' \
     in font_startup_output
 assert 'Font shutdown teardown=PASS font_work_active=1 application_created=0' \
     in font_startup_output
+assert 'Font shutdown retry after missed enumeration=PASS' in font_startup_output
 assert 'Font shutdown probe installation failure=PASS' in font_startup_output
 assert 'Font shutdown probe timeout diagnostics=PASS' in font_startup_output
 assert 'Font database warmup thread failure fallback=PASS' in font_startup_output
@@ -446,6 +454,10 @@ font_probe_injection_ignored = run_font_startup_fixture(
     50_000_000, 50_000_000, 1, mode='probe-injection-ignored')
 assert 'font shutdown regression accepted a failed probe installation' \
     in font_probe_injection_ignored
+font_retry_injection_ignored = run_font_startup_fixture(
+    50_000_000, 50_000_000, 1, mode='retry-injection-ignored')
+assert 'font shutdown enumeration retry was not observed' \
+    in font_retry_injection_ignored
 font_timeout_injection_ignored = run_font_startup_fixture(
     50_000_000, 50_000_000, 1, mode='timeout-injection-ignored')
 assert 'font shutdown regression accepted a probe timeout' in font_timeout_injection_ignored

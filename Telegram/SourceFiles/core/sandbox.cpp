@@ -726,6 +726,10 @@ void Sandbox::startFontDatabaseWarmup() {
 	const auto testFailure = MacProtectedPath::IntegrationTestActive()
 								 ? qgetenv("TDESKTOP_FONT_STARTUP_TEST_FAILURE")
 								 : QByteArray();
+	const auto ignoreFirstEnumeration
+		= quitRegression ? std::make_shared<std::atomic_bool>(
+							   testFailure == "probe-missed-first")
+						 : nullptr;
 	if (quitRegression) {
 		// The main thread samples the worker stack until it catches the
 		// system font enumeration executing, holds the worker there, and only
@@ -748,7 +752,8 @@ void Sandbox::startFontDatabaseWarmup() {
 				std::errc::resource_unavailable_try_again));
 		}
 		_fontDatabaseWarmupThread = std::thread([this, quitRegression,
-												 testFailure] {
+												 testFailure,
+												 ignoreFirstEnumeration] {
 			if (quitRegression && testFailure == "probe-timeout") {
 				// Keep the test worker outside enumeration until sampled.
 				while (!ProbeFinalRelease.load(std::memory_order_acquire)) {
@@ -757,13 +762,38 @@ void Sandbox::startFontDatabaseWarmup() {
 				return;
 			}
 			const auto openSansLoaded = style::internal::PreloadCustomFonts();
-			{
+			const auto populateFontDatabase = [] {
 #if QT_VERSION < QT_VERSION_CHECK(6, 0, 0)
 				const auto families = QFontDatabase().families();
 #else  // Qt < 6.0.0
 				const auto families = QFontDatabase::families();
 #endif // Qt < 6.0.0
 				Q_UNUSED(families);
+			};
+			populateFontDatabase();
+			if (ignoreFirstEnumeration) {
+				ignoreFirstEnumeration->store(false, std::memory_order_release);
+			}
+			auto retryReported = false;
+			while (quitRegression
+				   && !ProbeFinalRelease.load(std::memory_order_acquire)) {
+				if (!retryReported && testFailure == "probe-missed-first") {
+					fprintf(stderr,
+							"Font shutdown regression: enumeration_retry=1\n");
+					retryReported = true;
+				}
+				const auto fontId = QFontDatabase::addApplicationFont(
+					u":/gui/fonts/OpenSans-Regular.ttf"_q);
+				if (fontId < 0
+					|| !QFontDatabase::removeApplicationFont(fontId)) {
+					fprintf(stderr, "Font shutdown regression: "
+									"probe_error=font_database_invalidation\n");
+					QMetaObject::invokeMethod(
+						this, [] { QCoreApplication::exit(1); },
+						Qt::QueuedConnection);
+					return;
+				}
+				populateFontDatabase();
 			}
 			const auto prewarmFontMetrics = [](QString family) {
 				auto font = QFont(std::move(family));
@@ -815,6 +845,18 @@ void Sandbox::startFontDatabaseWarmup() {
 			const auto lastOtherWork = std::make_shared<ProbeFrameSnapshot>();
 			started->start();
 			connect(timer, &QTimer::timeout, this, [=] {
+				if (ignoreFirstEnumeration->load(std::memory_order_acquire)) {
+					if (started->elapsed() >= 10000) {
+						timer->stop();
+						ProbeFinalRelease.store(true,
+												std::memory_order_release);
+						fprintf(stderr,
+								"Font shutdown regression: "
+								"probe_error=first_enumeration_timeout\n");
+						QCoreApplication::exit(1);
+					}
+					return;
+				}
 				const auto sample = SampleWorkerStack(
 					_fontDatabaseWarmupThread.native_handle(), *lastOtherWork);
 				if (sample == StackSample::Failed) {

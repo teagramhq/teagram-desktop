@@ -1800,6 +1800,18 @@ run_font_shutdown_regression() {
 	local teardown_position
 	teardown_position="$(grep -F -n 'Font shutdown regression: worker_joined=1 application_created=0 teardown=complete' \
 		"$shutdown_log" | tail -n 1 | cut -d: -f1 || true)"
+	if [[ "$forced_failure" == probe-missed-first ]]; then
+		local retry_position
+		retry_position="$(grep -F -n 'Font shutdown regression: enumeration_retry=1' \
+			"$shutdown_log" | head -n 1 | cut -d: -f1 || true)"
+		if [[ ! "$retry_position" =~ ^[0-9]+$ ]] \
+			|| [[ ! "$in_flight_position" =~ ^[0-9]+$ ]] \
+			|| (( retry_position >= in_flight_position )); then
+			cat "$shutdown_log" >&2
+			echo 'font shutdown enumeration retry was not observed' >&2
+			return 1
+		fi
+	fi
 	if [[ ! "$in_flight_position" =~ ^[0-9]+$ ]] \
 		|| [[ ! "$teardown_position" =~ ^[0-9]+$ ]] \
 		|| (( in_flight_position >= teardown_position )); then
@@ -2098,6 +2110,12 @@ run_font_startup_regression() {
 	printf 'StartFonts startup regression: cold_wall_ns=%s warm_wall_ns=%s fallback=PASS font_stall_gate=PASS\n' \
 		"$cold_wall_ns" "$warm_wall_ns"
 	run_font_shutdown_regression
+	local retry_log="$TEST_HOME/font-probe-missed-first.log"
+	if ! run_font_shutdown_regression probe-missed-first >"$retry_log" 2>&1; then
+		cat "$retry_log" >&2
+		return 1
+	fi
+	printf 'Font shutdown retry after missed enumeration=PASS\n'
 	local probe_failure_log="$TEST_HOME/font-probe-install-failure.log"
 	if run_font_shutdown_regression signal-install >"$probe_failure_log" 2>&1; then
 		echo 'font shutdown regression accepted a failed probe installation' >&2
