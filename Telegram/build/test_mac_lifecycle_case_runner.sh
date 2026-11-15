@@ -107,11 +107,21 @@ EOF
 cat > "$FAKE_APP" <<'EOF'
 #!/usr/bin/env bash
 if [[ "${TDESKTOP_FONT_STARTUP_QUIT_REGRESSION:-}" == 1 ]]; then
+	if [[ "${TDESKTOP_FONT_STARTUP_TEST_FAILURE:-}" == signal-install ]]; then
+		printf 'Font shutdown regression: probe=unavailable\n'
+		exit 1
+	fi
 	printf 'Font shutdown regression: quit_observed=1 font_work=active enumeration_overlapped=1\n'
 	printf 'Font shutdown regression: worker_joined=1 application_created=0 teardown=complete\n'
 	exit 0
 fi
 if [[ "${TDESKTOP_FONT_STARTUP_REGRESSION:-}" == 1 ]]; then
+	if [[ "${TDESKTOP_FONT_STARTUP_TEST_FAILURE:-}" == thread-start ]]; then
+		printf 'Font database warmup regression: started=0\n'
+		printf 'Font database warmup regression: ready=0\n'
+		printf 'StartFonts startup regression: wall_ns=150000000\n'
+		exit 0
+	fi
 	count_file="$HOME/font-startup-count"
 	if [[ -f "$count_file" ]]; then
 		wall_ns=50000000

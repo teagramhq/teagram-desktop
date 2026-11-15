@@ -1464,6 +1464,7 @@ printf 'authenticated_cache_regression=PASS roots=2 cache_directory_symlinks=2 c
 }
 
 run_font_shutdown_regression() {
+	local forced_failure="${1:-}"
 	local font_home="$TEST_HOME/font-startup"
 	local shutdown_log="$TEST_HOME/font-startup-shutdown.log"
 	local font_profile_log="$font_home/Library/Application Support/Teagram/log.txt"
@@ -1475,11 +1476,18 @@ run_font_shutdown_regression() {
 		TDESKTOP_MAC_PROFILE_TEST_HOME="$font_home" \
 		TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST=1 \
 		TDESKTOP_FONT_STARTUP_QUIT_REGRESSION=1 \
+		TDESKTOP_FONT_STARTUP_TEST_FAILURE="$forced_failure" \
 		FONT_SHUTDOWN_TEST_MODE="${FONT_TEST_MODE:-pass}" \
 		"$APP" -noupdate -debug >"$shutdown_log" 2>&1; then
 		:
 	else
 		launch_status=$?
+	fi
+	if grep -E -q 'Font shutdown regression: (probe=unavailable|probe_error=)' \
+		"$shutdown_log"; then
+		cat "$shutdown_log" >&2
+		echo "font shutdown regression probe failed" >&2
+		return 1
 	fi
 	if (( launch_status != 0 )); then
 		cat "$shutdown_log" >&2
@@ -1511,6 +1519,44 @@ run_font_shutdown_regression() {
 		return 1
 	fi
 	printf 'Font shutdown teardown=PASS font_work_active=1 application_created=0\n'
+}
+
+require_font_warmup_worker() {
+	local failure
+	failure="$(grep -F -h 'Font database warmup regression: started=0' "$@" 2>/dev/null || true)"
+	if [[ -n "$failure" ]]; then
+		printf '%s\n' "$failure" >&2
+		echo 'font database warmup worker failed to start; startup falls back to the main thread' >&2
+		return 1
+	fi
+}
+
+run_font_warmup_thread_failure_regression() {
+	local font_home="$TEST_HOME/font-warmup-thread-failure"
+	local sample_log="$TEST_HOME/font-warmup-thread-failure.log"
+	local guard_log="$TEST_HOME/font-warmup-thread-failure-guard.log"
+	local font_profile_log="$font_home/Library/Application Support/Teagram/log.txt"
+	mkdir -p "$font_home"
+	if ! env HOME="$font_home" TMPDIR="$TEST_TMP_BASE" \
+		TDESKTOP_MAC_PROFILE_TEST_HOME="$font_home" \
+		TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST=1 \
+		TDESKTOP_FONT_STARTUP_REGRESSION=1 \
+		TDESKTOP_FONT_STARTUP_TEST_FAILURE=thread-start \
+		"$APP" -noupdate -debug >"$sample_log" 2>&1; then
+		cat "$sample_log" >&2
+		echo 'font warmup thread failure fallback launch failed' >&2
+		return 1
+	fi
+	if require_font_warmup_worker "$sample_log" >"$guard_log" 2>&1 \
+		|| ! grep -F -q 'font database warmup worker failed to start' "$guard_log" \
+		|| ! grep -F -q 'Font database warmup regression: ready=0' "$sample_log" \
+		|| ! grep -E -q 'StartFonts startup regression: wall_ns=[0-9]+' \
+			"$sample_log" "$font_profile_log" 2>/dev/null; then
+		cat "$sample_log" "$guard_log" >&2
+		echo 'font warmup thread failure fallback was not detected' >&2
+		return 1
+	fi
+	printf 'Font database warmup thread failure fallback=PASS\n'
 }
 
 symbolicate_font_startup_crash() {
@@ -1562,6 +1608,9 @@ run_font_startup_regression() {
 			:
 		else
 			launch_status=$?
+		fi
+		if ! require_font_warmup_worker "$sample_log" "$font_profile_log"; then
+			return 1
 		fi
 		if (( launch_status != 0 )); then
 			cat "$sample_log" >&2
@@ -1645,12 +1694,13 @@ run_font_startup_regression() {
 		# Only the system font-family enumeration is gated. Other font
 		# stalls (first-text shaping, bundled-font registration) are
 		# reported below and belong to the chat-switch and startup work.
-		stalls="$(grep -E 'UI stall [0-9]+ ms.*(CTFontManagerCopyAvailableFontFamilyNames|populateFontDatabase|populateFromDescriptor|QFontDatabase::families)' \
+		local enumeration_frames='CTFontManagerCopyAvailableFontFamilyNames|populateFontDatabase|QFontDatabase::families'
+		stalls="$(grep -E "UI stall [0-9]+ ms.*($enumeration_frames)" \
 			"$sample_log" "$font_profile_log" 2>/dev/null || true)"
 		local other_font_stalls
-		other_font_stalls="$(grep -E 'UI stall [0-9]+ ms.*(QFont|QRawFont|CTFont|CoreText|QTextEngine)' \
+		other_font_stalls="$(grep -E 'UI stall [0-9]+ ms.*(QFont|QRawFont|CTFont|CoreText|QTextEngine|populateFromDescriptor)' \
 			"$sample_log" "$font_profile_log" 2>/dev/null \
-			| grep -v -E 'CTFontManagerCopyAvailableFontFamilyNames|populateFontDatabase|populateFromDescriptor|QFontDatabase::families' \
+			| grep -v -E "$enumeration_frames" \
 			|| true)"
 		if [[ -n "$other_font_stalls" ]]; then
 			printf 'Font-code startup %s reported (not gated) stalls: %s\n' \
@@ -1759,6 +1809,19 @@ run_font_startup_regression() {
 	printf 'StartFonts startup regression: cold_wall_ns=%s warm_wall_ns=%s fallback=PASS font_stall_gate=PASS\n' \
 		"$cold_wall_ns" "$warm_wall_ns"
 	run_font_shutdown_regression
+	local probe_failure_log="$TEST_HOME/font-probe-install-failure.log"
+	if run_font_shutdown_regression signal-install >"$probe_failure_log" 2>&1; then
+		echo 'font shutdown regression accepted a failed probe installation' >&2
+		return 1
+	fi
+	if ! grep -F -q 'probe=unavailable' "$probe_failure_log" \
+		|| ! grep -F -q 'font shutdown regression probe failed' "$probe_failure_log"; then
+		cat "$probe_failure_log" >&2
+		echo 'font shutdown probe installation failure was not diagnosed' >&2
+		return 1
+	fi
+	printf 'Font shutdown probe installation failure=PASS\n'
+	run_font_warmup_thread_failure_regression
 }
 
 run_authenticated_lifecycle_regression() {

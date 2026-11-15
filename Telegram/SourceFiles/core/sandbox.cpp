@@ -129,7 +129,10 @@ void ProbeSignal(int) {
 	ProbeInHandler.store(false, std::memory_order_release);
 }
 
-[[nodiscard]] bool InstallProbeSignal() {
+[[nodiscard]] bool InstallProbeSignal(bool forceFailure) {
+	if (forceFailure) {
+		return false;
+	}
 	// The first backtrace() call may allocate, so make it outside a handler.
 	void *primed[1];
 	static_cast<void>(backtrace(primed, 1));
@@ -172,19 +175,26 @@ enum class StackSample {
 	// the decision is reset, or it would park again for this sample.
 	while (ProbeInHandler.load(std::memory_order_acquire)) {
 		if (Clock::now() >= deadline) {
+			fprintf(stderr, "Font shutdown regression: "
+							"probe_error=handler_release_timeout\n");
 			return StackSample::Failed;
 		}
 		std::this_thread::yield();
 	}
 	ProbeDepth.store(-1, std::memory_order_release);
 	ProbeDecision.store(ProbeWait, std::memory_order_release);
-	if (pthread_kill(worker, SIGUSR1) != 0) {
+	if (const auto error = pthread_kill(worker, SIGUSR1)) {
+		fprintf(stderr,
+				"Font shutdown regression: probe_error=pthread_kill code=%d\n",
+				error);
 		return StackSample::Failed;
 	}
 	auto depth = -1;
 	while ((depth = ProbeDepth.load(std::memory_order_acquire)) < 0) {
 		if (Clock::now() >= deadline) {
 			ProbeDecision.store(ProbeRelease, std::memory_order_release);
+			fprintf(stderr, "Font shutdown regression: "
+							"probe_error=handler_ack_timeout\n");
 			return StackSample::Failed;
 		}
 		std::this_thread::yield();
@@ -646,13 +656,18 @@ void Sandbox::startFontDatabaseWarmup() {
 	_fontDatabaseWarmupStarted = true;
 	const auto quitRegression
 		= qEnvironmentVariableIsSet("TDESKTOP_FONT_STARTUP_QUIT_REGRESSION");
+	const auto testFailure = MacProtectedPath::IntegrationTestActive()
+								 ? qgetenv("TDESKTOP_FONT_STARTUP_TEST_FAILURE")
+								 : QByteArray();
 	if (quitRegression) {
 		// The main thread samples the worker stack until it catches the
 		// system font enumeration executing, holds the worker there, and only
 		// then requests the real quit. The worker is released after
 		// aboutToQuit, so teardown runs with the enumeration still in flight.
-		if (!InstallProbeSignal()) {
+		if (!InstallProbeSignal(testFailure == "signal-install")) {
 			fprintf(stderr, "Font shutdown regression: probe=unavailable\n");
+			QCoreApplication::exit(1);
+			return;
 		}
 		connect(this, &QCoreApplication::aboutToQuit, [=] {
 			_fontStartupQuitObserved = true;
@@ -660,6 +675,11 @@ void Sandbox::startFontDatabaseWarmup() {
 		});
 	}
 	try {
+		if (testFailure == "thread-start"
+			&& qEnvironmentVariableIsSet("TDESKTOP_FONT_STARTUP_REGRESSION")) {
+			throw std::system_error(std::make_error_code(
+				std::errc::resource_unavailable_try_again));
+		}
 		_fontDatabaseWarmupThread = std::thread([this, quitRegression] {
 			const auto openSansLoaded = style::internal::PreloadCustomFonts();
 			{
@@ -721,6 +741,12 @@ void Sandbox::startFontDatabaseWarmup() {
 			connect(timer, &QTimer::timeout, this, [=] {
 				const auto sample = SampleWorkerStack(
 					_fontDatabaseWarmupThread.native_handle());
+				if (sample == StackSample::Failed) {
+					timer->stop();
+					ProbeFinalRelease.store(true, std::memory_order_release);
+					QCoreApplication::exit(1);
+					return;
+				}
 				const auto sampled
 					= (sample == StackSample::InSystemEnumeration);
 				if (!sampled && started->elapsed() < 10000) {
@@ -738,7 +764,10 @@ void Sandbox::startFontDatabaseWarmup() {
 	} catch (const std::system_error &error) {
 		_fontDatabaseWarmupDone = true;
 		if (qEnvironmentVariableIsSet("TDESKTOP_FONT_STARTUP_REGRESSION")) {
-			fprintf(stderr, "Font database warmup regression: started=0\n");
+			fprintf(stderr,
+					"Font database warmup regression: started=0 "
+					"error=%s\n",
+					error.what());
 		}
 		LOG(("Font database warmup could not start: %1")
 				.arg(QString::fromLocal8Bit(error.what())));

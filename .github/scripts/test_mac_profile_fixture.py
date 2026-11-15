@@ -24,6 +24,12 @@ if [[ "$HOME" == *'Group Containers'* ]]; then
     exit 1
 fi
 if [[ "${TDESKTOP_FONT_STARTUP_REGRESSION:-}" == 1 ]]; then
+    if [[ "${TDESKTOP_FONT_STARTUP_TEST_FAILURE:-}" == thread-start ]]; then
+        printf 'Font database warmup regression: started=0\\n'
+        printf 'Font database warmup regression: ready=0\\n'
+        printf 'StartFonts startup regression: wall_ns=150000000\\n'
+        exit 0
+    fi
     count_file="$HOME/font-startup-count"
     if [[ -f "$count_file" ]]; then
         wall_ns=50000000
@@ -44,6 +50,10 @@ if [[ "${TDESKTOP_FONT_STARTUP_REGRESSION:-}" == 1 ]]; then
     exit 0
 fi
 if [[ "${TDESKTOP_FONT_STARTUP_QUIT_REGRESSION:-}" == 1 ]]; then
+    if [[ "${TDESKTOP_FONT_STARTUP_TEST_FAILURE:-}" == signal-install ]]; then
+        printf 'Font shutdown regression: probe=unavailable\\n'
+        exit 1
+    fi
     printf 'Font shutdown regression: quit_observed=1 font_work=active enumeration_overlapped=1\\n'
     printf 'Font shutdown regression: worker_joined=1 application_created=0 teardown=complete\\n'
     exit 0
@@ -111,7 +121,21 @@ def run_font_startup_fixture(
 count_file="$HOME/font-startup-count"
 mode="$FONT_TEST_MODE"
 if [[ "${TDESKTOP_FONT_STARTUP_QUIT_REGRESSION:-}" == 1 ]]; then
-    if [[ "$FONT_SHUTDOWN_TEST_MODE" == shutdown-not-in-flight ]]; then
+    if [[ ( "${TDESKTOP_FONT_STARTUP_TEST_FAILURE:-}" == signal-install \
+        && "$FONT_SHUTDOWN_TEST_MODE" != probe-injection-ignored ) \
+        || "$FONT_SHUTDOWN_TEST_MODE" == shutdown-probe-unavailable ]]; then
+        printf 'Font shutdown regression: probe=unavailable\\n'
+        exit 1
+    elif [[ "$FONT_SHUTDOWN_TEST_MODE" == shutdown-probe-kill ]]; then
+        printf 'Font shutdown regression: probe_error=pthread_kill code=3\\n'
+        exit 0
+    elif [[ "$FONT_SHUTDOWN_TEST_MODE" == shutdown-probe-ack ]]; then
+        printf 'Font shutdown regression: probe_error=handler_ack_timeout\\n'
+        exit 1
+    elif [[ "$FONT_SHUTDOWN_TEST_MODE" == shutdown-probe-release ]]; then
+        printf 'Font shutdown regression: probe_error=handler_release_timeout\\n'
+        exit 1
+    elif [[ "$FONT_SHUTDOWN_TEST_MODE" == shutdown-not-in-flight ]]; then
         printf 'Font shutdown regression: quit_observed=0 font_work=active enumeration_overlapped=0\\n'
         printf 'Font shutdown regression: worker_joined=1 application_created=0 teardown=complete\\n'
     elif [[ "$FONT_SHUTDOWN_TEST_MODE" == shutdown-no-overlap ]]; then
@@ -134,6 +158,13 @@ if [[ "${TDESKTOP_FONT_STARTUP_QUIT_REGRESSION:-}" == 1 ]]; then
     fi
     exit 0
 fi
+if [[ "${TDESKTOP_FONT_STARTUP_TEST_FAILURE:-}" == thread-start \
+    && "$mode" != warmup-injection-ignored ]]; then
+    printf 'Font database warmup regression: started=0\\n'
+    printf 'Font database warmup regression: ready=0\\n'
+    printf 'StartFonts startup regression: wall_ns=150000000\\n'
+    exit 0
+fi
 if [[ -f "$count_file" ]]; then
     wall_ns="$FONT_WARM_NS"
     splash_wall_ns="$FONT_SPLASH_WARM_NS"
@@ -146,6 +177,12 @@ else
 fi
 if [[ "$mode" == font-stall ]]; then
     printf 'UI stall 197 ms (started 2026-11-13T00:00:00): QFontDatabase::addApplicationFont <- CTFontManagerCopyAvailableFontFamilyNames\\n'
+elif [[ "$mode" == descriptor-stall ]]; then
+    printf 'UI stall 197 ms (started 2026-11-13T00:00:00): populateFromDescriptor\\n'
+elif [[ "$mode" == populate-database-stall ]]; then
+    printf 'UI stall 197 ms (started 2026-11-13T00:00:00): populateFontDatabase\\n'
+elif [[ "$mode" == qt-families-stall ]]; then
+    printf 'UI stall 197 ms (started 2026-11-13T00:00:00): QFontDatabase::families\\n'
 elif [[ "$mode" == harfbuzz-stall ]]; then
     printf 'UI stall 182 ms (started 2026-11-13T00:00:00): QTextEngine::shape <- QFontMetricsF::horizontalAdvance\\n'
 elif [[ "$mode" == qrawfont-stall ]]; then
@@ -173,7 +210,9 @@ if [[ "$mode" != missing-splash && "$mode" != exposure-timeout \
             "$splash_wall_ns"
     fi
 fi
-if [[ "$mode" != warmup-before-splash ]]; then
+if [[ "$mode" == warmup-start-failure ]]; then
+    printf 'Font database warmup regression: started=0 error=simulated\\n'
+elif [[ "$mode" != warmup-before-splash ]]; then
     printf 'Font database warmup regression: started=1\\n'
 fi
 if [[ "$mode" != warmup-not-ready && "$mode" != missing-metrics ]]; then
@@ -257,6 +296,8 @@ assert 'fallback=PASS font_stall_gate=PASS' \
     in font_startup_output
 assert 'Font shutdown teardown=PASS font_work_active=1 application_created=0' \
     in font_startup_output
+assert 'Font shutdown probe installation failure=PASS' in font_startup_output
+assert 'Font database warmup thread failure fallback=PASS' in font_startup_output
 font_startup_failure = run_font_startup_fixture(50_000_000, 100_000_000, 1)
 assert 'StartFonts warm exceeded the 100ms budget' in font_startup_failure
 font_startup_cold_failure = run_font_startup_fixture(100_000_000, 50_000_000, 1)
@@ -264,6 +305,14 @@ assert 'StartFonts cold exceeded the 100ms budget' in font_startup_cold_failure
 font_startup_font_stall = run_font_startup_fixture(
     50_000_000, 50_000_000, 1, mode='font-stall')
 assert 'Font-code startup cold produced a main-thread stall' in font_startup_font_stall
+for mode in ('populate-database-stall', 'qt-families-stall'):
+    output = run_font_startup_fixture(50_000_000, 50_000_000, 1, mode=mode)
+    assert 'Font-code startup cold produced a main-thread stall' in output
+font_startup_descriptor_stall = run_font_startup_fixture(
+    50_000_000, 50_000_000, 0, mode='descriptor-stall')
+assert 'Font-code startup stall gate=PASS sample=cold' in font_startup_descriptor_stall
+assert 'reported (not gated) stalls:' in font_startup_descriptor_stall
+assert 'populateFromDescriptor' in font_startup_descriptor_stall
 font_startup_harfbuzz_stall = run_font_startup_fixture(
     50_000_000, 50_000_000, 0, mode='harfbuzz-stall')
 assert 'Font-code startup stall gate=PASS sample=cold' \
@@ -326,6 +375,14 @@ font_startup_warmup_not_ready = run_font_startup_fixture(
     50_000_000, 50_000_000, 1, mode='warmup-not-ready')
 assert 'font database warmup did not finish before app initialization' \
     in font_startup_warmup_not_ready
+font_startup_warmup_start_failure = run_font_startup_fixture(
+    50_000_000, 50_000_000, 1, mode='warmup-start-failure')
+assert 'font database warmup worker failed to start; startup falls back to the main thread' \
+    in font_startup_warmup_start_failure
+assert 'started=0 error=simulated' in font_startup_warmup_start_failure
+font_warmup_injection_ignored = run_font_startup_fixture(
+    50_000_000, 50_000_000, 1, mode='warmup-injection-ignored')
+assert 'font warmup thread failure fallback was not detected' in font_warmup_injection_ignored
 font_startup_missing_metrics = run_font_startup_fixture(
     50_000_000, 50_000_000, 1, mode='missing-metrics')
 assert 'font metrics were not prewarmed off the UI thread: cold' \
@@ -358,4 +415,16 @@ font_startup_shutdown_crash = run_font_startup_fixture(
     50_000_000, 50_000_000, 1, mode='shutdown-crash')
 assert 'font shutdown regression did not exit cleanly: exit_status=139' \
     in font_startup_shutdown_crash
+for probe_mode, detail in (
+        ('shutdown-probe-unavailable', 'probe=unavailable'),
+        ('shutdown-probe-kill', 'probe_error=pthread_kill code=3'),
+        ('shutdown-probe-ack', 'probe_error=handler_ack_timeout'),
+        ('shutdown-probe-release', 'probe_error=handler_release_timeout')):
+    output = run_font_startup_fixture(50_000_000, 50_000_000, 1, mode=probe_mode)
+    assert detail in output
+    assert 'font shutdown regression probe failed' in output
+font_probe_injection_ignored = run_font_startup_fixture(
+    50_000_000, 50_000_000, 1, mode='probe-injection-ignored')
+assert 'font shutdown regression accepted a failed probe installation' \
+    in font_probe_injection_ignored
 print('macOS font startup timing and failure guards: PASS')
