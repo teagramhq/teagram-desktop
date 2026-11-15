@@ -47,6 +47,8 @@ enum class TurnstileMessageType {
 struct TurnstileMessage {
 	TurnstileMessageType type = TurnstileMessageType::Error;
 	QString token;
+	QString errorCode;
+	QString cloudflareErrorCode;
 };
 
 enum class TurnstileMessageRejection {

@@ -491,6 +491,28 @@ jobs:
             exit "$build_status"
           fi
 
+      - name: Verify font startup regression.
+        id: font-startup
+        timeout-minutes: 5
+        if: ${{ !cancelled() && steps.ccache-profile.outputs.protected_path_integration == 'ON' && steps.build.outcome == 'success' }}
+        run: |
+          set -Eeuo pipefail
+          diagnostics="$RUNNER_TEMP/macos-regression-diagnostics/font-startup"
+          state="$RUNNER_TEMP/teagram-font-startup"
+          evidence="$REPO_NAME/out/Debug/evidence"
+          rm -rf "$diagnostics" "$state"
+          mkdir -p "$diagnostics" "$state/home" "$state/tmp" "$evidence"
+          : > "$diagnostics/harness.log"
+          executable="$REPO_NAME/out/Debug/Teagram.app/Contents/MacOS/Teagram"
+          test -x "$executable"
+          env HOME="$state/home" TMPDIR="$state/tmp" \
+            TDESKTOP_MAC_PROFILE_TEST_TMP_BASE="$state/tmp" \
+            bash "$REPO_NAME/Telegram/build/test_mac_profile_guard.sh" \
+              "$executable" font-startup \
+            2>&1 | tee "$evidence/font-startup-regression.log" \
+              "$diagnostics/harness.log"
+          printf 'TDESKTOP_MAC_FONT_STARTUP_ALREADY_RUN=1\n' >> "$GITHUB_ENV"
+
       - name: Verify UI stall watchdog stack capture.
         id: ui-stall-watchdog
         timeout-minutes: 1
@@ -507,7 +529,7 @@ jobs:
       - name: Verify cache path watchdog regression.
         id: cache-watchdog
         timeout-minutes: 5
-        if: ${{ !cancelled() && github.event_name == 'pull_request' && steps.build.outcome == 'success' }}
+        if: ${{ !cancelled() && github.event_name == 'pull_request' && steps.build.outcome == 'success' && steps.font-startup.outcome == 'success' }}
         run: |
           set -Eeuo pipefail
           diagnostics="$RUNNER_TEMP/macos-regression-diagnostics/cache-watchdog"
@@ -725,6 +747,10 @@ jobs:
         if: ${{ !cancelled() && steps.ccache-profile.outputs.protected_path_integration == 'ON' && steps.build.outcome == 'success' }}
         run: |
           set -Eeuo pipefail
+          step_started_at="$(date +%s)"
+          step_timeout_seconds=900
+          step_finish_headroom_seconds=60
+          step_deadline_epoch="$((step_started_at + step_timeout_seconds - step_finish_headroom_seconds))"
           diagnostics="$RUNNER_TEMP/macos-regression-diagnostics/profile-ipc"
           mkdir -p "$diagnostics"
           exec > >(tee "$diagnostics/harness.log") 2>&1
@@ -741,6 +767,7 @@ jobs:
           executable="$REPO_NAME/out/Debug/Teagram.app/Contents/MacOS/Teagram"
           set +e
           env HOME="$state/home" TMPDIR="$state/tmp" \
+            TDESKTOP_MAC_LIFECYCLE_STEP_DEADLINE_EPOCH="$step_deadline_epoch" \
             TDESKTOP_MAC_PROFILE_TEST_TMP_BASE="$state/tmp" \
             TDESKTOP_MAC_PROFILE_TEST_PROFILE_ARTIFACT="$evidence/seatbelt-profile-${BUILD_VARIANT}.sb" \
             TDESKTOP_MAC_PROFILE_EVIDENCE_LOG="$evidence/profile-ipc-${BUILD_VARIANT}-authenticated-app.log" \
@@ -751,10 +778,10 @@ jobs:
           set -e
           test_status="${statuses[0]}"
           tee_status="${statuses[1]}"
-          if [ "$test_status" -ne 0 ]; then
-            cp -R "$state" "$evidence/profile-ipc-${BUILD_VARIANT}-state"
-          elif [ "$tee_status" -ne 0 ]; then
-            test_status="$tee_status"
+          if [ "$tee_status" -ne 0 ]; then
+            if [ "$test_status" -eq 0 ]; then
+              test_status="$tee_status"
+            fi
             echo "::error::Could not retain profile/IPC integration logs for variant=$BUILD_VARIANT."
           fi
           printf 'tested_sha=%s\nvariant=%s\nexit_status=%s\n' \
@@ -1228,6 +1255,7 @@ jobs:
           ${{ always() &&
             (steps.ui-stall-watchdog.outcome != 'success' && steps.ui-stall-watchdog.outcome != 'skipped' ||
              steps.observer-self-tests.outcome != 'success' && steps.observer-self-tests.outcome != 'skipped' ||
+             steps.font-startup.outcome != 'success' && steps.font-startup.outcome != 'skipped' ||
              steps.cache-watchdog.outcome != 'success' && steps.cache-watchdog.outcome != 'skipped' ||
              steps.launch-smoke.outcome != 'success' && steps.launch-smoke.outcome != 'skipped' ||
              steps.profile-ipc.outcome != 'success' && steps.profile-ipc.outcome != 'skipped' ||

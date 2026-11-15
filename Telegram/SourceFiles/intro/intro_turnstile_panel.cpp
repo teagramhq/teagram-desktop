@@ -112,7 +112,9 @@ class TurnstileBox final : public Ui::BoxContent {
 	void finishToken(QString token);
 	void deferWindowDestruction(bool close, Fn<void()> callback);
 	void finishFailed(TurnstileFailureReason reason, bool close = true,
-					  bool fromEngineCallback = false);
+					  bool fromEngineCallback = false,
+					  QStringView errorCode = {},
+					  QStringView cloudflareErrorCode = {});
 
 	const TurnstileChallenge _challenge;
 	const QString _initialUrl;
@@ -292,7 +294,9 @@ void TurnstileBox::messageReceived(Webview::Message message) {
 	}
 	auto &parsedMessage = std::get<TurnstileMessage>(parsed);
 	if (parsedMessage.type == TurnstileMessageType::Error) {
-		finishFailed(TurnstileFailureReason::ChallengeError, true, true);
+		finishFailed(TurnstileFailureReason::ChallengeError, true, true,
+					 parsedMessage.errorCode,
+					 parsedMessage.cloudflareErrorCode);
 		return;
 	}
 	finishToken(std::move(parsedMessage.token));
@@ -336,11 +340,19 @@ void TurnstileBox::deferWindowDestruction(bool close, Fn<void()> callback) {
 }
 
 void TurnstileBox::finishFailed(TurnstileFailureReason reason, bool close,
-								bool fromEngineCallback) {
+								bool fromEngineCallback, QStringView errorCode,
+								QStringView cloudflareErrorCode) {
 	if (_state == TurnstileBoxState::Finished) {
 		return;
 	}
-	LOG(("Intro Turnstile failed: %1").arg(TurnstileFailureReasonText(reason)));
+	if (reason == TurnstileFailureReason::ChallengeError) {
+		LOG(("Intro Turnstile failed: %1 (code=%2, cloudflare_error_code=%3)")
+				.arg(TurnstileFailureReasonText(reason), errorCode.toString(),
+					 cloudflareErrorCode.toString()));
+	} else {
+		LOG(("Intro Turnstile failed: %1")
+				.arg(TurnstileFailureReasonText(reason)));
+	}
 	_state = TurnstileBoxState::Finished;
 	_linuxNavigationGuard.finish();
 	auto callback = std::move(_failed);

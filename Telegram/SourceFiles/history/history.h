@@ -285,9 +285,20 @@ public:
 	MsgId msgIdForRead() const;
 	HistoryItem *lastEditableMessage() const;
 
-	void resizeToWidth(int newWidth);
+	void resizeToWidth(int newWidth, bool chatWide);
+	[[nodiscard]] bool needsResizeFor(int newWidth, bool chatWide) const;
 	void forceFullResize();
 	int height() const;
+	[[nodiscard]] int layoutScaleForRegressionTest() const {
+		return _layoutScale;
+	}
+	[[nodiscard]] int layoutWidthForRegressionTest() const { return _width; }
+	[[nodiscard]] int layoutFullResizeCountForRegressionTest() const {
+		return _layoutFullResizeCount;
+	}
+	[[nodiscard]] bool layoutChatWideForRegressionTest() const {
+		return _layoutChatWide;
+	}
 
 	void itemRemoved(not_null<HistoryItem*> item);
 	void itemVanished(not_null<HistoryItem*> item);
@@ -653,6 +664,11 @@ private:
 	Flags _flags = 0;
 	int _width = 0;
 	int _height = 0;
+	int _layoutScale = 0;
+	int _layoutDevicePixelRatio = 0;
+	int _layoutPaletteVersion = -1;
+	bool _layoutChatWide = false;
+	int _layoutFullResizeCount = 0;
 	Element *_unreadBarView = nullptr;
 	Element *_firstUnreadView = nullptr;
 	HistoryItem *_joinedMessage = nullptr;

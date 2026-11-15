@@ -74,6 +74,127 @@ report_result() {
 	fi
 }
 
+process_alive() {
+	local state
+	kill -0 "$1" 2>/dev/null || return 1
+	state="$(ps -o stat= -p "$1" 2>/dev/null)" || return 1
+	[[ -n "$state" && "$state" != *Z* ]]
+}
+
+work_value_within_budget() {
+	local work_ns="$1"
+	local budget_ns="$2"
+	(( work_ns >= 0 && work_ns < budget_ns ))
+}
+
+main_thread_cpu_work_within_budget() {
+	work_value_within_budget "$1" "$2"
+}
+
+main_thread_work_estimate_within_budget() {
+	local main_thread_cpu_ns="$1"
+	local wall_ns="$2"
+	local trace="$3"
+	local budget_ns="$4"
+	local offsets_csv="${5:-}"
+	local before_state="${6:-}"
+	local before_distance="${7:-}"
+	local after_state="${8:-}"
+	local after_distance="${9:-}"
+	local estimate_ns
+	if [[ "$trace" == none || -z "$trace" ]]; then
+		estimate_ns="$wall_ns"
+	else
+		(( main_thread_cpu_ns >= 0 )) || return 1
+		local sample_count="${#trace}"
+		local -a scheduler_offsets=()
+		IFS=, read -r -a scheduler_offsets <<< "$offsets_csv"
+		local samples_valid=true
+		if (( ${#scheduler_offsets[@]} != sample_count )); then
+			samples_valid=false
+		fi
+		local previous_offset=0
+		local has_previous=false
+		local blocked_ns=0
+		local last_in_window_offset=0
+		local previous_state=""
+		local has_in_window_sample=false
+		local maximum_sample_gap_ns=25000000
+		for ((i = 0; i < sample_count; ++i)); do
+			[[ "$samples_valid" == true ]] || break
+			local offset="${scheduler_offsets[i]}"
+			if [[ ! "$offset" =~ ^-?[0-9]+$ ]]; then
+				samples_valid=false
+				break
+			fi
+			if (( offset < 0 )); then
+				samples_valid=false
+				break
+			fi
+			if [[ "$has_previous" == true ]] \
+				&& (( offset < previous_offset )); then
+				samples_valid=false
+				break
+			fi
+			if (( offset <= wall_ns )); then
+				local state="${trace:i:1}"
+				if [[ "$state" != R && "$state" != W && "$state" != U ]]; then
+					samples_valid=false
+					break
+				fi
+				local gap="$((offset - last_in_window_offset))"
+				if (( gap > maximum_sample_gap_ns )); then
+					samples_valid=false
+					break
+				fi
+				if [[ "$has_in_window_sample" != true ]] && (( gap > 0 )) \
+					&& [[ -n "$before_state" || -n "$before_distance" ]]; then
+					if [[ ! "$before_distance" =~ ^[0-9]+$ ]] \
+						|| [[ "$before_state" != R && "$before_state" != W && "$before_state" != U ]] \
+						|| (( before_distance > maximum_sample_gap_ns - gap )); then
+						samples_valid=false
+						break
+					fi
+					if [[ "$before_state" != R || "$state" != R ]]; then
+						blocked_ns="$((blocked_ns + gap))"
+					fi
+				elif [[ "$has_in_window_sample" != true || "$previous_state" != R || "$state" != R ]]; then
+					blocked_ns="$((blocked_ns + gap))"
+				fi
+				last_in_window_offset="$offset"
+				previous_state="$state"
+				has_in_window_sample=true
+			fi
+			previous_offset="$offset"
+			has_previous=true
+		done
+		if [[ "$samples_valid" == true ]] \
+			&& [[ "$has_in_window_sample" == true ]] \
+			&& (( wall_ns - last_in_window_offset <= maximum_sample_gap_ns )); then
+			local tail="$((wall_ns - last_in_window_offset))"
+			if (( tail > 0 )) && [[ -n "$after_state" || -n "$after_distance" ]]; then
+				if [[ ! "$after_distance" =~ ^[0-9]+$ ]] \
+					|| [[ "$after_state" != R && "$after_state" != W && "$after_state" != U ]] \
+					|| (( after_distance > maximum_sample_gap_ns - tail )); then
+					samples_valid=false
+				elif [[ "$previous_state" != R || "$after_state" != R ]]; then
+					blocked_ns="$((blocked_ns + tail))"
+				fi
+			else
+				blocked_ns="$((blocked_ns + tail))"
+			fi
+			if [[ "$samples_valid" == true ]]; then
+				estimate_ns="$((main_thread_cpu_ns + blocked_ns))"
+			else
+				estimate_ns="$wall_ns"
+			fi
+		else
+			estimate_ns="$wall_ns"
+		fi
+	fi
+	(( estimate_ns >= 0 && estimate_ns < budget_ns ))
+}
+
 fixture_unchanged() {
 	local fixture="$1"
 	local is_file="$2"
@@ -268,6 +389,18 @@ run_bundle_keyed_probe() {
 	fi
 }
 
+capture_stuck_profile_process() {
+	local pid="$1"
+	local output="$2"
+	if command -v sample >/dev/null 2>&1; then
+		sample "$pid" 5 -file "$output" >"$output.log" 2>&1 || true
+		printf 'profile_process_sample_log=%s\n' "$output.log"
+		if [[ -s "$output" ]]; then
+			printf 'profile_process_sample=%s\n' "$output"
+		fi
+	fi
+}
+
 run_spoiler_cache_symlink_case() {
 	local case_name="$1"
 	local link_name="$2"
@@ -396,6 +529,7 @@ run_spoiler_cache_symlink_case() {
 	done
 	if kill -0 "$FIRST_PID" 2>/dev/null; then
 		report_result "${case_name}_first_instance_exit" false "pid=$FIRST_PID still_alive=1" || true
+		capture_stuck_profile_process "$FIRST_PID" "$case_home/first-instance.sample.txt"
 		return 1
 	fi
 	set +e
@@ -1406,24 +1540,72 @@ if ! grep -F -q \
 	exit 1
 fi
 for cache in cache media_cache; do
-	if ! grep -E \
-		"^Cache access latency regression: cache=$cache seeded_directories=125 seeded_files=169 closed_clear_missing_active=1 cache_initialization_ns=[0-9]+ initialization_allowed=1 queued_ops_before_ready=1 queued_ops_passed=1 cache_usable_ns=[0-9]+ under_10s=1 max_main_thread_stall_ns=[0-9]+ under_100ms=[01] first_access_ns=[0-9]+ under_50ms=1 root_swap_refused=1 direct_fallback_closed=1 root_restored=1 startup_walks=2 main_thread_walks=0\\.$" \
-		"$AUTH_LOG"; then
+	local cache_latency_evidence
+	cache_latency_evidence="$(grep -E \
+		"^Cache access latency regression: cache=$cache seeded_directories=125 seeded_files=169 closed_clear_missing_active=1 cache_initialization_ns=[0-9]+ initialization_allowed=1 queued_ops_before_ready=1 queued_ops_passed=1 cache_usable_ns=[0-9]+ under_10s=1 max_main_thread_work_ns=[0-9]+ max_startup_estimated_work_ns=[0-9]+ max_heartbeat_gap_ns=[0-9]+ max_heartbeat_gap_work_ns=[0-9]+ heartbeat_gap_process_work_ns=[0-9]+ heartbeat_gap_started_at=[^ ]+ startup_heartbeat_gap_count=[0-9]+ startup_uncovered_heartbeat_gaps=[0-9]+ startup_heartbeat_gap_coverage_proven=[01] startup_stall_count=[0-9]+ max_startup_stall_ns=[0-9]+ startup_stall_main_thread_work_ns=[0-9]+ startup_stall_process_work_ns=[0-9]+ startup_stall_started_at=([^ ]+) startup_stall_heartbeat_gap_started_at=([^ ]+) startup_stall_scheduler_samples=[0-9]+ startup_stall_scheduler_running=[0-9]+ startup_stall_scheduler_waiting=[0-9]+ startup_stall_scheduler_uninterruptible=[0-9]+ startup_stall_scheduler_other=[0-9]+ startup_stall_scheduler_trace=([[:alpha:]?]+|none) startup_stall_stack_captured=[01] startup_stall_evidence_matched=[01] startup_stall_scheduler_preemption_proven=[01] under_100ms=[01] first_access_ns=[0-9]+ under_50ms=1 root_swap_refused=1 direct_fallback_closed=1 root_restored=1 startup_walks=2 main_thread_walks=0\\.$" \
+		"$AUTH_LOG" || true)"
+	if [[ -z "$cache_latency_evidence" ]]; then
 		cat "$AUTH_LOG" >&2
 		printf 'seeded cache access latency evidence missing for %s.\n' "$cache" >&2
 		exit 1
 	fi
+	local max_startup_estimated_work_ns
+	max_startup_estimated_work_ns="$(sed -E \
+		's/.*max_startup_estimated_work_ns=([0-9]+).*/\1/' \
+		<<<"$cache_latency_evidence")"
+	if ! work_value_within_budget \
+		"$max_startup_estimated_work_ns" 100000000; then
+		cat "$AUTH_LOG" >&2
+		printf 'seeded cache estimated startup work exceeded 100 ms for %s.\n' "$cache" >&2
+		exit 1
+	fi
+	local under_100ms
+	under_100ms="$(sed -E 's/.*under_100ms=([01]).*/\1/' \
+		<<<"$cache_latency_evidence")"
+	if (( under_100ms != 1 )); then
+		cat "$AUTH_LOG" >&2
+		printf 'seeded cache startup work exceeded 100 ms for %s.\n' "$cache" >&2
+		exit 1
+	fi
 done
 if ! grep -E -q \
-	'^First messages\.getDialogs handler latency regression: seeded_directories=125 seeded_files=169 requests=1 parsed=1 chats=2 dialogs=1 messages=73 documents=73 cache_walks=2 max_handler_ns=[0-9]+ under_50ms=1\.$' \
+	'^First messages\.getDialogs handler latency regression: seeded_directories=125 seeded_files=169 requests=1 parsed=1 chats=2 dialogs=1 messages=73 documents=73 cache_walks=2 max_handler_ns=[0-9]+ main_thread_cpu_ns=-?[0-9]+ blocked_estimate_ns=-?[0-9]+ estimated_work_ns=[0-9]+ trace=([[:alpha:]?]+|none) under_50ms=1\.$' \
 	"$AUTH_LOG"; then
 	cat "$AUTH_LOG" >&2
 	echo "first messages.getDialogs handler evidence missing or over 50 ms." >&2
 	exit 1
 fi
+local initial_history_selection
+initial_history_selection="$(grep -E \
+	'^Initial history selection: peer_id=[0-9]+ wall_ns=[0-9]+ main_thread_work_ns=[0-9]+ blocked_estimate_ns=(-1|[0-9]+) estimated_work_ns=[0-9]+ budget_ns=50000000 trace=([[:alpha:]?]+|none) scheduler_preemption_proven=[01]\.$' \
+	"$AUTH_LOG" || true)"
+if [[ -z "$initial_history_selection" ]]; then
+	cat "$AUTH_LOG" >&2
+	echo "initial history selection evidence missing." >&2
+	exit 1
+fi
+local initial_history_selection_work_ns
+initial_history_selection_work_ns="$(sed -E \
+	's/.*estimated_work_ns=([0-9]+).*/\1/' \
+	<<<"$initial_history_selection")"
+local initial_history_selection_blocked_ns
+initial_history_selection_blocked_ns="$(sed -E \
+	's/.*blocked_estimate_ns=(-?[0-9]+).*/\1/' \
+	<<<"$initial_history_selection")"
+if [[ "$initial_history_selection_blocked_ns" == -1 ]]; then
+	initial_history_selection_work_ns="$(sed -E \
+		's/.*wall_ns=([0-9]+).*/\1/' \
+		<<<"$initial_history_selection")"
+fi
+if ! work_value_within_budget \
+	"$initial_history_selection_work_ns" 50000000; then
+	cat "$AUTH_LOG" >&2
+	echo "initial history selection estimated work exceeded its 50 ms budget." >&2
+	exit 1
+fi
 local chat_switch_evidence
 chat_switch_evidence="$(grep -E \
-	'^Cache chat switch latency regression: seeded_directories=125 seeded_files=169 reactions=73 hydrated_documents=292 chat_switches=73 minimized_restore=1 minimized_switch_ns=[0-9]+ minimized_restore_budget_ns=50000000 max_hydration_ns=[0-9]+ max_switch_ns=[0-9]+ max_stall_ns=[0-9]+ under_50ms=[01]\.$' \
+	'^Cache chat switch latency regression: seeded_directories=125 seeded_files=169 reactions=73 hydrated_documents=292 chat_switches=73 attach_menu_bot_count=[0-9]+ minimized_restore=1 minimized_switch_ns=[0-9]+ minimized_restore_budget_ns=50000000 max_hydration_ns=[0-9]+ max_hydration_work_ns=[0-9]+ hydration_scheduler_preemption_proven=[01] max_switch_ns=[0-9]+ max_switch_work_ns=[0-9]+ max_recurring_switch_work_ns=[0-9]+ max_switch_estimated_work_ns=[0-9]+ max_recurring_switch_estimated_work_ns=[0-9]+ max_switch_index=[0-9]+ max_switch_peer_id=[0-9]+ switch_scheduler_preemption_proven=[01] attach_menu_first_hover_ns=[0-9]+ attach_menu_hover_ns=[0-9]+ attach_menu_update_hover_ns=[0-9]+ attach_menu_uncached_peer_ns=[0-9]+ attach_menu_first_hover_callback_cpu_ns=[0-9]+ attach_menu_update_hover_callback_cpu_ns=[0-9]+ attach_menu_uncached_peer_callback_cpu_ns=[0-9]+ attach_menu_first_hover_callback_wall_ns=[0-9]+ attach_menu_update_hover_callback_wall_ns=[0-9]+ attach_menu_uncached_peer_callback_wall_ns=[0-9]+ attach_menu_scheduler_preemption_proven=[01] attach_menu_cached=1 attach_menu_invalidated=1 attach_menu_build_deferred=1 attach_menu_uncached_ready=1 attach_menu_uncached_deferred_failures=0 attach_menu_uncached_missing_bot_failures=0 attach_menu_uncached_build_count_failures=0 attach_menu_cache_bound=1 pending_reveal_after_controls_geometry=1 chat_switch_compose_ui_reused=1 field_autocomplete_suggestions_ready=1 menu_commands_unfocused=[01] bot_commands_unfocused=1 history_chat_mode_invalidation_rebuilt=1 dialog_histories_ready=1 synthetic_histories_ready=1 max_stall_ns=[0-9]+ within_budgets=1\.$' \
 	"$AUTH_LOG" || true)"
 if [[ -z "$chat_switch_evidence" ]]; then
 	cat "$AUTH_LOG" >&2
@@ -1431,6 +1613,113 @@ if [[ -z "$chat_switch_evidence" ]]; then
 	exit 1
 fi
 printf '%s\n' "$chat_switch_evidence"
+local max_hydration_work_ns
+max_hydration_work_ns="$(sed -E \
+	's/.*max_hydration_work_ns=([0-9]+).*/\1/' \
+	<<<"$chat_switch_evidence")"
+if ! main_thread_cpu_work_within_budget \
+	"$max_hydration_work_ns" 50000000; then
+	cat "$AUTH_LOG" >&2
+	echo "reaction hydration main-thread CPU exceeded 50 ms." >&2
+	exit 1
+fi
+local max_chat_switch_estimated_work_ns
+max_chat_switch_estimated_work_ns="$(sed -E \
+	's/.*max_switch_estimated_work_ns=([0-9]+).*/\1/' \
+	<<<"$chat_switch_evidence")"
+if ! work_value_within_budget \
+	"$max_chat_switch_estimated_work_ns" 50000000; then
+	cat "$AUTH_LOG" >&2
+	echo "maximum seeded chat switch estimated work exceeded 50 ms." >&2
+	exit 1
+fi
+local max_recurring_chat_switch_estimated_work_ns
+max_recurring_chat_switch_estimated_work_ns="$(sed -E \
+	's/.*max_recurring_switch_estimated_work_ns=([0-9]+).*/\1/' \
+	<<<"$chat_switch_evidence")"
+if ! work_value_within_budget \
+	"$max_recurring_chat_switch_estimated_work_ns" 50000000; then
+	cat "$AUTH_LOG" >&2
+	echo "recurrent seeded chat switch estimated work exceeded 50 ms." >&2
+	exit 1
+fi
+local attach_menu_first_hover_callback_cpu_ns
+attach_menu_first_hover_callback_cpu_ns="$(sed -E \
+	's/.*attach_menu_first_hover_callback_cpu_ns=([0-9]+).*/\1/' \
+	<<<"$chat_switch_evidence")"
+if ! main_thread_cpu_work_within_budget \
+	"$attach_menu_first_hover_callback_cpu_ns" 50000000; then
+	cat "$AUTH_LOG" >&2
+	echo "first-hover attach-menu callback main-thread CPU exceeded 50 ms." >&2
+	exit 1
+fi
+local attach_menu_update_hover_callback_cpu_ns
+attach_menu_update_hover_callback_cpu_ns="$(sed -E \
+	's/.*attach_menu_update_hover_callback_cpu_ns=([0-9]+).*/\1/' \
+	<<<"$chat_switch_evidence")"
+if ! main_thread_cpu_work_within_budget \
+	"$attach_menu_update_hover_callback_cpu_ns" 50000000; then
+	cat "$AUTH_LOG" >&2
+	echo "updated attach-menu callback main-thread CPU exceeded 50 ms." >&2
+	exit 1
+fi
+local attach_menu_uncached_peer_callback_cpu_ns
+attach_menu_uncached_peer_callback_cpu_ns="$(sed -E 's/.*attach_menu_uncached_peer_callback_cpu_ns=([0-9]+).*/\1/' <<<"$chat_switch_evidence")"
+if ! main_thread_cpu_work_within_budget \
+	"$attach_menu_uncached_peer_callback_cpu_ns" 50000000; then
+	cat "$AUTH_LOG" >&2
+	echo "uncached attach-menu callback main-thread CPU exceeded 50 ms." >&2
+	exit 1
+fi
+local attach_menu_callback_work
+attach_menu_callback_work="$(grep -E \
+	'^Attach-menu callback work: cached_hover_wall_ns=[0-9]+ cached_hover_estimated_work_ns=[0-9]+ first_hover_estimated_work_ns=[0-9]+ invalidation_estimated_work_ns=[0-9]+ uncached_peer_estimated_work_ns=[0-9]+ budget_ns=50000000\.$' \
+	"$AUTH_LOG" || true)"
+if [[ -z "$attach_menu_callback_work" ]]; then
+	cat "$AUTH_LOG" >&2
+	echo "attach-menu callback estimated-work evidence missing." >&2
+	exit 1
+fi
+local attach_menu_cached_hover_estimated_work_ns
+attach_menu_cached_hover_estimated_work_ns="$(sed -E \
+	's/.*cached_hover_estimated_work_ns=([0-9]+).*/\1/' \
+	<<<"$attach_menu_callback_work")"
+if ! work_value_within_budget \
+	"$attach_menu_cached_hover_estimated_work_ns" 50000000; then
+	cat "$AUTH_LOG" >&2
+	echo "cached attach-menu hover estimated work exceeded 50 ms." >&2
+	exit 1
+fi
+local attach_menu_first_hover_estimated_work_ns
+attach_menu_first_hover_estimated_work_ns="$(sed -E \
+	's/.*first_hover_estimated_work_ns=([0-9]+).*/\1/' \
+	<<<"$attach_menu_callback_work")"
+if ! work_value_within_budget \
+	"$attach_menu_first_hover_estimated_work_ns" 50000000; then
+	cat "$AUTH_LOG" >&2
+	echo "first-hover attach-menu estimated work exceeded 50 ms." >&2
+	exit 1
+fi
+local attach_menu_invalidation_estimated_work_ns
+attach_menu_invalidation_estimated_work_ns="$(sed -E \
+	's/.*invalidation_estimated_work_ns=([0-9]+).*/\1/' \
+	<<<"$attach_menu_callback_work")"
+if ! work_value_within_budget \
+	"$attach_menu_invalidation_estimated_work_ns" 50000000; then
+	cat "$AUTH_LOG" >&2
+	echo "attach-menu invalidation estimated work exceeded 50 ms." >&2
+	exit 1
+fi
+local attach_menu_uncached_peer_estimated_work_ns
+attach_menu_uncached_peer_estimated_work_ns="$(sed -E \
+	's/.*uncached_peer_estimated_work_ns=([0-9]+).*/\1/' \
+	<<<"$attach_menu_callback_work")"
+if ! work_value_within_budget \
+	"$attach_menu_uncached_peer_estimated_work_ns" 50000000; then
+	cat "$AUTH_LOG" >&2
+	echo "uncached attach-menu estimated work exceeded 50 ms." >&2
+	exit 1
+fi
 if ! grep -F -q \
 	"Authenticated refused download history regression passed: entry without a live message remained unpublished." \
 	"$AUTH_LOG"; then
@@ -1461,6 +1750,453 @@ if [[ -n "$AUTH_EVIDENCE_LOG" ]]; then
 		"$AUTH_EVIDENCE_LOG"
 fi
 printf 'authenticated_cache_regression=PASS roots=2 cache_directory_symlinks=2 cache_file_symlinks=2 cleanup_initial_symlink=1 cleanup_worker_symlink=1 download_history=PASS\n'
+}
+
+run_font_shutdown_regression() {
+	local forced_failure="${1:-}"
+	local font_home="$TEST_HOME/font-startup"
+	local shutdown_log="$TEST_HOME/font-startup-shutdown.log"
+	local font_profile_log="$font_home/Library/Application Support/Teagram/log.txt"
+	mkdir -p "$(dirname "$font_profile_log")"
+	: > "$font_profile_log"
+	local launch_status=0
+	if env -u TDESKTOP_FONT_STARTUP_REGRESSION \
+		HOME="$font_home" TMPDIR="$TEST_TMP_BASE" \
+		TDESKTOP_MAC_PROFILE_TEST_HOME="$font_home" \
+		TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST=1 \
+		TDESKTOP_FONT_STARTUP_QUIT_REGRESSION=1 \
+		TDESKTOP_FONT_STARTUP_TEST_FAILURE="$forced_failure" \
+		FONT_SHUTDOWN_TEST_MODE="${FONT_TEST_MODE:-pass}" \
+		"$APP" -noupdate -debug >"$shutdown_log" 2>&1; then
+		:
+	else
+		launch_status=$?
+	fi
+	if grep -E -q 'Font shutdown regression: (probe=unavailable|probe_error=)' \
+		"$shutdown_log"; then
+		cat "$shutdown_log" >&2
+		echo "font shutdown regression probe failed" >&2
+		return 1
+	fi
+	if (( launch_status != 0 )); then
+		cat "$shutdown_log" >&2
+		if [[ -f "$font_profile_log" ]]; then
+			cat "$font_profile_log" >&2
+		fi
+		symbolicate_font_startup_crash "$font_home"
+		printf 'font shutdown regression did not exit cleanly: exit_status=%s\n' \
+			"$launch_status" >&2
+		return 1
+	fi
+	if ! grep -F -q 'Font shutdown regression: quit_observed=1 font_work=active enumeration_overlapped=1' \
+		"$shutdown_log"; then
+		cat "$shutdown_log" >&2
+		echo "font shutdown regression did not quit during an active system font enumeration" >&2
+		return 1
+	fi
+	local in_flight_position
+	in_flight_position="$(grep -F -n 'Font shutdown regression: quit_observed=1' \
+		"$shutdown_log" | tail -n 1 | cut -d: -f1 || true)"
+	local teardown_position
+	teardown_position="$(grep -F -n 'Font shutdown regression: worker_joined=1 application_created=0 teardown=complete' \
+		"$shutdown_log" | tail -n 1 | cut -d: -f1 || true)"
+	if [[ ! "$in_flight_position" =~ ^[0-9]+$ ]] \
+		|| [[ ! "$teardown_position" =~ ^[0-9]+$ ]] \
+		|| (( in_flight_position >= teardown_position )); then
+		cat "$shutdown_log" >&2
+		echo "font shutdown did not join the worker and tear down without starting the application" >&2
+		return 1
+	fi
+	printf 'Font shutdown teardown=PASS font_work_active=1 application_created=0\n'
+}
+
+require_font_warmup_worker() {
+	local failure
+	failure="$(grep -F -h 'Font database warmup regression: started=0' "$@" 2>/dev/null || true)"
+	if [[ -n "$failure" ]]; then
+		printf '%s\n' "$failure" >&2
+		echo 'font database warmup worker failed to start; startup falls back to the main thread' >&2
+		return 1
+	fi
+}
+
+run_font_warmup_thread_failure_regression() {
+	local font_home="$TEST_HOME/font-warmup-thread-failure"
+	local sample_log="$TEST_HOME/font-warmup-thread-failure.log"
+	local guard_log="$TEST_HOME/font-warmup-thread-failure-guard.log"
+	local font_profile_log="$font_home/Library/Application Support/Teagram/log.txt"
+	mkdir -p "$font_home"
+	if ! env HOME="$font_home" TMPDIR="$TEST_TMP_BASE" \
+		TDESKTOP_MAC_PROFILE_TEST_HOME="$font_home" \
+		TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST=1 \
+		TDESKTOP_FONT_STARTUP_REGRESSION=1 \
+		TDESKTOP_FONT_STARTUP_TEST_FAILURE=thread-start \
+		"$APP" -noupdate -debug >"$sample_log" 2>&1; then
+		cat "$sample_log" >&2
+		echo 'font warmup thread failure fallback launch failed' >&2
+		return 1
+	fi
+	if require_font_warmup_worker "$sample_log" >"$guard_log" 2>&1 \
+		|| ! grep -F -q 'font database warmup worker failed to start' "$guard_log" \
+		|| ! grep -F -q 'Font database warmup regression: ready=0' "$sample_log" \
+		|| ! grep -E -q 'StartFonts startup regression: wall_ns=[0-9]+' \
+			"$sample_log" "$font_profile_log" 2>/dev/null; then
+		cat "$sample_log" "$guard_log" >&2
+		echo 'font warmup thread failure fallback was not detected' >&2
+		return 1
+	fi
+	printf 'Font database warmup thread failure fallback=PASS\n'
+}
+
+symbolicate_font_startup_crash() {
+	local font_home="$1"
+	local dumps_dir="$font_home/Library/Application Support/Teagram/tdata/dumps/completed"
+	local dump
+	local found=false
+	if [[ ! -d "$dumps_dir" ]]; then
+		printf 'Font startup crash report is missing: %s\n' "$dumps_dir" >&2
+		return 0
+	fi
+	for dump in "$dumps_dir"/*.dmp; do
+		[[ -f "$dump" ]] || continue
+		found=true
+		break
+	done
+	if [[ "$found" != true ]]; then
+		printf 'Font startup crash report is missing under: %s\n' "$dumps_dir" >&2
+		return 0
+	fi
+	for dump in "$dumps_dir"/*.dmp; do
+		[[ -f "$dump" ]] || continue
+		python3 "$REPO_ROOT/.github/scripts/symbolicate_macos_minidump.py" \
+			"$dump" "$APP" || {
+			printf 'Could not symbolicate font startup crash report: %s\n' \
+				"$dump" >&2
+		}
+	done
+}
+
+run_font_startup_regression() {
+	local font_home="$TEST_HOME/font-startup"
+	local font_profile_log="$font_home/Library/Application Support/Teagram/log.txt"
+	local expected_fallback='Font fallback regression: emoji=\.?Apple Color Emoji( UI)? arabic=Vazirmatn UI NL wall_ns=[0-9]+ result=PASS'
+	local cold_wall_ns=""
+	local warm_wall_ns=""
+	mkdir -p "$font_home"
+	for sample in cold warm; do
+		if [[ "$sample" == warm && -f "$font_profile_log" ]]; then
+			: > "$font_profile_log"
+		fi
+		local sample_log="$TEST_HOME/font-startup-$sample.log"
+		local launch_status=0
+		if env HOME="$font_home" TMPDIR="$TEST_TMP_BASE" \
+			TDESKTOP_MAC_PROFILE_TEST_HOME="$font_home" \
+			TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST=1 \
+			TDESKTOP_FONT_STARTUP_REGRESSION=1 \
+			"$APP" -noupdate -debug >"$sample_log" 2>&1; then
+			:
+		else
+			launch_status=$?
+		fi
+		if ! require_font_warmup_worker "$sample_log" "$font_profile_log"; then
+			return 1
+		fi
+		if (( launch_status != 0 )); then
+			cat "$sample_log" >&2
+			if [[ -f "$font_profile_log" ]]; then
+				cat "$font_profile_log" >&2
+			fi
+			symbolicate_font_startup_crash "$font_home"
+			printf 'font startup regression launch failed: sample=%s exit_status=%s\n' \
+				"$sample" "$launch_status" >&2
+			return 1
+		fi
+		local splash_timing
+		splash_timing="$(grep -E 'Font startup splash regression: visible=1 wall_ns=[0-9]+' \
+			"$sample_log" 2>/dev/null | tail -n 1 || true)"
+		local splash_wall_ns
+		splash_wall_ns="$(sed -E 's/.*wall_ns=([0-9]+).*/\1/' <<<"$splash_timing")"
+		local startup_splash_position
+		if [[ "$splash_wall_ns" =~ ^[0-9]+$ ]]; then
+			printf 'Font startup splash=PASS sample=%s visible=1 wall_ns=%s\n' \
+				"$sample" "$splash_wall_ns"
+			startup_splash_position="$(grep -F -n -h 'Font startup splash regression: visible=1' \
+				"$sample_log" | tail -n 1 | cut -d: -f1)"
+		else
+			local exposure_timeout
+			exposure_timeout="$(grep -E 'Font startup exposure timeout regression: wall_ns=[0-9]+' \
+				"$sample_log" 2>/dev/null | tail -n 1 || true)"
+			local exposure_timeout_wall_ns
+			exposure_timeout_wall_ns="$(sed -E 's/.*wall_ns=([0-9]+).*/\1/' <<<"$exposure_timeout")"
+			if [[ ! "$exposure_timeout_wall_ns" =~ ^[0-9]+$ ]] \
+				|| (( exposure_timeout_wall_ns >= 2000000000 )); then
+				cat "$sample_log" >&2
+				printf 'Font startup splash evidence missing or exposure fallback exceeded 2s: %s\n' \
+					"$sample" >&2
+				return 1
+			fi
+			printf 'Font database warmup fallback=PASS sample=%s wall_ns=%s\n' \
+				"$sample" "$exposure_timeout_wall_ns"
+			startup_splash_position="$(grep -F -n -h 'Font startup exposure timeout regression:' \
+				"$sample_log" | tail -n 1 | cut -d: -f1)"
+		fi
+		local warmup_started_position
+		warmup_started_position="$(grep -F -n -h 'Font database warmup regression: started=1' \
+			"$sample_log" | tail -n 1 | cut -d: -f1)"
+		if [[ ! "$startup_splash_position" =~ ^[0-9]+$ ]] \
+			|| [[ ! "$warmup_started_position" =~ ^[0-9]+$ ]] \
+			|| (( warmup_started_position <= startup_splash_position )); then
+			cat "$sample_log" >&2
+			printf 'font database warmup started before splash exposure or timeout: %s\n' \
+				"$sample" >&2
+			return 1
+		fi
+		printf 'Font database warmup order=PASS sample=%s\n' "$sample"
+		local warmup
+		warmup="$(grep -F 'Font database warmup regression: ready=1' \
+			"$sample_log" "$font_profile_log" 2>/dev/null | tail -n 1 || true)"
+		if [[ -z "$warmup" ]]; then
+			cat "$sample_log" >&2
+			if [[ -f "$font_profile_log" ]]; then
+				cat "$font_profile_log" >&2
+			fi
+			echo "font database warmup did not finish before app initialization: $sample" >&2
+			return 1
+		fi
+		printf 'Font database warmup before app run=PASS sample=%s\n' "$sample"
+		if ! grep -F -q 'Font database metrics warmup regression: ready=1' \
+			"$sample_log"; then
+			cat "$sample_log" >&2
+			echo "font metrics were not prewarmed off the UI thread: $sample" >&2
+			return 1
+		fi
+		if ! grep -F -q 'Font database warmup regression: ready=1 custom-fonts=1' \
+			"$sample_log" "$font_profile_log" 2>/dev/null; then
+			cat "$sample_log" >&2
+			if [[ -f "$font_profile_log" ]]; then
+				cat "$font_profile_log" >&2
+			fi
+			echo "bundled fonts were not preloaded before app initialization: $sample" >&2
+			return 1
+		fi
+		local stalls
+		# Only the system font-family enumeration is gated. Other font
+		# stalls (first-text shaping, bundled-font registration) are
+		# reported below and belong to the chat-switch and startup work.
+		local enumeration_frames='CTFontManagerCopyAvailableFontFamilyNames|populateFontDatabase|QFontDatabase::families'
+		stalls="$(grep -E "UI stall [0-9]+ ms.*($enumeration_frames)" \
+			"$sample_log" "$font_profile_log" 2>/dev/null || true)"
+		local other_font_stalls
+		other_font_stalls="$(grep -E 'UI stall [0-9]+ ms.*(QFont|QRawFont|CTFont|CoreText|QTextEngine|populateFromDescriptor)' \
+			"$sample_log" "$font_profile_log" 2>/dev/null \
+			| grep -v -E "$enumeration_frames" \
+			|| true)"
+		if [[ -n "$other_font_stalls" ]]; then
+			printf 'Font-code startup %s reported (not gated) stalls: %s\n' \
+				"$sample" "$other_font_stalls"
+		fi
+		if [[ -n "$stalls" ]]; then
+			cat "$sample_log" >&2
+			if [[ -f "$font_profile_log" ]]; then
+				cat "$font_profile_log" >&2
+			fi
+			printf 'Font-code startup %s produced a main-thread stall: %s\n' \
+				"$sample" "$stalls" >&2
+			return 1
+		fi
+		printf 'Font-code startup stall gate=PASS sample=%s\n' "$sample"
+		local timing
+		timing="$(grep -E 'StartFonts startup regression: wall_ns=[0-9]+' \
+			"$sample_log" "$font_profile_log" 2>/dev/null | tail -n 1 || true)"
+		local wall_ns
+		wall_ns="$(sed -E 's/.*wall_ns=([0-9]+).*/\1/' <<<"$timing")"
+		if [[ ! "$wall_ns" =~ ^[0-9]+$ ]] || (( wall_ns >= 100000000 )); then
+			cat "$sample_log" >&2
+			if [[ -f "$font_profile_log" ]]; then
+				cat "$font_profile_log" >&2
+			fi
+			printf 'StartFonts %s exceeded the 100ms budget or had no timing: %s\n' \
+				"$sample" "$timing" >&2
+			return 1
+		fi
+		if ! grep -E -q "$expected_fallback" "$sample_log" "$font_profile_log" 2>/dev/null; then
+			cat "$sample_log" >&2
+			if [[ -f "$font_profile_log" ]]; then
+				cat "$font_profile_log" >&2
+			fi
+			echo "font fallback regression evidence missing or changed." >&2
+			return 1
+		fi
+		printf 'StartFonts %s=PASS wall_ns=%s under_100ms=1\n' "$sample" "$wall_ns"
+		if [[ "$sample" == cold ]]; then
+			cold_wall_ns="$wall_ns"
+		else
+			warm_wall_ns="$wall_ns"
+		fi
+	done
+	local exposure_timeout_log="$TEST_HOME/font-startup-exposure-timeout.log"
+	mkdir -p "$(dirname "$font_profile_log")"
+	: > "$font_profile_log"
+	if ! env HOME="$font_home" TMPDIR="$TEST_TMP_BASE" \
+		TDESKTOP_MAC_PROFILE_TEST_HOME="$font_home" \
+		TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST=1 \
+		TDESKTOP_FONT_STARTUP_REGRESSION=1 \
+		TDESKTOP_FONT_STARTUP_REGRESSION_SKIP_EXPOSE_CALLBACK=1 \
+		"$APP" -noupdate -debug >"$exposure_timeout_log" 2>&1; then
+		cat "$exposure_timeout_log" >&2
+		if [[ -f "$font_profile_log" ]]; then
+			cat "$font_profile_log" >&2
+		fi
+		symbolicate_font_startup_crash "$font_home"
+		echo "font startup exposure-timeout regression launch failed" >&2
+		return 1
+	fi
+	local exposure_timeout
+	exposure_timeout="$(grep -E 'Font startup exposure timeout regression: wall_ns=[0-9]+' \
+		"$exposure_timeout_log" 2>/dev/null | tail -n 1 || true)"
+	local exposure_timeout_wall_ns
+	exposure_timeout_wall_ns="$(sed -E 's/.*wall_ns=([0-9]+).*/\1/' <<<"$exposure_timeout")"
+	if [[ ! "$exposure_timeout_wall_ns" =~ ^[0-9]+$ ]] \
+		|| (( exposure_timeout_wall_ns >= 2000000000 )); then
+		cat "$exposure_timeout_log" >&2
+		printf 'font startup exposure fallback missing or exceeded 2s: %s\n' \
+			"$exposure_timeout" >&2
+		return 1
+	fi
+	local timeout_position
+	timeout_position="$(grep -F -n -h 'Font startup exposure timeout regression:' \
+		"$exposure_timeout_log" | tail -n 1 | cut -d: -f1)"
+	local warmup_started_position
+	warmup_started_position="$(grep -F -n -h 'Font database warmup regression: started=1' \
+		"$exposure_timeout_log" | tail -n 1 | cut -d: -f1)"
+	if [[ ! "$timeout_position" =~ ^[0-9]+$ ]] \
+		|| [[ ! "$warmup_started_position" =~ ^[0-9]+$ ]] \
+		|| (( warmup_started_position <= timeout_position )); then
+		cat "$exposure_timeout_log" >&2
+		echo "font database warmup did not start after the exposure timeout" >&2
+		return 1
+	fi
+	if ! grep -F -q 'Font database warmup regression: ready=1 custom-fonts=1' \
+		"$exposure_timeout_log" "$font_profile_log" 2>/dev/null \
+		|| ! grep -E -q 'StartFonts startup regression: wall_ns=[0-9]+' \
+			"$exposure_timeout_log" "$font_profile_log" 2>/dev/null; then
+		cat "$exposure_timeout_log" >&2
+		if [[ -f "$font_profile_log" ]]; then
+			cat "$font_profile_log" >&2
+		fi
+		echo "font startup did not continue after the exposure timeout" >&2
+		return 1
+	fi
+	if ! grep -F -q 'Font database metrics warmup regression: ready=1' \
+		"$exposure_timeout_log"; then
+		cat "$exposure_timeout_log" >&2
+		echo 'font metrics were not prewarmed after the exposure timeout' >&2
+		return 1
+	fi
+	printf 'Font database warmup fallback=PASS sample=occluded wall_ns=%s\n' \
+		"$exposure_timeout_wall_ns"
+	printf 'StartFonts startup regression: cold_wall_ns=%s warm_wall_ns=%s fallback=PASS font_stall_gate=PASS\n' \
+		"$cold_wall_ns" "$warm_wall_ns"
+	run_font_shutdown_regression
+	local probe_failure_log="$TEST_HOME/font-probe-install-failure.log"
+	if run_font_shutdown_regression signal-install >"$probe_failure_log" 2>&1; then
+		echo 'font shutdown regression accepted a failed probe installation' >&2
+		return 1
+	fi
+	if ! grep -F -q 'probe=unavailable' "$probe_failure_log" \
+		|| ! grep -F -q 'font shutdown regression probe failed' "$probe_failure_log"; then
+		cat "$probe_failure_log" >&2
+		echo 'font shutdown probe installation failure was not diagnosed' >&2
+		return 1
+	fi
+	printf 'Font shutdown probe installation failure=PASS\n'
+	local probe_timeout_log="$TEST_HOME/font-probe-timeout.log"
+	if run_font_shutdown_regression probe-timeout >"$probe_timeout_log" 2>&1; then
+		echo 'font shutdown regression accepted a probe timeout' >&2
+		return 1
+	fi
+	if ! grep -E -q '^Font shutdown regression: last_other_work_frames=.+' \
+		"$probe_timeout_log" \
+		|| grep -F -q 'Font shutdown regression: last_other_work_frames=unavailable' \
+			"$probe_timeout_log" \
+		|| ! grep -F -q 'font shutdown regression did not quit during an active system font enumeration' \
+			"$probe_timeout_log"; then
+		cat "$probe_timeout_log" >&2
+		echo 'font shutdown probe timeout did not report the sampled frames' >&2
+		return 1
+	fi
+	printf 'Font shutdown probe timeout diagnostics=PASS\n'
+	run_font_warmup_thread_failure_regression
+}
+
+run_start_in_tray_regression() {
+	local case_home="$TEST_HOME/start-in-tray"
+	local case_log="$case_home/start.log"
+	local quit_log="$case_home/quit.log"
+	local expected='Mac start-in-tray regression: startup=complete start_intray=1 window_and_tray=1 hidden=1 splash_visible=1 splash_destroyed=1'
+	local ready=false
+	local exit_status
+	mkdir -p "$case_home"
+	env HOME="$case_home" TMPDIR="$TEST_TMP_BASE" \
+		TDESKTOP_MAC_PROFILE_TEST_HOME="$case_home" \
+		TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST=1 \
+		TDESKTOP_MAC_START_IN_TRAY_REGRESSION=1 \
+		"$APP" -noupdate -debug -startintray >"$case_log" 2>&1 &
+	FIRST_PID=$!
+	for ((attempt = 0; attempt < 300; ++attempt)); do
+		if ! process_alive "$FIRST_PID"; then
+			cat "$case_log" >&2
+			echo 'start-in-tray process exited before startup completed' >&2
+			return 1
+		fi
+		if grep -F -q "$expected" "$case_log"; then
+			ready=true
+			break
+		fi
+		sleep 0.2
+	done
+	if [[ "$ready" != true ]]; then
+		cat "$case_log" >&2
+		echo 'start-in-tray startup did not report a hidden window and dismissed splash' >&2
+		return 1
+	fi
+	sleep 1
+	if ! process_alive "$FIRST_PID"; then
+		cat "$case_log" >&2
+		echo 'start-in-tray process exited after startup' >&2
+		return 1
+	fi
+	if ! env HOME="$case_home" TMPDIR="$TEST_TMP_BASE" \
+		TDESKTOP_MAC_PROFILE_TEST_HOME="$case_home" \
+		TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST=1 \
+		"$APP" -quit >"$quit_log" 2>&1; then
+		cat "$case_log" "$quit_log" >&2
+		echo 'start-in-tray quit request failed' >&2
+		return 1
+	fi
+	for ((attempt = 0; attempt < 150; ++attempt)); do
+		if ! process_alive "$FIRST_PID"; then
+			break
+		fi
+		sleep 0.2
+	done
+	if process_alive "$FIRST_PID"; then
+		cat "$case_log" "$quit_log" >&2
+		echo 'start-in-tray process did not exit after quit request' >&2
+		return 1
+	fi
+	if wait "$FIRST_PID"; then
+		exit_status=0
+	else
+		exit_status=$?
+	fi
+	FIRST_PID=""
+	if (( exit_status != 0 )); then
+		cat "$case_log" "$quit_log" >&2
+		printf 'start-in-tray process exited with status %d\n' "$exit_status" >&2
+		return 1
+	fi
+	printf 'start_in_tray_regression=PASS hidden=1 alive_after_startup=1\n'
 }
 
 run_authenticated_lifecycle_regression() {
@@ -1826,8 +2562,11 @@ run_authenticated_folder_fault_case() {
 
 case "$CASE_NAME" in
 all)
+	run_font_startup_regression
+	export TDESKTOP_MAC_FONT_STARTUP_ALREADY_RUN=1
 	lifecycle_cases=(
 		profile-ipc
+		start-in-tray
 		spoiler-cache-emoji
 		spoiler-cache-spoiler
 		spoiler-cache-text
@@ -1848,6 +2587,9 @@ all)
 profile-ipc)
 	run_protected_profile_ipc_case
 	;;
+start-in-tray)
+	run_start_in_tray_regression
+	;;
 spoiler-cache-emoji)
 	run_spoiler_cache_symlink_case emoji-cache-symlink emoji
 	;;
@@ -1860,7 +2602,13 @@ spoiler-cache-text)
 spoiler-cache-image)
 	run_spoiler_cache_symlink_case image-cache-leaf-symlink image
 	;;
+font-startup)
+	run_font_startup_regression
+	;;
 authenticated-cache)
+	if [[ "${TDESKTOP_MAC_FONT_STARTUP_ALREADY_RUN:-0}" != 1 ]]; then
+		run_font_startup_regression
+	fi
 	run_authenticated_cache_regression
 	;;
 authenticated-lifecycle)
