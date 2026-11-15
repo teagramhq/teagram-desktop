@@ -29,6 +29,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <QtCore/QDataStream>
 #include <QtCore/QDir>
 #include <QtCore/QDirIterator>
+#include <QtCore/QElapsedTimer>
 #include <QtCore/QEventLoop>
 #include <QtCore/QFile>
 #include <QtCore/QFileInfo>
@@ -2138,6 +2139,68 @@ TEST_CASE(EnrollmentDoesNotResumeWhileProductionPersistenceStalls) {
 	enrollment.join();
 	CHECK(committed.load());
 	CHECK(resumed.load());
+}
+
+TEST_CASE(VerifiedEndpointConfigWriteReportsDurableResult) {
+	QTemporaryDir directory;
+	CHECK(directory.isValid());
+	const auto key = MakeEnrollmentStorageKey();
+	const auto original = MakeEndpointRefreshPin("100.124.236.66");
+	const auto candidate = MakeEndpointRefreshPin("100.112.103.90");
+	auto config = std::make_shared<MTP::Config>(MTP::Environment::Production);
+	CHECK(config->dcOptions().setCustomServer(original));
+	CHECK(config->dcOptions().markAuthorized(original.dcId));
+	auto staged = MTP::Config(*config);
+	CHECK(staged.dcOptions().refreshCustomServerEndpoint(original, candidate));
+	const auto wait = [](const auto &result) {
+		auto timer = QElapsedTimer();
+		timer.start();
+		while (!result->has_value() && timer.elapsed() < 5'000) {
+			QCoreApplication::processEvents();
+			QThread::msleep(1);
+		}
+		return result->has_value();
+	};
+	const auto path = directory.path() + u"/success/"_q;
+	auto account = Storage::Account(path, key, config, true);
+	CHECK(account.writeMtpConfig(true));
+	const auto success = std::make_shared<std::optional<bool>>();
+	const auto callbackOnMain = std::make_shared<bool>(false);
+	account.writeVerifiedEndpointConfig(
+		staged, [success, callbackOnMain](bool value) {
+			*callbackOnMain = QThread::currentThread()
+							  == QCoreApplication::instance()->thread();
+			*success = value;
+		});
+	CHECK(wait(success));
+	CHECK(success->value_or(false));
+	CHECK(*callbackOnMain);
+	auto file = Storage::details::FileReadDescriptor();
+	const auto read
+		= Storage::details::ReadEncryptedFile(file, u"config"_q, path, key);
+	CHECK(read);
+	if (read) {
+		auto serialized = QByteArray();
+		file.stream >> serialized;
+		const auto restored = MTP::Config::FromSerialized(serialized);
+		CHECK(restored != nullptr);
+		if (restored) {
+			CHECK(SameCustomServerPin(candidate,
+									  restored->dcOptions().customServer()));
+		}
+	}
+	CHECK(SameCustomServerPin(original, config->dcOptions().customServer()));
+
+	const auto failurePath = directory.path() + u"/failure/"_q;
+	CHECK(QDir().mkpath(failurePath + u"configs"_q));
+	CHECK(QDir().mkpath(failurePath + u"config0"_q));
+	auto failingAccount = Storage::Account(failurePath, key, config, true);
+	const auto failure = std::make_shared<std::optional<bool>>();
+	failingAccount.writeVerifiedEndpointConfig(
+		staged, [failure](bool value) { *failure = value; });
+	CHECK(wait(failure));
+	CHECK(failure->has_value() && !failure->value());
+	CHECK(SameCustomServerPin(original, config->dcOptions().customServer()));
 }
 
 TEST_CASE(EnrollmentStepConsumesSpaceOutsideConfirm) {

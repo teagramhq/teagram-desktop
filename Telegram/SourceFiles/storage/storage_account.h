@@ -163,6 +163,8 @@ public:
 	bool writeMtpAuthorizationFailure();
 	bool writeMtpData(bool sync = false);
 	bool writeMtpConfig(bool sync = false);
+	void writeVerifiedEndpointConfig(const MTP::Config &config,
+									 Fn<void(bool)> done);
 	// A durable marker is written before destructive re-enrollment. The
 	// cleanup remains pending until every server-scoped store has been
 	// removed and an empty account can be written back.
@@ -182,6 +184,7 @@ public:
 #ifdef TDESKTOP_LIFECYCLE_REGRESSION
 	[[nodiscard]] bool mtpAuthorizationDataExistsForRegressionTest() const;
 	[[nodiscard]] QStringList serverCacheBindingFilesForRegressionTest() const;
+	[[nodiscard]] std::unique_ptr<MTP::Config> readMtpConfigForRegressionTest();
 #endif
 
 	void registerDraftSource(

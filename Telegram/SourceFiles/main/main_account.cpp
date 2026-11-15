@@ -148,6 +148,19 @@ enum class PinFailure {
 	return result;
 }
 
+[[nodiscard]] bool HasStoredEndpointAuthKey(const MTP::Instance &instance,
+											const MTP::AuthKeyPtr &expected) {
+	if (!expected) {
+		return false;
+	}
+	const auto keys = instance.getKeysForWrite();
+	return ranges::any_of(keys, [&](const auto &key) {
+		return key && key->dcId() == expected->dcId()
+			   && key->type() == MTP::AuthKey::Type::ReadFromFile
+			   && key->equals(expected);
+	});
+}
+
 } // namespace
 
 Account::Account(not_null<Domain *> domain, const QString &dataName, int index)
@@ -880,7 +893,11 @@ bool Account::startMtp(
 	}) | rpl::on_next([=] {
 		*writingConfig = true;
 		Ui::PostponeCall(_mtp.get(), [=] {
-			local().writeMtpConfig();
+			if (_serverEndpointPersistencePending) {
+				_serverEndpointConfigWriteDeferred = true;
+			} else {
+				local().writeMtpConfig();
+			}
 			*writingConfig = false;
 		});
 	}, _lifetime);
@@ -900,7 +917,8 @@ bool Account::startMtp(
 			_mtp->dcstate(_mtp->mainDcId()) == MTP::ConnectedState);
 	_mtp->setStateChangedHandler([=](MTP::ShiftedDcId dc, int32 state) {
 		if (dc == _mtp->mainDcId()) {
-			if (state == MTP::ConnectedState) {
+			if (state == MTP::ConnectedState
+				&& _mtp->isServerEnrollmentNetworkAllowed()) {
 				_serverEndpointRefreshFailures = 0;
 				_serverEndpointRefreshIdentityFailure = false;
 				const auto resumePausedRequests
@@ -1387,7 +1405,8 @@ void Account::serverEndpointVerificationFinished(bool authenticated) {
 	if (_serverEndpointRefreshDiscovery) {
 		_serverEndpointRefreshDiscovery->cancel();
 	}
-	if (!_endpointRefresh.hasCandidate() || !_mtp) {
+	if (!_endpointRefresh.hasCandidate() || !_mtp
+		|| !_mtpForEndpointVerification) {
 		_mtpForEndpointVerification = nullptr;
 		return;
 	}
@@ -1396,60 +1415,86 @@ void Account::serverEndpointVerificationFinished(bool authenticated) {
 	const auto original = _endpointRefresh.original();
 	const auto candidate = _endpointRefresh.candidate();
 	const auto current = _mtp->dcOptions().customServer();
-	auto committed = false;
-	if (authenticated && MTP::SameCustomServerPin(original, current)) {
-		const auto committedRefresh = _endpointRefresh.commit(
-			authenticated,
-			[&] {
-				const auto refreshed
-					= _mtp->dcOptions().refreshCustomServerEndpoint(original,
-																	candidate);
-				if (!refreshed) {
-					LOG(("MTP Error: could not update the active endpoint for "
-						 "dc %1.")
-							.arg(original.dcId));
-				}
-				return refreshed;
-			},
-			[&] {
-				const auto persisted = local().writeMtpConfig(true);
-				if (!persisted) {
-					LOG(("MTP Error: could not persist the refreshed endpoint "
-						 "for dc %1.")
-							.arg(original.dcId));
-				}
-				return persisted;
-			},
-			[&] {
-				if (_mtpKeysToDestroyPin
-					&& MTP::SameCustomServerPin(*_mtpKeysToDestroyPin,
-												original)) {
-					_mtpKeysToDestroyPin = candidate;
-				}
-				_mtp->resume();
-			},
-			[&] {
-				if (!_mtp->dcOptions().refreshCustomServerEndpoint(candidate,
-																   original)) {
-					LOG(("MTP Error: could not roll back the unpersisted "
-						 "endpoint for dc %1.")
-							.arg(original.dcId));
-				}
-			});
-		committed = committedRefresh;
+	const auto verifiedKey = [&] {
+		for (const auto &key : verifier->getKeysForWrite()) {
+			if (key && key->dcId() == original.dcId
+				&& key->type() == MTP::AuthKey::Type::ReadFromFile) {
+				return key;
+			}
+		}
+		return MTP::AuthKeyPtr();
+	}();
+	if (authenticated && HasStoredEndpointAuthKey(*_mtp, verifiedKey)
+		&& MTP::SameCustomServerPin(original, current)) {
+		auto config = MTP::Config(_mtp->config());
+		if (config.dcOptions().refreshCustomServerEndpoint(original,
+														   candidate)) {
+			_serverEndpointPersistencePending = true;
+			const auto generation = ++_serverEndpointPersistenceGeneration;
+			local().writeVerifiedEndpointConfig(
+				config, crl::guard(this, [=](bool persisted) {
+					serverEndpointPersistenceFinished(generation, persisted,
+													  verifiedKey);
+				}));
+			return;
+		}
+		LOG(("MTP Error: could not stage the verified endpoint for dc %1.")
+				.arg(original.dcId));
 	} else if (!authenticated) {
 		LOG(("MTP Error: refreshed endpoint failed auth-key proof for dc %1.")
 				.arg(_endpointRefresh.original().dcId));
+	} else if (!HasStoredEndpointAuthKey(*_mtp, verifiedKey)) {
+		LOG(("MTP Error: endpoint verification key changed for dc %1.")
+				.arg(original.dcId));
 	} else {
 		LOG(("MTP Error: pin changed before endpoint verification committed "
 			 "for dc %1.")
 				.arg(original.dcId));
 	}
 	_endpointRefresh.reset();
-	if (committed) {
+	++_serverEndpointRefreshFailures;
+	scheduleServerEndpointRefreshRetry();
+}
+
+void Account::serverEndpointPersistenceFinished(
+	uint64 generation, bool persisted, const MTP::AuthKeyPtr &verifiedKey) {
+	if (!_serverEndpointPersistencePending
+		|| generation != _serverEndpointPersistenceGeneration) {
+		return;
+	}
+	_serverEndpointPersistencePending = false;
+	const auto writeDeferred = base::take(_serverEndpointConfigWriteDeferred);
+	if (!_mtp || !_endpointRefresh.hasCandidate()) {
+		return;
+	}
+	const auto original = _endpointRefresh.original();
+	const auto candidate = _endpointRefresh.candidate();
+	const auto current = _mtp->dcOptions().customServer();
+	if (persisted && canRefreshServerEndpoint()
+		&& !_mtp->isServerEnrollmentNetworkAllowed()
+		&& HasStoredEndpointAuthKey(*_mtp, verifiedKey)
+		&& MTP::SameCustomServerPin(original, current)
+		&& _mtp->dcOptions().refreshCustomServerEndpoint(original, candidate)) {
+		_endpointRefresh.reset();
 		_serverEndpointRefreshFailures = 0;
 		_serverEndpointRefreshRetryTimer->stop();
+		if (_mtpKeysToDestroyPin
+			&& MTP::SameCustomServerPin(*_mtpKeysToDestroyPin, original)) {
+			_mtpKeysToDestroyPin = candidate;
+		}
+		_mtp->resume();
 		return;
+	}
+	if (!persisted) {
+		LOG(("MTP Error: could not persist the refreshed endpoint for dc %1.")
+				.arg(original.dcId));
+	} else {
+		LOG(("MTP Error: could not apply the persisted endpoint for dc %1.")
+				.arg(original.dcId));
+	}
+	_endpointRefresh.reset();
+	if (persisted || writeDeferred) {
+		local().writeMtpConfig();
 	}
 	++_serverEndpointRefreshFailures;
 	scheduleServerEndpointRefreshRetry();
@@ -1472,6 +1517,14 @@ void Account::cancelServerEndpointRefresh() {
 	_serverEndpointRefreshRetryTimer->stop();
 	_serverEndpointVerificationTimer->stop();
 	_mtpForEndpointVerification = nullptr;
+	if (_serverEndpointPersistencePending) {
+		_serverEndpointPersistencePending = false;
+		++_serverEndpointPersistenceGeneration;
+		_serverEndpointConfigWriteDeferred = false;
+		if (_mtp) {
+			local().writeMtpConfig();
+		}
+	}
 	_endpointRefresh.reset();
 }
 

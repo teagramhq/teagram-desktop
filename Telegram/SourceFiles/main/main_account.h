@@ -207,6 +207,8 @@ private:
 	void requestServerEndpointRefresh(MTP::ShiftedDcId shiftedDcId);
 	void serverEndpointRefreshDiscovered(MTP::ServerDiscoveryResult result);
 	void serverEndpointVerificationFinished(bool authenticated);
+	void serverEndpointPersistenceFinished(uint64 generation, bool persisted,
+										   const MTP::AuthKeyPtr &verifiedKey);
 	void scheduleServerEndpointRefreshRetry();
 	void cancelServerEndpointRefresh();
 
@@ -248,6 +250,9 @@ private:
 	bool _restoredSession = false;
 	bool _serverCacheBindingMismatchPending = false;
 	bool _serverEndpointRefreshIdentityFailure = false;
+	bool _serverEndpointPersistencePending = false;
+	bool _serverEndpointConfigWriteDeferred = false;
+	uint64 _serverEndpointPersistenceGeneration = 0;
 	int _serverEndpointRefreshFailures = 0;
 	MTP::ShiftedDcId _serverEndpointRefreshDcId = 0;
 

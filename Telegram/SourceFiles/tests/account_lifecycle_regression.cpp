@@ -3086,6 +3086,19 @@ class LocalEndpointRefreshDiscoveryStub final {
 				   && key->equals(storedAuthKey);
 		});
 	};
+	const auto restoredKey = [&] {
+		for (const auto &key : mtp.getKeysForWrite()) {
+			if (key && key->dcId() == storedAuthKey->dcId()
+				&& key->type() == MTP::AuthKey::Type::ReadFromFile
+				&& key->equals(storedAuthKey)) {
+				return key;
+			}
+		}
+		return MTP::AuthKeyPtr();
+	}();
+	if (!restoredKey) {
+		return fail("the restored auth key was unavailable");
+	}
 	const auto retryRefresh = [&] {
 		AccountLifecycleRegressionAccess::cancelEndpointRefresh(*account);
 		mtp.resume();
@@ -3136,7 +3149,142 @@ class LocalEndpointRefreshDiscoveryStub final {
 	if (!retryRefresh()) {
 		return fail("the retry did not wait for a second proof");
 	}
+	struct DelayedEndpointWrite {
+		QSemaphore started;
+		QSemaphore release;
+	};
+	const auto cancelledWrite = std::make_shared<DelayedEndpointWrite>();
+	Storage::details::SetEndpointConfigWriteHookForRegressionTest(
+		[cancelledWrite] {
+			cancelledWrite->started.release();
+			return cancelledWrite->release.tryAcquire(1, 10'000);
+		});
+	const auto releaseCancelledWrite = gsl::finally([&] {
+		cancelledWrite->release.release();
+		Storage::details::SetEndpointConfigWriteHookForRegressionTest(nullptr);
+	});
 	discovery.replyToPendingVerifierConfig(true);
+	auto cancelledStarted = false;
+	if (!WaitForRegressionCondition([&] {
+			return cancelledStarted
+				   || (cancelledStarted = cancelledWrite->started.tryAcquire());
+		})) {
+		return fail("the cancelled endpoint write did not start");
+	}
+	AccountLifecycleRegressionAccess::cancelEndpointRefresh(*account);
+	cancelledWrite->release.release();
+	Storage::details::Sync();
+	QCoreApplication::processEvents();
+	const auto cancelledConfig
+		= account->local().readMtpConfigForRegressionTest();
+	if (mtp.isServerEnrollmentNetworkAllowed()
+		|| !mtp.hasCallback(acceptedRequestId) || callbackCount != 0
+		|| !MTP::SameCustomServerPin(original, mtp.dcOptions().customServer())
+		|| !cancelledConfig
+		|| !MTP::SameCustomServerPin(
+			original, cancelledConfig->dcOptions().customServer())
+		|| !storedKeyIsRetained() || !pausedRequestIsRefused()) {
+		return fail(
+			"a cancelled endpoint write resumed or changed the account");
+	}
+	if (!retryRefresh()) {
+		return fail("the retry after cancelled persistence did not start");
+	}
+	Storage::details::SetEndpointConfigWriteHookForRegressionTest(
+		[] { return false; });
+	discovery.replyToPendingVerifierConfig(true);
+	const auto failedWriteFinished = WaitForRegressionCondition([&] {
+		return !AccountLifecycleRegressionAccess::endpointRefreshPending(
+				   *account)
+			   && AccountLifecycleRegressionAccess::
+				   endpointRefreshRetryScheduled(*account);
+	});
+	const auto failedConfig = account->local().readMtpConfigForRegressionTest();
+	if (!failedWriteFinished || mtp.isServerEnrollmentNetworkAllowed()
+		|| !mtp.hasCallback(acceptedRequestId) || callbackCount != 0
+		|| !MTP::SameCustomServerPin(original, mtp.dcOptions().customServer())
+		|| !failedConfig
+		|| !MTP::SameCustomServerPin(original,
+									 failedConfig->dcOptions().customServer())
+		|| !storedKeyIsRetained() || !pausedRequestIsRefused()) {
+		return fail("a failed endpoint write resumed or changed the account");
+	}
+	if (!retryRefresh()) {
+		return fail("the retry after failed persistence did not start");
+	}
+	const auto changedKeyWrite = std::make_shared<DelayedEndpointWrite>();
+	Storage::details::SetEndpointConfigWriteHookForRegressionTest(
+		[changedKeyWrite] {
+			changedKeyWrite->started.release();
+			return changedKeyWrite->release.tryAcquire(1, 10'000);
+		});
+	const auto restoreKey = gsl::finally([&] {
+		changedKeyWrite->release.release();
+		Storage::details::SetEndpointConfigWriteHookForRegressionTest(nullptr);
+		mtp.dcPersistentKeyChanged(restoredKey->dcId(), restoredKey);
+	});
+	discovery.replyToPendingVerifierConfig(true);
+	auto changedKeyStarted = false;
+	if (!WaitForRegressionCondition([&] {
+			return changedKeyStarted
+				   || (changedKeyStarted
+					   = changedKeyWrite->started.tryAcquire());
+		})) {
+		return fail("the endpoint write before key replacement did not start");
+	}
+	mtp.dcPersistentKeyChanged(restoredKey->dcId(), RegressionAuthKey(0x44));
+	changedKeyWrite->release.release();
+	if (!WaitForRegressionCondition([&] {
+			return !AccountLifecycleRegressionAccess::endpointRefreshPending(
+				*account);
+		})) {
+		return fail("the endpoint write did not notice the changed auth key");
+	}
+	Storage::details::Sync();
+	const auto changedKeyConfig
+		= account->local().readMtpConfigForRegressionTest();
+	if (mtp.isServerEnrollmentNetworkAllowed()
+		|| !mtp.hasCallback(acceptedRequestId) || callbackCount != 0
+		|| !MTP::SameCustomServerPin(original, mtp.dcOptions().customServer())
+		|| !changedKeyConfig
+		|| !MTP::SameCustomServerPin(
+			original, changedKeyConfig->dcOptions().customServer())
+		|| !pausedRequestIsRefused()) {
+		return fail("a changed auth key allowed the endpoint to commit");
+	}
+	mtp.dcPersistentKeyChanged(restoredKey->dcId(), restoredKey);
+	if (!storedKeyIsRetained() || !retryRefresh()) {
+		return fail("the retry after restoring the auth key did not start");
+	}
+	const auto delayedWrite = std::make_shared<DelayedEndpointWrite>();
+	Storage::details::SetEndpointConfigWriteHookForRegressionTest(
+		[delayedWrite] {
+			delayedWrite->started.release();
+			return delayedWrite->release.tryAcquire(1, 10'000);
+		});
+	const auto releaseDelayedWrite = gsl::finally([&] {
+		delayedWrite->release.release();
+		Storage::details::SetEndpointConfigWriteHookForRegressionTest(nullptr);
+	});
+	discovery.replyToPendingVerifierConfig(true);
+	auto writeStarted = false;
+	if (!WaitForRegressionCondition([&] {
+			return writeStarted
+				   || (writeStarted = delayedWrite->started.tryAcquire());
+		})) {
+		return fail("the verified endpoint did not begin its storage write");
+	}
+	const auto uiResponsive = std::make_shared<bool>(false);
+	QTimer::singleShot(0, [uiResponsive] { *uiResponsive = true; });
+	if (!WaitForRegressionCondition([&] { return *uiResponsive; })
+		|| mtp.isServerEnrollmentNetworkAllowed()
+		|| !mtp.hasCallback(acceptedRequestId) || callbackCount != 0
+		|| !MTP::SameCustomServerPin(original, mtp.dcOptions().customServer())
+		|| !storedKeyIsRetained() || !pausedRequestIsRefused()) {
+		return fail("the account did not stay paused and responsive during "
+					"endpoint persistence");
+	}
+	delayedWrite->release.release();
 	if (!WaitForRegressionCondition([&] {
 			const auto moved = mtp.dcOptions().customServer();
 			return !AccountLifecycleRegressionAccess::
@@ -3148,9 +3296,12 @@ class LocalEndpointRefreshDiscoveryStub final {
 		return fail("a successful proof did not commit and resume the account");
 	}
 	const auto moved = mtp.dcOptions().customServer();
+	const auto savedConfig = account->local().readMtpConfigForRegressionTest();
 	if (AccountLifecycleRegressionAccess::endpointVerificationPending(*account)
 		|| !mtp.isServerEnrollmentNetworkAllowed() || moved.ip != "127.0.0.1"
-		|| moved.ipv6 || moved.port != int(discovery.port())
+		|| moved.ipv6 || moved.port != int(discovery.port()) || !savedConfig
+		|| !MTP::SameCustomServerPin(moved,
+									 savedConfig->dcOptions().customServer())
 		|| !MTP::SameCustomServerEndpointRefreshIdentity(original, moved)) {
 		return fail("the committed endpoint changed the pin identity");
 	}

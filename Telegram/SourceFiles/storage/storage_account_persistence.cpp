@@ -1115,6 +1115,23 @@ bool Account::writeMtpConfig(bool sync) {
 	return true;
 }
 
+void Account::writeVerifiedEndpointConfig(const MTP::Config &config,
+										  Fn<void(bool)> done) {
+	Expects(_localKey != nullptr);
+	Expects(done != nullptr);
+	if (config.blocked() || !config.hasCustomServer() || !_hasStoredCustomServer
+		|| _customServerPinUnknown) {
+		done(false);
+		return;
+	}
+	const auto serialized = config.serialize();
+	EncryptedDescriptor data(Serialize::bytearraySize(serialized));
+	data.stream << serialized;
+	FileWriteDescriptor file(u"config"_q, _basePath);
+	file.writeEncrypted(data, _localKey);
+	file.finishAsync(std::move(done));
+}
+
 void Account::clearPref(std::string_view key) {
 	const auto i = _prefs.find(QByteArray(key.data(), key.size()));
 	if (i == end(_prefs)) {

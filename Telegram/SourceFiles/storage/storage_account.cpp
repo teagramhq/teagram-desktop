@@ -1346,6 +1346,12 @@ std::unique_ptr<MTP::Config> Account::readMtpConfig() {
 	return MTP::Config::FromSerialized(serialized);
 }
 
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+std::unique_ptr<MTP::Config> Account::readMtpConfigForRegressionTest() {
+	return readMtpConfig();
+}
+#endif
+
 template <typename Callback>
 void EnumerateDrafts(
 		const Data::HistoryDrafts &map,

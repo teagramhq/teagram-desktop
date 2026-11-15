@@ -65,6 +65,7 @@ public:
 		bool sync = false);
 	~FileWriteDescriptor();
 
+	void finishAsync(Fn<void(bool)> done);
 	void writeData(const QByteArray &data);
 	void writeEncrypted(
 		EncryptedDescriptor &data,
@@ -73,6 +74,7 @@ public:
 
 private:
 	void init(const QString &name);
+	[[nodiscard]] bool finish(Fn<void(bool)> done);
 
 	const QString _basePath;
 	QBuffer _buffer;
@@ -85,6 +87,10 @@ private:
 	bool _success = true;
 
 };
+
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+void SetEndpointConfigWriteHookForRegressionTest(Fn<bool()> hook);
+#endif
 
 bool ReadFile(
 	FileReadDescriptor &result,

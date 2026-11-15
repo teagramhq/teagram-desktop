@@ -15,6 +15,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "base/random.h"
 
 #include <crl/crl_object_on_thread.h>
+#include <QtCore/QCoreApplication>
+#include <QtCore/QMetaObject>
 #include <QtCore/QtEndian>
 #include <QtCore/QSaveFile>
 
@@ -78,6 +80,7 @@ class AsyncWriteManager final {
 public:
 	void write(WriteEntry &&entry);
 	[[nodiscard]] bool writeSync(WriteEntry &&entry);
+	void writeWithResult(WriteEntry &&entry, Fn<void(bool)> done);
 	void sync();
 	void stop();
 
@@ -86,6 +89,10 @@ private:
 	bool _finished = false;
 
 };
+
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+Fn<bool()> EndpointConfigWriteHook;
+#endif
 
 WriteManager::WriteManager(crl::weak_on_thread<WriteManager> weak)
 : _weak(std::move(weak)) {
@@ -252,6 +259,27 @@ bool AsyncWriteManager::writeSync(WriteEntry &&entry) {
 	return result;
 }
 
+void AsyncWriteManager::writeWithResult(WriteEntry &&entry,
+										Fn<void(bool)> done) {
+	Expects(!_finished);
+	if (!_manager) {
+		_manager.emplace();
+	}
+	auto hook = Fn<bool()>();
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+	hook = base::take(EndpointConfigWriteHook);
+#endif
+	_manager->with([entry = std::move(entry), done = std::move(done),
+					hook = std::move(hook)](WriteManager &manager) mutable {
+		const auto success
+			= (!hook || hook()) && manager.writeSync(std::move(entry));
+		QMetaObject::invokeMethod(
+			QCoreApplication::instance(),
+			[done = std::move(done), success] { done(success); },
+			Qt::QueuedConnection);
+	});
+}
+
 void AsyncWriteManager::sync() {
 	if (_manager) {
 		_manager->with_sync([](WriteManager &manager) {
@@ -271,6 +299,12 @@ void AsyncWriteManager::stop() {
 AsyncWriteManager Manager;
 
 } // namespace
+
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+void SetEndpointConfigWriteHookForRegressionTest(Fn<bool()> hook) {
+	EndpointConfigWriteHook = std::move(hook);
+}
+#endif
 
 QString ToFilePart(FileKey val) {
 	QString result;
@@ -473,7 +507,14 @@ void FileWriteDescriptor::writeEncrypted(
 	writeData(PrepareEncrypted(data, key));
 }
 
-bool FileWriteDescriptor::finish() {
+bool FileWriteDescriptor::finish() { return finish(nullptr); }
+
+void FileWriteDescriptor::finishAsync(Fn<void(bool)> done) {
+	Expects(!_sync && _stream.device() != nullptr && done != nullptr);
+	static_cast<void>(finish(std::move(done)));
+}
+
+bool FileWriteDescriptor::finish(Fn<void(bool)> done) {
 	if (!_stream.device()) {
 		return _success;
 	}
@@ -492,7 +533,9 @@ bool FileWriteDescriptor::finish() {
 		.data = _safeData,
 		.md5 = QByteArray((const char*)_md5.result(), 0x10)
 	};
-	if (_sync) {
+	if (done) {
+		Manager.writeWithResult(std::move(entry), std::move(done));
+	} else if (_sync) {
 		_success = Manager.writeSync(std::move(entry));
 	} else {
 		Manager.write(std::move(entry));
