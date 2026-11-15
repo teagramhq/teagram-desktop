@@ -242,6 +242,9 @@ class AccountLifecycleRegressionAccess {
 	[[nodiscard]] static bool restoredSession(const Main::Account &account) {
 		return account._restoredSession;
 	}
+	[[nodiscard]] static bool hasMtp(const Main::Account &account) {
+		return account._mtp != nullptr;
+	}
 	[[nodiscard]] static bool
 	endpointVerificationPending(const Main::Account &account) {
 		return account._mtpForEndpointVerification != nullptr;
@@ -3491,7 +3494,8 @@ MtpRequestCompletesAfterEndpointRefresh(not_null<Main::Account *> account,
 		return false;
 	}
 	account->start(std::move(config));
-	if (account->sessionExists()
+	if (!WaitForRegressionCondition([&] { return !account->startPending(); })
+		|| account->sessionExists()
 		|| account->willHaveSessionUniqueId(nullptr) != 0
 		|| !account->mtp().getKeysForWrite().empty()
 		|| !account->mtp().dcOptions().hasCustomServer()
@@ -3588,6 +3592,7 @@ RestartDomain(Main::Domain &domain,
 	}
 	Storage::details::Sync();
 	if (domain.start(QByteArray()) != Storage::StartResult::Success
+		|| !WaitForRegressionCondition([&] { return domain.started(); })
 		|| domain.accounts().empty()) {
 		return false;
 	}
@@ -4822,6 +4827,118 @@ FindAuthorizationBlockedAccount(const Main::Domain &domain) {
 					MTPstring(), MTPEmojiStatus(), MTP_vector<MTPUsername>(0),
 					MTPRecentStory(), MTPPeerColor(), MTPPeerColor(), MTPint(),
 					MTPlong(), MTPlong(), MTPlong());
+}
+
+[[nodiscard]] bool LogoutDuringEndpointWriteRestarts(Main::Domain &domain) {
+	const auto dataName
+		= u"main-3772-logout-"_q + QString::number(qlonglong(crl::now()));
+	const auto localKey = RegressionAuthKey(0x75);
+	const auto userId = UserId(377204);
+	auto account = std::make_unique<Main::Account>(&domain, dataName, 0);
+	auto config = account->prepareToStart(localKey);
+	if (!config) {
+		config = std::make_unique<MTP::Config>(MTP::Environment::Production);
+	}
+	account->start(std::move(config));
+	if (!WaitForRegressionCondition([&] { return !account->startPending(); })
+		|| !ConfigurePinnedServer(not_null<Main::Account *>(account.get()),
+								  RegressionServerKey())) {
+		return false;
+	}
+	auto proofData = MTP::AuthKey::Data();
+	std::fill(proofData.begin(), proofData.end(), static_cast<gsl::byte>(0x31));
+	const auto proofKey = std::make_shared<MTP::AuthKey>(
+		MTP::AuthKey::Type::ReadFromFile, 2, proofData);
+	account->mtp().dcPersistentKeyChanged(2, proofKey);
+	account->setSessionUserId(userId);
+	if (!account->createSession(RegressionUser(userId, true, QString()),
+								std::make_unique<Main::SessionSettings>())) {
+		return false;
+	}
+	auto original = MTP::Config(account->mtp().config());
+	const auto originalPin = original.customServer();
+	auto candidatePin = originalPin;
+	candidatePin.ip = "127.0.0.2";
+	auto candidate = MTP::Config(original);
+	if (!candidate.dcOptions().refreshCustomServerEndpoint(originalPin,
+														   candidatePin)) {
+		return false;
+	}
+	const auto committed = std::make_shared<std::optional<bool>>();
+	account->local().writeEndpointRefreshRecord(
+		original, candidate, proofKey, true,
+		[committed](bool result) { *committed = result; });
+	if (!WaitForRegressionCondition([&] { return committed->has_value(); })
+		|| !committed->value_or(false)) {
+		return false;
+	}
+	const auto binding
+		= account->local().serverCacheBindingFilesForRegressionTest();
+	const auto suffix = u"server_cache_bindings"_q;
+	if (binding.isEmpty() || !binding.front().endsWith(suffix)) {
+		return false;
+	}
+	const auto base = binding.front().chopped(suffix.size());
+	const auto entered = std::make_shared<QSemaphore>();
+	const auto release = std::make_shared<QSemaphore>();
+	const auto releaseOnExit = gsl::finally([=] {
+		release->release();
+		Storage::details::SetEndpointConfigWriteHookForRegressionTest(nullptr);
+	});
+	Storage::details::SetEndpointConfigWriteHookForRegressionTest([=] {
+		entered->release();
+		return release->tryAcquire(1, 5'000);
+	});
+	const auto staged = std::make_shared<std::optional<bool>>();
+	account->local().writeEndpointRefreshRecord(
+		original, candidate, proofKey, false,
+		[staged](bool result) { *staged = result; });
+	if (!WaitForRegressionCondition([&] { return entered->tryAcquire(); })) {
+		return false;
+	}
+	auto unblock = std::thread([=] {
+		QThread::msleep(100);
+		release->release();
+	});
+	account->forcedLogOut();
+	unblock.join();
+	QCoreApplication::processEvents();
+	if (!staged->value_or(false)
+		|| QFileInfo::exists(base + u"mtp_endpoint_refreshs"_q)
+		|| QFileInfo::exists(base + u"mtp_endpoint_refresh_stageds"_q)
+		|| !WaitForRegressionCondition([&] {
+			   return ranges::none_of(binding, [](const QString &path) {
+				   return QFileInfo::exists(path);
+			   });
+		   })) {
+		return false;
+	}
+	auto newPin = originalPin;
+	newPin.key = RegressionOtherServerKey();
+	newPin.ip = "127.0.0.3";
+	newPin.serverSelection = "127.0.0.3:8443";
+	newPin.discoveryPolicy = MTP::ServerDiscoveryPolicy::LocalDirect;
+	newPin.discoveryOrigin = "local:127.0.0.3:8443";
+	if (!account->mtp().dcOptions().setCustomServer(newPin)) {
+		return false;
+	}
+	account->mtp().dcPersistentKeyChanged(2, RegressionAuthKey(0x32));
+	const auto newUserId = UserId(377205);
+	account->setSessionUserId(newUserId);
+	if (!account->createSession(RegressionUser(newUserId, true, QString()),
+								std::make_unique<Main::SessionSettings>())) {
+		return false;
+	}
+	account->mtp().resume();
+	account.reset();
+	Storage::details::Sync();
+	auto restored = std::make_unique<Main::Account>(&domain, dataName, 0);
+	auto restoredConfig = restored->prepareToStart(localKey);
+	restored->start(std::move(restoredConfig));
+	return WaitForRegressionCondition([&] { return !restored->startPending(); })
+		   && restored->sessionExists()
+		   && MTP::SameCustomServerPin(
+			   newPin, restored->mtp().dcOptions().customServer());
 }
 
 [[nodiscard]] bool RunMainDcReconnectDifferenceUnreadRegression(
@@ -15906,9 +16023,40 @@ RunAiComposeApplyHandlerRegression(not_null<Window::Controller *> window,
 	const auto finalKey = RegressionAuthKey(0x22);
 	const auto finalKeyId = finalKey->keyId();
 	forgotten->mtp().dcPersistentKeyChanged(2, finalKey);
-	if (!RestartDomain(domain)) {
+	const auto recoveryEntered = std::make_shared<QSemaphore>();
+	const auto releaseRecovery = std::make_shared<QSemaphore>();
+	const auto releaseOnExit = gsl::finally([=] {
+		releaseRecovery->release();
+		Storage::details::SetEndpointRecoveryReadHookForTest(nullptr);
+	});
+	Storage::details::SetEndpointRecoveryReadHookForTest([=] {
+		recoveryEntered->release();
+		static_cast<void>(releaseRecovery->tryAcquire(1, 10'000));
+	});
+	auto recoveryWasResponsive = false;
+	auto recoveryProbe = QTimer();
+	QObject::connect(&recoveryProbe, &QTimer::timeout, [&] {
+		if (recoveryEntered->tryAcquire()) {
+			auto pending = false;
+			auto noMtp = true;
+			for (const auto &entry : domain.accounts()) {
+				if (entry.account->startPending()) {
+					pending = true;
+					noMtp = noMtp
+							&& !AccountLifecycleRegressionAccess::hasMtp(
+								*entry.account);
+				}
+			}
+			recoveryWasResponsive = !domain.started() && pending && noMtp;
+			releaseRecovery->release();
+		}
+	});
+	recoveryProbe.start(1);
+	const auto restarted = RestartDomain(domain);
+	recoveryProbe.stop();
+	if (!restarted || !recoveryWasResponsive) {
 		return failAccountLifecycle(
-			"could not restart after active account teardown");
+			"endpoint recovery blocked the UI or resumed startup early");
 	}
 	auto active
 		= not_null<Main::Account *>(domain.accounts().front().account.get());
@@ -15925,6 +16073,10 @@ RunAiComposeApplyHandlerRegression(not_null<Window::Controller *> window,
 			active, endpointRefreshDiscovery, finalKey)) {
 		return failAccountLifecycle("restored Account did not keep requests "
 									"paused until endpoint proof");
+	}
+	if (!LogoutDuringEndpointWriteRestarts(domain)) {
+		return failAccountLifecycle("logout did not clear a pending endpoint "
+									"write before re-enrollment");
 	}
 	endpointRefreshDiscovery.close();
 

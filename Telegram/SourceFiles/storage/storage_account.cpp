@@ -539,6 +539,9 @@ base::flat_set<QString> Account::collectGoodNames() const {
 		"mtp_endpoint_refreshs",
 		"mtp_endpoint_refresh0",
 		"mtp_endpoint_refresh1",
+		"mtp_endpoint_refresh_stageds",
+		"mtp_endpoint_refresh_staged0",
+		"mtp_endpoint_refresh_staged1",
 		"server_cache_bindings",
 		"server_cache_binding0",
 		"server_cache_binding1",
@@ -922,6 +925,7 @@ void Account::reset() {
 	_mapChanged = true;
 	writeMap();
 	writeMtpData();
+	clearEndpointRefreshRecords();
 
 	crl::async([
 		base = _basePath,
@@ -931,10 +935,9 @@ void Account::reset() {
 		wvother
 	] {
 		for (const auto &name : names) {
-			if (!name.endsWith(u"map0"_q)
-				&& !name.endsWith(u"map1"_q)
-				&& !name.endsWith(u"maps"_q)
-				&& !name.endsWith(u"configs"_q)) {
+			if (!name.endsWith(u"map0"_q) && !name.endsWith(u"map1"_q)
+				&& !name.endsWith(u"maps"_q) && !name.endsWith(u"configs"_q)
+				&& !name.startsWith(u"mtp_endpoint_refresh"_q)) {
 				const auto path = base + name;
 				if (CheckAccountPath(Operation::Unlink, path,
 									 "Storage::Account::remove")) {

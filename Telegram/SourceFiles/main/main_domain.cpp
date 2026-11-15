@@ -59,24 +59,45 @@ Domain::Domain(const QString &dataName)
 
 Domain::~Domain() = default;
 
-bool Domain::started() const {
-	return !_accounts.empty();
-}
+bool Domain::started() const { return _active.current() != nullptr; }
 
 Storage::StartResult Domain::start(const QByteArray &passcode) {
-	Expects(!started());
+	Expects(!started() && !_starting && _accounts.empty());
 
+	_starting = true;
 	const auto result = _local->start(passcode);
 	if (result == Storage::StartResult::Success) {
-		activateAfterStarting();
-		crl::on_main(&Core::App(), [=] { suggestExportIfNeeded(); });
+		waitForAccountsToStart();
 	} else {
+		_starting = false;
 		Assert(!started());
 	}
 	return result;
 }
 
+void Domain::waitForAccountsToStart() {
+	const auto finish = [=] {
+		if (!_starting || ranges::any_of(_accounts, [](const auto &entry) {
+				return entry.account->startPending();
+			})) {
+			return;
+		}
+		_starting = false;
+		activateAfterStarting();
+		crl::on_main(&Core::App(), [=] { suggestExportIfNeeded(); });
+		_startFinished.fire({});
+	};
+	for (const auto &entry : _accounts) {
+		if (entry.account->startPending()) {
+			entry.account->startFinished() | rpl::take(1)
+				| rpl::on_next(finish, _lifetime);
+		}
+	}
+	finish();
+}
+
 void Domain::finish() {
+	_starting = false;
 	_accountToActivate = -1;
 	_active.reset(nullptr);
 	base::take(_accounts);
@@ -116,8 +137,9 @@ int Domain::activeForStorage() const {
 
 void Domain::resetWithForgottenPasscode() {
 	if (_accounts.empty()) {
+		_starting = true;
 		_local->startFromScratch();
-		activateAfterStarting();
+		waitForAccountsToStart();
 	} else {
 		for (const auto &[index, account] : _accounts) {
 			account->logOut();
@@ -126,7 +148,7 @@ void Domain::resetWithForgottenPasscode() {
 }
 
 void Domain::activateAfterStarting() {
-	Expects(started());
+	Expects(!_accounts.empty());
 
 	auto toActivate = _accounts.front().account.get();
 	for (const auto &[index, account] : _accounts) {

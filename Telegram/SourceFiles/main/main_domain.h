@@ -38,6 +38,10 @@ public:
 	~Domain();
 
 	[[nodiscard]] bool started() const;
+	[[nodiscard]] bool starting() const { return _starting; }
+	[[nodiscard]] rpl::producer<> startFinished() const {
+		return _startFinished.events();
+	}
 	[[nodiscard]] Storage::StartResult start(const QByteArray &passcode);
 	void resetWithForgottenPasscode();
 	void finish();
@@ -86,6 +90,7 @@ public:
 private:
 	void activateAfterStarting();
 	void closeAccountWindows(not_null<Main::Account*> account);
+	void waitForAccountsToStart();
 	bool removePasscodeIfEmpty();
 	void watchSession(not_null<Account*> account);
 	void scheduleWriteAccounts();
@@ -103,6 +108,8 @@ private:
 	int _accountToActivate = -1;
 	int _lastActiveIndex = -1;
 	bool _writeAccountsScheduled = false;
+	bool _starting = false;
+	rpl::event_stream<> _startFinished;
 
 	rpl::event_stream<Session*> _activeSessions;
 

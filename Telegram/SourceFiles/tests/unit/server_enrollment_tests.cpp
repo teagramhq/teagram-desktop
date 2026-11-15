@@ -2224,8 +2224,8 @@ TEST_CASE(VerifiedEndpointConfigWriteReportsDurableResult) {
 	}
 
 	const auto failurePath = directory.path() + u"/failure/"_q;
-	CHECK(QDir().mkpath(failurePath + u"mtp_endpoint_refreshs"_q));
-	CHECK(QDir().mkpath(failurePath + u"mtp_endpoint_refresh0"_q));
+	CHECK(QDir().mkpath(failurePath + u"mtp_endpoint_refresh_stageds"_q));
+	CHECK(QDir().mkpath(failurePath + u"mtp_endpoint_refresh_staged0"_q));
 	auto failingAccount = Storage::Account(failurePath, key, config, true);
 	const auto failure = std::make_shared<std::optional<bool>>();
 	failingAccount.writeEndpointRefreshRecord(
@@ -2234,6 +2234,282 @@ TEST_CASE(VerifiedEndpointConfigWriteReportsDurableResult) {
 	CHECK(wait(failure));
 	CHECK(failure->has_value() && !failure->value());
 	CHECK(SameCustomServerPin(original, config->dcOptions().customServer()));
+}
+
+TEST_CASE(EndpointRefreshInterruptedSecondMoveKeepsCommittedEndpoint) {
+	QTemporaryDir directory;
+	CHECK(directory.isValid());
+	if (!directory.isValid()) {
+		return;
+	}
+	const auto path = directory.path() + u"/account/"_q;
+	const auto localKey = MakeEnrollmentStorageKey();
+	const auto proofKey = MakeEndpointRefreshAuthKey(0x3A);
+	const auto first = MakeEndpointRefreshPin("100.124.236.66");
+	const auto second = MakeEndpointRefreshPin("100.112.103.90");
+	const auto third = MakeEndpointRefreshPin("100.112.103.91");
+	auto config = std::make_shared<MTP::Config>(MTP::Environment::Production);
+	CHECK(config->dcOptions().setCustomServer(first));
+	CHECK(config->dcOptions().markAuthorized(first.dcId));
+	auto moved = MTP::Config(*config);
+	CHECK(moved.dcOptions().refreshCustomServerEndpoint(first, second));
+	const auto wait = [](const auto &result) {
+		auto timer = QElapsedTimer();
+		timer.start();
+		while (!result->has_value() && timer.elapsed() < 5'000) {
+			QCoreApplication::processEvents();
+			QThread::msleep(1);
+		}
+		return result->value_or(false);
+	};
+	{
+		auto account = Storage::Account(path, localKey, config, true);
+		CHECK(account.writeMtpConfig(true));
+		for (const auto commit : {false, true}) {
+			const auto done = std::make_shared<std::optional<bool>>();
+			account.writeEndpointRefreshRecord(
+				*config, moved, proofKey, commit,
+				[done](bool result) { *done = result; });
+			CHECK(wait(done));
+		}
+	}
+	{
+		auto account = Storage::Account(path, localKey, config, true);
+		auto restored = account.recoverEndpointRefreshConfig(
+			ReadEnrollmentConfig(path, localKey), {proofKey}, true);
+		CHECK(restored != nullptr);
+		if (!restored) {
+			return;
+		}
+		CHECK(SameCustomServerPin(second, restored->customServer()));
+		auto next = MTP::Config(*restored);
+		CHECK(next.dcOptions().refreshCustomServerEndpoint(second, third));
+		const auto staged = std::make_shared<std::optional<bool>>();
+		account.writeEndpointRefreshRecord(
+			*restored, next, proofKey, false,
+			[staged](bool result) { *staged = result; });
+		CHECK(wait(staged));
+	}
+	{
+		auto account = Storage::Account(path, localKey, config, true);
+		auto restored = account.recoverEndpointRefreshConfig(
+			ReadEnrollmentConfig(path, localKey), {proofKey}, true);
+		CHECK(restored != nullptr);
+		if (!restored) {
+			return;
+		}
+		CHECK(SameCustomServerPin(second, restored->customServer()));
+		auto next = MTP::Config(*restored);
+		CHECK(next.dcOptions().refreshCustomServerEndpoint(second, third));
+		const auto committed = std::make_shared<std::optional<bool>>();
+		account.writeEndpointRefreshRecord(
+			*restored, next, proofKey, true,
+			[committed](bool result) { *committed = result; });
+		CHECK(wait(committed));
+	}
+	auto account = Storage::Account(path, localKey, config, true);
+	const auto restored = account.recoverEndpointRefreshConfig(
+		ReadEnrollmentConfig(path, localKey), {proofKey}, true);
+	CHECK(restored != nullptr);
+	if (restored) {
+		CHECK(SameCustomServerPin(third, restored->customServer()));
+	}
+}
+
+TEST_CASE(EndpointRefreshRecoveryReadDoesNotBlockMainThread) {
+	QTemporaryDir directory;
+	CHECK(directory.isValid());
+	if (!directory.isValid()) {
+		return;
+	}
+	const auto path = directory.path() + u"/account/"_q;
+	const auto localKey = MakeEnrollmentStorageKey();
+	const auto proofKey = MakeEndpointRefreshAuthKey(0x3A);
+	const auto first = MakeEndpointRefreshPin("100.124.236.66");
+	const auto second = MakeEndpointRefreshPin("100.112.103.90");
+	auto config = std::make_shared<MTP::Config>(MTP::Environment::Production);
+	CHECK(config->dcOptions().setCustomServer(first));
+	CHECK(config->dcOptions().markAuthorized(first.dcId));
+	auto moved = MTP::Config(*config);
+	CHECK(moved.dcOptions().refreshCustomServerEndpoint(first, second));
+	auto account = Storage::Account(path, localKey, config, true);
+	CHECK(account.writeMtpConfig(true));
+	const auto staged = std::make_shared<std::optional<bool>>();
+	account.writeEndpointRefreshRecord(
+		*config, moved, proofKey, false,
+		[staged](bool value) { *staged = value; });
+	auto timeout = QElapsedTimer();
+	timeout.start();
+	while (!staged->has_value() && timeout.elapsed() < 5'000) {
+		QCoreApplication::processEvents();
+		QThread::msleep(1);
+	}
+	CHECK(staged->value_or(false));
+	const auto entered = std::make_shared<QSemaphore>();
+	const auto release = std::make_shared<QSemaphore>();
+	const auto released = gsl::finally([=] { release->release(); });
+	Storage::details::SetEndpointRecoveryReadHookForTest([=] {
+		entered->release();
+		static_cast<void>(release->tryAcquire(1, 5'000));
+	});
+	const auto completed = std::make_shared<bool>(false);
+	const auto correctPin = std::make_shared<bool>(false);
+	account.recoverEndpointRefreshConfigAsync(
+		std::make_unique<MTP::Config>(*config), {proofKey}, true,
+		[=](std::unique_ptr<MTP::Config> recovered) {
+			*correctPin
+				= recovered
+				  && SameCustomServerPin(first, recovered->customServer());
+			*completed = true;
+		});
+	CHECK(entered->tryAcquire(1, 1'000));
+	const auto responsive = std::make_shared<bool>(false);
+	QTimer::singleShot(0, [=] { *responsive = true; });
+	QCoreApplication::processEvents();
+	CHECK(*responsive);
+	CHECK(!*completed);
+	release->release();
+	timeout.restart();
+	while (!*completed && timeout.elapsed() < 5'000) {
+		QCoreApplication::processEvents();
+		QThread::msleep(1);
+	}
+	CHECK(*completed);
+	CHECK(*correctPin);
+	const auto missingConfigCompleted = std::make_shared<bool>(false);
+	const auto missingConfigBlocked = std::make_shared<bool>(false);
+	account.recoverEndpointRefreshConfigAsync(
+		nullptr, {proofKey}, true, [=](std::unique_ptr<MTP::Config> recovered) {
+			*missingConfigBlocked = !recovered;
+			*missingConfigCompleted = true;
+		});
+	timeout.restart();
+	while (!*missingConfigCompleted && timeout.elapsed() < 5'000) {
+		QCoreApplication::processEvents();
+		QThread::msleep(1);
+	}
+	CHECK(*missingConfigCompleted);
+	CHECK(*missingConfigBlocked);
+	CHECK(account.customServerPinUnknown());
+}
+
+TEST_CASE(EndpointRefreshRecoveryIgnoresDestroyedAccount) {
+	QTemporaryDir directory;
+	CHECK(directory.isValid());
+	if (!directory.isValid()) {
+		return;
+	}
+	const auto path = directory.path() + u"/account/"_q;
+	const auto localKey = MakeEnrollmentStorageKey();
+	auto config = std::make_shared<MTP::Config>(MTP::Environment::Production);
+	CHECK(config->dcOptions().setCustomServer(
+		MakeEndpointRefreshPin("100.124.236.66")));
+	auto account
+		= std::make_unique<Storage::Account>(path, localKey, config, true);
+	const auto entered = std::make_shared<QSemaphore>();
+	const auto release = std::make_shared<QSemaphore>();
+	const auto released = gsl::finally([=] { release->release(); });
+	Storage::details::SetEndpointRecoveryReadHookForTest([=] {
+		entered->release();
+		static_cast<void>(release->tryAcquire(1, 5'000));
+	});
+	const auto completed = std::make_shared<bool>(false);
+	account->recoverEndpointRefreshConfigAsync(
+		std::make_unique<MTP::Config>(*config), {}, true,
+		[=](std::unique_ptr<MTP::Config>) { *completed = true; });
+	CHECK(entered->tryAcquire(1, 1'000));
+	account.reset();
+	release->release();
+	Storage::details::Sync();
+	QCoreApplication::processEvents();
+	CHECK(!*completed);
+}
+
+TEST_CASE(LogoutClearsDelayedEndpointWritesBeforeReenrollment) {
+	QTemporaryDir directory;
+	CHECK(directory.isValid());
+	if (!directory.isValid()) {
+		return;
+	}
+	const auto previousDirectory = QDir::currentPath();
+	const auto changedDirectory = QDir::setCurrent(directory.path());
+	CHECK(changedDirectory);
+	if (!changedDirectory) {
+		return;
+	}
+	const auto restoreDirectory
+		= gsl::finally([&] { QDir::setCurrent(previousDirectory); });
+	const auto path = directory.path() + u"/account/"_q;
+	const auto localKey = MakeEnrollmentStorageKey();
+	const auto proofKey = MakeEndpointRefreshAuthKey(0x3A);
+	const auto nextKey = MakeEndpointRefreshAuthKey(0x4B);
+	const auto first = MakeEndpointRefreshPin("100.124.236.66");
+	const auto moved = MakeEndpointRefreshPin("100.112.103.90");
+	auto nextServer = MakeEndpointRefreshPin("100.112.103.91");
+	nextServer.key = std::make_shared<details::RSAPublicKey>(
+		bytes::make_span(kDifferentEnrollmentServerKey,
+						 sizeof(kDifferentEnrollmentServerKey) - 1));
+	auto config = std::make_shared<MTP::Config>(MTP::Environment::Production);
+	CHECK(config->dcOptions().setCustomServer(first));
+	CHECK(config->dcOptions().markAuthorized(first.dcId));
+	auto candidate = MTP::Config(*config);
+	CHECK(candidate.dcOptions().refreshCustomServerEndpoint(first, moved));
+	auto savedAuthorization = SerializeEndpointRefreshAuthKey(proofKey);
+	{
+		auto account = Storage::Account(path, localKey, config, false,
+										[&] { return savedAuthorization; });
+		CHECK(account.writeMtpConfig(true));
+		const auto committed = std::make_shared<std::optional<bool>>();
+		account.writeEndpointRefreshRecord(
+			*config, candidate, proofKey, true,
+			[committed](bool value) { *committed = value; });
+		auto timeout = QElapsedTimer();
+		timeout.start();
+		while (!committed->has_value() && timeout.elapsed() < 5'000) {
+			QCoreApplication::processEvents();
+			QThread::msleep(1);
+		}
+		CHECK(committed->value_or(false));
+		const auto entered = std::make_shared<QSemaphore>();
+		const auto release = std::make_shared<QSemaphore>();
+		const auto released = gsl::finally([=] { release->release(); });
+		Storage::details::SetEndpointConfigWriteHookForRegressionTest([=] {
+			entered->release();
+			return release->tryAcquire(1, 5'000);
+		});
+		const auto staged = std::make_shared<std::optional<bool>>();
+		account.writeEndpointRefreshRecord(
+			*config, candidate, proofKey, false,
+			[staged](bool value) { *staged = value; });
+		CHECK(entered->tryAcquire(1, 1'000));
+		account.clearEndpointRefreshRecords();
+		release->release();
+		Storage::details::Sync();
+		QCoreApplication::processEvents();
+		CHECK(staged->value_or(false));
+		CHECK(!QFileInfo::exists(path + u"mtp_endpoint_refreshs"_q));
+		CHECK(!QFileInfo::exists(path + u"mtp_endpoint_refresh_stageds"_q));
+		CHECK(config->dcOptions().clearAuthorized());
+		CHECK(config->dcOptions().setCustomServer(nextServer));
+		CHECK(config->dcOptions().markAuthorized(nextServer.dcId));
+		savedAuthorization = SerializeEndpointRefreshAuthKey(nextKey);
+		CHECK(account.writeMtpConfig(true));
+		CHECK(account.writeMtpData(true));
+	}
+	auto restoredAuthorization = QByteArray();
+	auto restarted = Storage::Account(
+		path, localKey, config, true, nullptr,
+		[&](const QByteArray &value) { restoredAuthorization = value; });
+	restarted.readMtpDataForTest();
+	const auto restoredKey
+		= RestoreEndpointRefreshAuthKey(restoredAuthorization);
+	CHECK(restoredKey && restoredKey->equals(nextKey));
+	const auto recovered = restarted.recoverEndpointRefreshConfig(
+		ReadEnrollmentConfig(path, localKey), {restoredKey}, true);
+	CHECK(recovered != nullptr);
+	if (recovered) {
+		CHECK(SameCustomServerPin(nextServer, recovered->customServer()));
+	}
 }
 
 TEST_CASE(EndpointRefreshRestartRejectsAChangedStoredKey) {

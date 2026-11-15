@@ -272,6 +272,9 @@ void PasscodeLockWidget::submit() {
 
 	const auto passcode = _passcode->text().toUtf8();
 	auto &domain = Core::App().domain();
+	if (domain.starting()) {
+		return;
+	}
 	const auto correct = domain.started()
 		? domain.local().checkPasscode(passcode)
 		: (domain.start(passcode) == Storage::StartResult::Success);
@@ -282,6 +285,14 @@ void PasscodeLockWidget::submit() {
 		return;
 	}
 
+	if (!domain.started()) {
+		_passcode->setDisabled(true);
+		_submit->setDisabled(true);
+		_logout->setDisabled(true);
+		domain.startFinished() | rpl::take(1)
+			| rpl::on_next([=] { Core::App().unlockPasscode(); }, lifetime());
+		return;
+	}
 	Core::App().unlockPasscode(); // Destroys this widget.
 }
 

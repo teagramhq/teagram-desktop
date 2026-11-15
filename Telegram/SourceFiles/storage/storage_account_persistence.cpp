@@ -22,12 +22,25 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "storage/serialize_peer.h"
 #include "settings.h"
 
+#include <QtCore/QCoreApplication>
 #include <QtCore/QDir>
 #include <QtCore/QFile>
 #include <QtCore/QFileInfo>
+#include <QtCore/QMetaObject>
 #include <cstring>
 
 namespace Storage {
+
+#if defined(TDESKTOP_LIFECYCLE_REGRESSION) || defined(TDESKTOP_UNIT_TESTS)
+namespace details {
+Fn<void()> EndpointRecoveryReadHook;
+
+void SetEndpointRecoveryReadHookForTest(Fn<void()> hook) {
+	EndpointRecoveryReadHook = std::move(hook);
+}
+} // namespace details
+#endif
+
 namespace {
 
 using namespace details;
@@ -83,6 +96,7 @@ constexpr auto kMtpAuthorizationWriteFailedPref
 const auto kMtpAuthorizationWriteFailedFile
 	= u"mtp_authorization_write_failed"_q;
 const auto kEndpointRefreshRecord = u"mtp_endpoint_refresh"_q;
+const auto kEndpointRefreshStagedRecord = u"mtp_endpoint_refresh_staged"_q;
 const auto kServerCacheBindingFile = u"server_cache_binding"_q;
 const auto kServerReenrollmentTombstonePrefix
 	= u"server_reenrollment_"_q;
@@ -536,7 +550,8 @@ bool Account::completeServerForget() {
 		return false;
 	}
 	if (interrupted(4) || !RemoveFileVariants(_basePath, u"config"_q)
-		|| !RemoveFileVariants(_basePath, kEndpointRefreshRecord)) {
+		|| !RemoveFileVariants(_basePath, kEndpointRefreshRecord)
+		|| !RemoveFileVariants(_basePath, kEndpointRefreshStagedRecord)) {
 		return false;
 	}
 
@@ -1173,42 +1188,63 @@ void Account::writeEndpointRefreshRecord(const MTP::Config &original,
 	data.stream << quint32(1) << quint8(committed)
 				<< qint32(verifiedKey->dcId()) << originalData << candidateData
 				<< keyData;
-	FileWriteDescriptor file(kEndpointRefreshRecord, _basePath);
+	FileWriteDescriptor file(committed ? kEndpointRefreshRecord
+									   : kEndpointRefreshStagedRecord,
+							 _basePath);
 	file.writeEncrypted(data, _localKey);
 	file.finishAsync(std::move(done));
 }
 
-std::unique_ptr<MTP::Config>
-Account::recoverEndpointRefreshConfig(std::unique_ptr<MTP::Config> current,
-									  const std::vector<MTP::AuthKeyPtr> &keys,
-									  bool restoredSession) {
+namespace {
+
+struct EndpointRefreshRecovery {
+	std::unique_ptr<MTP::Config> config;
+	std::unique_ptr<MTP::Config> original;
+	bool failed = false;
+};
+
+[[nodiscard]] EndpointRefreshRecovery RecoverEndpointRefreshConfig(
+	const QString &basePath, const MTP::AuthKeyPtr &localKey,
+	std::unique_ptr<MTP::Config> current,
+	const std::vector<MTP::AuthKeyPtr> &keys, bool restoredSession) {
 	if (current && current->blocked()) {
-		return current;
+		return {std::move(current), nullptr, false};
 	}
-	const auto base = _basePath + kEndpointRefreshRecord;
-	auto exists = false;
-	for (const auto suffix : {'s', '0', '1'}) {
-		const auto path = base + suffix;
-		if (!CheckPersistencePath(Operation::Stat, path, Q_FUNC_INFO)) {
-			_customServerPinUnknown = true;
-			return nullptr;
+	const auto exists = [&](const QString &name) -> std::optional<bool> {
+		auto result = false;
+		for (const auto suffix : {'s', '0', '1'}) {
+			const auto path = basePath + name + suffix;
+			if (!CheckPersistencePath(Operation::Stat, path, Q_FUNC_INFO)) {
+				return std::nullopt;
+			}
+			result = result || QFileInfo::exists(path);
 		}
-		exists = exists || QFileInfo::exists(path);
-	}
-	if (!exists) {
-		return current;
-	}
-	const auto fail = [&]() -> std::unique_ptr<MTP::Config> {
-		LOG(("MTP Error: could not recover the endpoint refresh record."));
-		_customServerPinUnknown = true;
-		return nullptr;
+		return result;
 	};
-	if (!_localKey) {
+	const auto fail = []() -> EndpointRefreshRecovery {
+		LOG(("MTP Error: could not recover the endpoint refresh record."));
+		return {nullptr, nullptr, true};
+	};
+	const auto committedExists = exists(kEndpointRefreshRecord);
+	if (!committedExists) {
+		return fail();
+	}
+	auto name = kEndpointRefreshRecord;
+	if (!*committedExists) {
+		const auto stagedExists = exists(kEndpointRefreshStagedRecord);
+		if (!stagedExists) {
+			return fail();
+		}
+		if (!*stagedExists) {
+			return {std::move(current), nullptr, false};
+		}
+		name = kEndpointRefreshStagedRecord;
+	}
+	if (!localKey) {
 		return fail();
 	}
 	FileReadDescriptor record;
-	if (!ReadEncryptedFile(record, kEndpointRefreshRecord, _basePath,
-						   _localKey)) {
+	if (!ReadEncryptedFile(record, name, basePath, localKey)) {
 		return fail();
 	}
 	quint32 version = 0;
@@ -1221,6 +1257,7 @@ Account::recoverEndpointRefreshConfig(std::unique_ptr<MTP::Config> current,
 		>> candidateData >> keyData;
 	if (!CheckStreamStatus(record.stream) || !record.stream.atEnd()
 		|| version != 1 || committed > 1
+		|| (name == kEndpointRefreshStagedRecord && committed)
 		|| keyData.size() != MTP::AuthKey::kSize) {
 		return fail();
 	}
@@ -1240,7 +1277,6 @@ Account::recoverEndpointRefreshConfig(std::unique_ptr<MTP::Config> current,
 			original->customServer(), current->customServer())) {
 		return fail();
 	}
-	_endpointRefreshOriginalConfig = std::make_unique<MTP::Config>(*original);
 	auto proofData = MTP::AuthKey::Data();
 	std::memcpy(proofData.data(), keyData.constData(), proofData.size());
 	const auto proof = std::make_shared<MTP::AuthKey>(
@@ -1274,7 +1310,75 @@ Account::recoverEndpointRefreshConfig(std::unique_ptr<MTP::Config> current,
 			return fail();
 		}
 	}
-	return current;
+	return {std::move(current), std::move(original), false};
+}
+
+} // namespace
+
+std::unique_ptr<MTP::Config>
+Account::recoverEndpointRefreshConfig(std::unique_ptr<MTP::Config> current,
+									  const std::vector<MTP::AuthKeyPtr> &keys,
+									  bool restoredSession) {
+	auto result = RecoverEndpointRefreshConfig(
+		_basePath, _localKey, std::move(current), keys, restoredSession);
+	if (result.failed) {
+		_customServerPinUnknown = true;
+		return nullptr;
+	}
+	if (result.original) {
+		_endpointRefreshOriginalConfig = std::move(result.original);
+	}
+	return std::move(result.config);
+}
+
+void Account::recoverEndpointRefreshConfigAsync(
+	std::unique_ptr<MTP::Config> current, std::vector<MTP::AuthKeyPtr> keys,
+	bool restoredSession, Fn<void(std::unique_ptr<MTP::Config>)> done) {
+	Expects(done != nullptr);
+	const auto basePath = _basePath;
+	const auto localKey = _localKey;
+	const auto alive = std::weak_ptr<char>(_endpointRecoveryLifetime);
+	const auto result = std::make_shared<EndpointRefreshRecovery>();
+	result->config = std::move(current);
+	auto hook = Fn<void()>();
+#if defined(TDESKTOP_LIFECYCLE_REGRESSION) || defined(TDESKTOP_UNIT_TESTS)
+	hook = base::take(details::EndpointRecoveryReadHook);
+#endif
+	details::RunOnStorageWorker([=]() mutable {
+		if (hook) {
+			hook();
+		}
+		*result = RecoverEndpointRefreshConfig(basePath, localKey,
+											   std::move(result->config), keys,
+											   restoredSession);
+		QMetaObject::invokeMethod(
+			QCoreApplication::instance(),
+			[=]() mutable {
+				if (alive.expired()) {
+					return;
+				}
+				if (result->failed) {
+					_customServerPinUnknown = true;
+				}
+				if (result->original) {
+					_endpointRefreshOriginalConfig
+						= std::move(result->original);
+				}
+				done(std::move(result->config));
+			},
+			Qt::QueuedConnection);
+	});
+}
+
+void Account::clearEndpointRefreshRecords() {
+	_endpointRefreshOriginalConfig.reset();
+	const auto basePath = _basePath;
+	details::RunOnStorageWorker([=] {
+		if (!RemoveFileVariants(basePath, kEndpointRefreshRecord)
+			|| !RemoveFileVariants(basePath, kEndpointRefreshStagedRecord)) {
+			LOG(("MTP Error: could not remove the endpoint refresh records."));
+		}
+	});
 }
 
 void Account::clearPref(std::string_view key) {

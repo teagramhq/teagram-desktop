@@ -81,6 +81,7 @@ public:
 	void write(WriteEntry &&entry);
 	[[nodiscard]] bool writeSync(WriteEntry &&entry);
 	void writeWithResult(WriteEntry &&entry, Fn<void(bool)> done);
+	void run(Fn<void()> task);
 	void sync();
 	void stop();
 
@@ -90,7 +91,7 @@ private:
 
 };
 
-#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+#if defined(TDESKTOP_LIFECYCLE_REGRESSION) || defined(TDESKTOP_UNIT_TESTS)
 Fn<bool()> EndpointConfigWriteHook;
 #endif
 
@@ -266,7 +267,7 @@ void AsyncWriteManager::writeWithResult(WriteEntry &&entry,
 		_manager.emplace();
 	}
 	auto hook = Fn<bool()>();
-#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+#if defined(TDESKTOP_LIFECYCLE_REGRESSION) || defined(TDESKTOP_UNIT_TESTS)
 	hook = base::take(EndpointConfigWriteHook);
 #endif
 	_manager->with([entry = std::move(entry), done = std::move(done),
@@ -288,6 +289,14 @@ void AsyncWriteManager::sync() {
 	}
 }
 
+void AsyncWriteManager::run(Fn<void()> task) {
+	Expects(!_finished);
+	if (!_manager) {
+		_manager.emplace();
+	}
+	_manager->with([task = std::move(task)](WriteManager &) { task(); });
+}
+
 void AsyncWriteManager::stop() {
 	if (_manager) {
 		sync();
@@ -300,7 +309,7 @@ AsyncWriteManager Manager;
 
 } // namespace
 
-#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+#if defined(TDESKTOP_LIFECYCLE_REGRESSION) || defined(TDESKTOP_UNIT_TESTS)
 void SetEndpointConfigWriteHookForRegressionTest(Fn<bool()> hook) {
 	EndpointConfigWriteHook = std::move(hook);
 }
@@ -777,6 +786,8 @@ bool ReadEncryptedFile(
 void Sync() {
 	Manager.sync();
 }
+
+void RunOnStorageWorker(Fn<void()> task) { Manager.run(std::move(task)); }
 
 void Finish() {
 	Manager.stop();

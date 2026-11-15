@@ -240,8 +240,28 @@ void Account::start(std::unique_ptr<MTP::Config> config) {
 		_sessionUserStreamVersion = 0;
 		_storedSessionSettings.reset();
 	}
-	config = _local->recoverEndpointRefreshConfig(
-		std::move(config), _mtpFields.keys, bool(_sessionUserId));
+	if (_domain->starting() || (config && config->hasCustomServer())
+		|| _local->hasStoredCustomServer()
+		|| _local->customServerPinUnknown()) {
+		_startPending = true;
+		const auto restoredSession = bool(_sessionUserId);
+		const auto pendingConfig
+			= std::make_shared<std::unique_ptr<MTP::Config>>(std::move(config));
+		crl::on_main(this, [=] {
+			_local->recoverEndpointRefreshConfigAsync(
+				std::move(*pendingConfig), _mtpFields.keys, restoredSession,
+				crl::guard(this, [=](std::unique_ptr<MTP::Config> recovered) {
+					startWithRecoveredConfig(std::move(recovered));
+					_startPending = false;
+					_startFinished.fire({});
+				}));
+		});
+		return;
+	}
+	startWithRecoveredConfig(std::move(config));
+}
+
+void Account::startWithRecoveredConfig(std::unique_ptr<MTP::Config> config) {
 	_appConfig = std::make_unique<AppConfig>(this);
 
 	// An account pinned to a user-entered endpoint and RSA key must

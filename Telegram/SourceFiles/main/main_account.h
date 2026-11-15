@@ -71,6 +71,10 @@ public:
 	void prepareToStartAdded(
 		std::shared_ptr<MTP::AuthKey> localKey);
 	void start(std::unique_ptr<MTP::Config> config);
+	[[nodiscard]] bool startPending() const { return _startPending; }
+	[[nodiscard]] rpl::producer<> startFinished() const {
+		return _startFinished.events();
+	}
 
 	[[nodiscard]] uint64 willHaveSessionUniqueId(MTP::Config *config) const;
 	bool createSession(
@@ -183,6 +187,7 @@ private:
 	using Owned = std::unique_ptr<Type>;
 #endif
 
+	void startWithRecoveredConfig(std::unique_ptr<MTP::Config> config);
 	bool startMtp(
 		std::unique_ptr<MTP::Config> config,
 		bool startPaused = false);
@@ -231,6 +236,7 @@ private:
 	rpl::event_stream<MTPUpdates> _mtpUpdates;
 	rpl::event_stream<> _mtpNewSessionCreated;
 	rpl::event_stream<> _serverCacheBindingMismatch;
+	rpl::event_stream<> _startFinished;
 
 	Owned<AppConfig> _appConfig;
 
@@ -249,6 +255,7 @@ private:
 	std::optional<MTP::CustomServer> _mtpForKeysDestroyPin;
 	MTP::ServerEndpointRefreshTransaction _endpointRefresh;
 	bool _loggingOut = false;
+	bool _startPending = false;
 	bool _restoredSession = false;
 	bool _serverCacheBindingMismatchPending = false;
 	bool _serverEndpointRefreshIdentityFailure = false;

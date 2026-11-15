@@ -172,6 +172,10 @@ public:
 	recoverEndpointRefreshConfig(std::unique_ptr<MTP::Config> current,
 								 const std::vector<MTP::AuthKeyPtr> &keys,
 								 bool restoredSession);
+	void recoverEndpointRefreshConfigAsync(
+		std::unique_ptr<MTP::Config> current, std::vector<MTP::AuthKeyPtr> keys,
+		bool restoredSession, Fn<void(std::unique_ptr<MTP::Config>)> done);
+	void clearEndpointRefreshRecords();
 	// A durable marker is written before destructive re-enrollment. The
 	// cleanup remains pending until every server-scoped store has been
 	// removed and an empty account can be written back.
@@ -444,6 +448,7 @@ private:
 	bool _mtpAuthorizationWriteFailed = false;
 	bool _serverForgetBlocked = false;
 	std::unique_ptr<MTP::Config> _endpointRefreshOriginalConfig;
+	std::shared_ptr<char> _endpointRecoveryLifetime = std::make_shared<char>();
 
 	base::flat_map<PeerId, FileKey> _draftsMap;
 	base::flat_map<PeerId, FileKey> _draftCursorsMap;

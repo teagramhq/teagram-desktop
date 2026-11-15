@@ -88,8 +88,9 @@ private:
 
 };
 
-#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+#if defined(TDESKTOP_LIFECYCLE_REGRESSION) || defined(TDESKTOP_UNIT_TESTS)
 void SetEndpointConfigWriteHookForRegressionTest(Fn<bool()> hook);
+void SetEndpointRecoveryReadHookForTest(Fn<void()> hook);
 #endif
 
 bool ReadFile(
@@ -115,6 +116,7 @@ bool ReadEncryptedFile(
 	const MTP::AuthKeyPtr &key);
 
 void Sync();
+void RunOnStorageWorker(Fn<void()> task);
 void Finish();
 
 } // namespace details
