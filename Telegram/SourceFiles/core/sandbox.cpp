@@ -42,7 +42,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "platform/mac/global_menu_mac.h"
 #endif // Q_OS_MAC
 
-#include <QtCore/QDir>
 #include <QtCore/QLockFile>
 #include <QtCore/QFileInfo>
 #include <QtCore/QMetaObject>
@@ -71,6 +70,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <dlfcn.h>
 #include <execinfo.h>
 #include <pthread.h>
+#include <sched.h>
 #include <signal.h>
 #include <functional>
 #include <algorithm>
@@ -101,9 +101,29 @@ constexpr auto kProbeMaxFrames = 64;
 void *ProbeFrames[kProbeMaxFrames];
 std::atomic_int ProbeDepth = -1;
 
+// The main thread decides from the captured frames whether the worker stays
+// parked: Wait until decided, then Release returns at once while Hold keeps
+// the worker inside this handler, and so inside whatever it was executing,
+// until the quit has been observed.
+enum ProbeDecisionValue {
+	ProbeWait = 0,
+	ProbeRelease = 1,
+	ProbeHold = 2,
+};
+std::atomic_int ProbeDecision = ProbeWait;
+std::atomic_bool ProbeFinalRelease = false;
+
 void ProbeSignal(int) {
 	const auto depth = backtrace(ProbeFrames, kProbeMaxFrames);
 	ProbeDepth.store(depth, std::memory_order_release);
+	while (ProbeDecision.load(std::memory_order_acquire) == ProbeWait) {
+		sched_yield();
+	}
+	if (ProbeDecision.load(std::memory_order_acquire) == ProbeHold) {
+		while (!ProbeFinalRelease.load(std::memory_order_acquire)) {
+			sched_yield();
+		}
+	}
 }
 
 [[nodiscard]] bool InstallProbeSignal() {
@@ -124,9 +144,9 @@ void ProbeSignal(int) {
 			continue;
 		}
 		const auto name = QByteArray(info.dli_sname);
-		if (name.contains("CTFontManagerCopyAvailableFontFamilyNames")
-			|| name.contains("populateFontDatabase")
-			|| name.contains("populateFromDescriptor")) {
+		// Only the system family enumeration: registering an application
+		// font also runs populateFromDescriptor, which is not it.
+		if (name.contains("CTFontManagerCopyAvailableFontFamilyNames")) {
 			return true;
 		}
 	}
@@ -140,10 +160,12 @@ enum class StackSample {
 };
 
 // Signals the worker and waits until its capture completes, however long the
-// signal takes, then scans a bounded copy of the captured frames.
+// signal takes, then scans a bounded copy of the captured frames. A worker
+// caught inside the system enumeration is held there until the final release.
 [[nodiscard]] StackSample SampleWorkerStack(pthread_t worker) {
 	using Clock = std::chrono::steady_clock;
 	ProbeDepth.store(-1, std::memory_order_release);
+	ProbeDecision.store(ProbeWait, std::memory_order_release);
 	if (pthread_kill(worker, SIGUSR1) != 0) {
 		return StackSample::Failed;
 	}
@@ -151,6 +173,7 @@ enum class StackSample {
 	auto depth = -1;
 	while ((depth = ProbeDepth.load(std::memory_order_acquire)) < 0) {
 		if (Clock::now() >= deadline) {
+			ProbeDecision.store(ProbeRelease, std::memory_order_release);
 			return StackSample::Failed;
 		}
 		std::this_thread::yield();
@@ -158,34 +181,11 @@ enum class StackSample {
 	depth = std::min(depth, kProbeMaxFrames);
 	void *frames[kProbeMaxFrames];
 	std::copy(ProbeFrames, ProbeFrames + depth, frames);
-	return FramesInSystemEnumeration(frames, depth)
-			   ? StackSample::InSystemEnumeration
-			   : StackSample::OtherWork;
-}
-
-// Repeats a real system font-family enumeration: registering an application
-// font invalidates the Qt font database, so the next families() call
-// enumerates the system families again. The loop runs until aboutToQuit, so
-// the worker keeps enumerating through the real quit and teardown.
-void EnumerateUntilQuit(const std::atomic_bool &quitObserved) {
-	using Clock = std::chrono::steady_clock;
-	const auto files = QDir(u":/gui/fonts/"_q).entryInfoList();
-	const auto path
-		= files.isEmpty() ? QString() : files.front().canonicalFilePath();
-	const auto deadline = Clock::now() + std::chrono::seconds(10);
-	while (!quitObserved && Clock::now() < deadline) {
-		const auto id
-			= path.isEmpty() ? -1 : QFontDatabase::addApplicationFont(path);
-#if QT_VERSION < QT_VERSION_CHECK(6, 0, 0)
-		const auto families = QFontDatabase().families();
-#else  // Qt < 6.0.0
-		const auto families = QFontDatabase::families();
-#endif // Qt < 6.0.0
-		Q_UNUSED(families);
-		if (id >= 0) {
-			QFontDatabase::removeApplicationFont(id);
-		}
-	}
+	const auto inEnumeration = FramesInSystemEnumeration(frames, depth);
+	ProbeDecision.store(inEnumeration ? ProbeHold : ProbeRelease,
+						std::memory_order_release);
+	return inEnumeration ? StackSample::InSystemEnumeration
+						 : StackSample::OtherWork;
 }
 
 class FontStartupSplash final : public QWindow {
@@ -636,15 +636,17 @@ void Sandbox::startFontDatabaseWarmup() {
 	const auto quitRegression
 		= qEnvironmentVariableIsSet("TDESKTOP_FONT_STARTUP_QUIT_REGRESSION");
 	if (quitRegression) {
-		// The main thread samples the worker stack until it sees a system
-		// font enumeration executing, and only then requests the real quit.
-		// The worker keeps enumerating until aboutToQuit, so teardown runs
-		// with that enumeration work still active.
+		// The main thread samples the worker stack until it catches the
+		// system font enumeration executing, holds the worker there, and only
+		// then requests the real quit. The worker is released after
+		// aboutToQuit, so teardown runs with the enumeration still in flight.
 		if (!InstallProbeSignal()) {
 			fprintf(stderr, "Font shutdown regression: probe=unavailable\n");
 		}
-		connect(this, &QCoreApplication::aboutToQuit,
-				[=] { _fontStartupQuitObserved = true; });
+		connect(this, &QCoreApplication::aboutToQuit, [=] {
+			_fontStartupQuitObserved = true;
+			ProbeFinalRelease.store(true, std::memory_order_release);
+		});
 	}
 	try {
 		_fontDatabaseWarmupThread = std::thread([this, quitRegression] {
@@ -669,7 +671,6 @@ void Sandbox::startFontDatabaseWarmup() {
 			prewarmFontMetrics(QFont().family());
 			prewarmFontMetrics(u"Open Sans"_q);
 			if (quitRegression) {
-				EnumerateUntilQuit(_fontStartupQuitObserved);
 				fprintf(stderr,
 						"Font shutdown regression: quit_observed=%d "
 						"font_work=active enumeration_overlapped=%d\n",
@@ -716,6 +717,9 @@ void Sandbox::startFontDatabaseWarmup() {
 				}
 				timer->stop();
 				_fontEnumerationOverlapped = sampled;
+				if (!sampled) {
+					ProbeFinalRelease.store(true, std::memory_order_release);
+				}
 				Core::Quit();
 			});
 			timer->start(1);
