@@ -236,6 +236,9 @@ private:
 	[[nodiscard]] bool networkAllowed() const {
 		return _serverEnrollmentGate.networkAllowed();
 	}
+	[[nodiscard]] bool serverEnrollmentHeld() const {
+		return _serverEnrollmentGate.held();
+	}
 
 	void importDone(
 		const MTPauth_Authorization &result,
@@ -2375,6 +2378,10 @@ rpl::producer<bool> Instance::endpointVerificationResult() const {
 
 bool Instance::isServerEnrollmentNetworkAllowed() const {
 	return _private->networkAllowed();
+}
+
+bool Instance::isServerEnrollmentHeld() const {
+	return _private->serverEnrollmentHeld();
 }
 
 uint64 Instance::serverEnrollmentStopToken() const {

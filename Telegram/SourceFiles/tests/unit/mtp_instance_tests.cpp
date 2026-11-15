@@ -244,6 +244,7 @@ TEST_CASE(PausingEnrollmentInvalidatesTheCurrentGeneration) {
 	CHECK(gate.pause());
 	CHECK(!gate.stopTokenIsCurrent(beforePause));
 	CHECK(!gate.networkAllowed());
+	CHECK(!gate.held());
 
 	const auto whilePaused = gate.stopToken();
 	CHECK(gate.resume().resumed);
@@ -254,13 +255,16 @@ TEST_CASE(PausingEnrollmentInvalidatesTheCurrentGeneration) {
 TEST_CASE(LogoutHoldRefusesResumeUntilCleanupCompletes) {
 	auto gate = ServerEnrollmentGate();
 	CHECK(gate.start());
+	CHECK(!gate.held());
 	gate.hold();
+	CHECK(gate.held());
 	CHECK(gate.pause());
 	auto resumed = 0;
 	gate.resumeIf(true, [] {}, [&] { ++resumed; });
 	CHECK_EQ(resumed, 0);
 	CHECK(!gate.networkAllowed());
 	gate.releaseHold();
+	CHECK(!gate.held());
 	gate.resumeIf(true, [] {}, [&] { ++resumed; });
 	CHECK_EQ(resumed, 1);
 	CHECK(gate.networkAllowed());

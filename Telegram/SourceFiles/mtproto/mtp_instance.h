@@ -251,6 +251,7 @@ public:
 	[[nodiscard]] bool networkAllowed() const {
 		return _started.load() && !_paused.load() && !_held.load();
 	}
+	[[nodiscard]] bool held() const { return _held.load(); }
 
 	void hold() {
 		if (!_started.load()) {
@@ -411,6 +412,7 @@ public:
 	[[nodiscard]] rpl::producer<> resumed() const;
 	// Thread-safe.
 	[[nodiscard]] bool isServerEnrollmentNetworkAllowed() const;
+	[[nodiscard]] bool isServerEnrollmentHeld() const;
 	[[nodiscard]] uint64 serverEnrollmentStopToken() const;
 	[[nodiscard]] bool isServerEnrollmentStopTokenCurrent(
 		uint64 token) const;

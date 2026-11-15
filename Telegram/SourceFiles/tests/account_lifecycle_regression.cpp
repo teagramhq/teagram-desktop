@@ -45,6 +45,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/local_url_conversion.h"
 #include "core/local_url_handlers.h"
 #include "core/mac_protected_path_runtime.h"
+#include "core/proxy_rotation_manager.h"
 #include "core/teagram_icon_choice.h"
 #include "core/ui_stall_watchdog.h"
 #include "crl/crl_on_main.h"
@@ -4970,23 +4971,30 @@ FindAuthorizationBlockedAccount(const Main::Domain &domain) {
 	auto &settings = Core::App().settings().proxy();
 	const auto saved = settings.serialize();
 	const auto restoreSettings = gsl::finally([&] {
+		Core::SetProxyRotationConnectionUpdatesSuppressedForTest(false);
 		settings.setFromSerialized(saved);
 		Core::App().proxyRotationSettingsChanged();
 	});
+	auto alternateServer = QTcpServer();
+	if (!alternateServer.listen(QHostAddress::LocalHost, 0)) {
+		return false;
+	}
+	auto closedServer = QTcpServer();
+	if (!closedServer.listen(QHostAddress::LocalHost, 0)) {
+		return false;
+	}
+	const auto closedPort = closedServer.serverPort();
+	closedServer.close();
 	const auto selected = MTP::ProxyData{
 		.type = MTP::ProxyData::Type::Socks5,
 		.host = u"127.0.0.1"_q,
-		.port = 32761,
+		.port = closedPort,
 	};
 	const auto alternate = MTP::ProxyData{
 		.type = MTP::ProxyData::Type::Socks5,
 		.host = u"127.0.0.1"_q,
-		.port = 32762,
+		.port = alternateServer.serverPort(),
 	};
-	settings.setList({selected, alternate});
-	settings.setSelected(selected);
-	settings.setSettings(MTP::ProxyData::Settings::Enabled);
-	settings.setProxyRotationEnabled(true);
 	const auto release = std::make_shared<QSemaphore>();
 	const auto waiting = std::make_shared<std::atomic<bool>>(false);
 	const auto cleanup = gsl::finally([=] {
@@ -5003,15 +5011,24 @@ FindAuthorizationBlockedAccount(const Main::Domain &domain) {
 			if (entry.account->sessionExists()) {
 				Core::App().checkProxyRotation(entry.account.get(),
 											   MTP::DisconnectedState);
+				if (alternateServer.hasPendingConnections()) {
+					return;
+				}
+				Core::SetProxyRotationConnectionUpdatesSuppressedForTest(true);
 				domain.removeRedundantAccounts();
 				checkedWhileStarting = true;
+				probe.stop();
 				release->release();
 				return;
 			}
 		}
 	});
 	probe.start(1);
-	const auto restarted = RestartDomain(domain, nullptr, [=] {
+	const auto restarted = RestartDomain(domain, nullptr, [&] {
+		settings.setList({selected, alternate});
+		settings.setSelected(selected);
+		settings.setSettings(MTP::ProxyData::Settings::Enabled);
+		settings.setProxyRotationEnabled(true);
 		Storage::details::SetPreparedWriteHooksForTest({
 			[] { return true; },
 			[=] {
@@ -5027,10 +5044,49 @@ FindAuthorizationBlockedAccount(const Main::Domain &domain) {
 		|| !domain.active().sessionExists()) {
 		return false;
 	}
-	Core::App().checkProxyRotation(&domain.active(), MTP::DisconnectedState);
+	if (!WaitForRegressionCondition(
+			[&] { return alternateServer.hasPendingConnections(); })) {
+		return false;
+	}
+	settings.setProxyRotationEnabled(false);
+	Core::App().proxyRotationSettingsChanged();
+	auto logoutServer = QTcpServer();
+	if (!logoutServer.listen(QHostAddress::LocalHost, 0)) {
+		return false;
+	}
+	auto logoutAlternate = alternate;
+	logoutAlternate.port = logoutServer.serverPort();
+	settings.setList({selected, logoutAlternate});
 	for (const auto &entry : domain.accounts()) {
 		if (entry.account->sessionExists()
 			&& entry.account->session().userId() == secondUserId) {
+			auto held = std::vector<Main::Account *>();
+			for (const auto &other : domain.accounts()) {
+				if (other.account.get() != entry.account.get()
+					&& other.account->sessionExists()) {
+					other.account->mtp().holdForServerEnrollment();
+					held.push_back(other.account.get());
+				}
+			}
+			const auto resumeHeld = gsl::finally([&] {
+				for (const auto account : held) {
+					account->mtp().releaseServerEnrollmentHold();
+					account->mtp().resume();
+				}
+			});
+			entry.account->logOut();
+			if (!entry.account->loggingOut()
+				|| entry.account->mtp().isServerEnrollmentHeld()) {
+				return false;
+			}
+			settings.setProxyRotationEnabled(true);
+			Core::App().proxyRotationSettingsChanged();
+			if (!WaitForRegressionCondition(
+					[&] { return logoutServer.hasPendingConnections(); })) {
+				return false;
+			}
+			settings.setProxyRotationEnabled(false);
+			Core::App().proxyRotationSettingsChanged();
 			const auto weak = base::make_weak(entry.account.get());
 			entry.account->forcedLogOut();
 			return WaitForRegressionCondition(
@@ -5145,6 +5201,17 @@ FindAuthorizationBlockedAccount(const Main::Domain &domain) {
 	const auto clearHook = gsl::finally([] {
 		Storage::details::SetEndpointConfigWriteHookForRegressionTest(nullptr);
 	});
+	const auto window = Core::App().activePrimaryWindow();
+	if (!window) {
+		return false;
+	}
+	const auto wasVisible = window->widget()->isVisible();
+	window->widget()->show();
+	const auto restoreWindow = gsl::finally([&] {
+		if (!wasVisible) {
+			window->widget()->hide();
+		}
+	});
 	account->forcedLogOut();
 	if (!WaitForRegressionCondition([&] {
 			return !AccountLifecycleRegressionAccess::logoutCleanupPending(
@@ -5154,14 +5221,65 @@ FindAuthorizationBlockedAccount(const Main::Domain &domain) {
 		|| account->mtp().isServerEnrollmentNetworkAllowed()) {
 		return false;
 	}
+	const auto findRetry = [&]() -> Ui::RoundButton * {
+		for (const auto widget : window->widget()->findChildren<QWidget *>()) {
+			if (!widget->isVisible()) {
+				continue;
+			}
+			if (const auto label = dynamic_cast<Ui::FlatLabel *>(widget)) {
+				if (label->accessibilityName()
+					!= tr::lng_teagram_logout_storage_failed(tr::now)) {
+					continue;
+				}
+				auto parent = label->parentWidget();
+				while (parent && !dynamic_cast<Ui::GenericBox *>(parent)) {
+					parent = parent->parentWidget();
+				}
+				const auto layer = parent ? parent->parentWidget() : nullptr;
+				if (!layer) {
+					return nullptr;
+				}
+				for (const auto child : layer->findChildren<QWidget *>()) {
+					const auto button = dynamic_cast<Ui::RoundButton *>(child);
+					if (button && button->isVisible()
+						&& button->accessibilityName()
+							   == tr::lng_intro_server_try_again(tr::now)) {
+						return button;
+					}
+				}
+			}
+		}
+		return nullptr;
+	};
+	if (!WaitForRegressionCondition([&] { return findRetry() != nullptr; })) {
+		return false;
+	}
+	Ui::hideLayer(anim::type::instant);
 	account.reset();
 	Storage::details::Sync();
 	auto restarted = std::make_unique<Main::Account>(&domain, dataName, 0);
 	auto recovered = restarted->prepareToStart(localKey);
 	restarted->start(std::move(recovered));
-	return WaitForRegressionCondition(
-			   [&] { return !restarted->startPending(); })
-		   && restarted->sessionExists();
+	if (!WaitForRegressionCondition([&] { return !restarted->startPending(); })
+		|| !restarted->sessionExists()) {
+		return false;
+	}
+	Storage::details::SetEndpointConfigWriteHookForRegressionTest(
+		[] { return false; });
+	restarted->forcedLogOut();
+	if (!WaitForRegressionCondition([&] {
+			return !AccountLifecycleRegressionAccess::logoutCleanupPending(
+					   *restarted)
+				   && findRetry();
+		})
+		|| restarted->mtp().isServerEnrollmentNetworkAllowed()) {
+		return false;
+	}
+	const auto retry = findRetry();
+	Storage::details::SetEndpointConfigWriteHookForRegressionTest(nullptr);
+	retry->clicked(Qt::KeyboardModifiers(), Qt::LeftButton);
+	return WaitForRegressionCondition([&] { return !restarted->loggingOut(); })
+		   && !restarted->sessionExists();
 }
 
 [[nodiscard]] bool LogoutDuringEndpointWriteRestarts(Main::Domain &domain) {

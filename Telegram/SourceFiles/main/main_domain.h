@@ -64,6 +64,9 @@ public:
 	// Expects(started());
 	[[nodiscard]] Account &active() const;
 	[[nodiscard]] rpl::producer<not_null<Account*>> activeChanges() const;
+	[[nodiscard]] rpl::producer<> activations() const {
+		return _activations.events();
+	}
 
 	[[nodiscard]] rpl::producer<Session*> activeSessionValue() const;
 	[[nodiscard]] rpl::producer<Session*> activeSessionChanges() const;
@@ -105,6 +108,7 @@ private:
 	std::vector<AccountWithIndex> _accounts;
 	rpl::event_stream<> _accountsChanges;
 	rpl::variable<Account*> _active = nullptr;
+	rpl::event_stream<> _activations;
 	int _accountToActivate = -1;
 	int _lastActiveIndex = -1;
 	bool _writeAccountsScheduled = false;

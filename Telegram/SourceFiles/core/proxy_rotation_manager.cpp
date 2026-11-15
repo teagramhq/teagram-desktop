@@ -22,7 +22,17 @@ constexpr auto kProxyRotationCheckInterval = 2 * crl::time(1000);
 constexpr auto kProxyRotationCheckLifetime = 20 * crl::time(1000);
 constexpr auto kProxyRotationMaxActiveChecks = 10;
 
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+bool SuppressConnectionUpdatesForTest = false;
+#endif
+
 } // namespace
+
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+void SetProxyRotationConnectionUpdatesSuppressedForTest(bool suppressed) {
+	SuppressConnectionUpdatesForTest = suppressed;
+}
+#endif
 
 ProxyRotationManager::ProxyRotationManager()
 : _checkTimer([=] { runChecks(); })
@@ -32,9 +42,8 @@ ProxyRotationManager::ProxyRotationManager()
 		stopChecking();
 		reevaluate();
 	}, _lifetime);
-	App().domain().activeChanges()
-		| rpl::on_next([=](not_null<Main::Account *>) { reevaluate(); },
-					   _lifetime);
+	App().domain().activations()
+		| rpl::on_next([=] { reevaluate(); }, _lifetime);
 }
 
 void ProxyRotationManager::settingsChanged() {
@@ -48,6 +57,11 @@ void ProxyRotationManager::handleConnectionStateChanged(
 		int32 state) {
 	(void)account;
 	(void)state;
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+	if (SuppressConnectionUpdatesForTest) {
+		return;
+	}
+#endif
 	reevaluate();
 }
 
@@ -62,7 +76,7 @@ std::vector<not_null<Main::Account*>> ProxyRotationManager::productionAccounts()
 	auto result = std::vector<not_null<Main::Account*>>();
 	for (const auto &entry : App().domain().accounts()) {
 		const auto account = entry.account.get();
-		if (!account->sessionExists() || account->loggingOut()
+		if (!account->sessionExists() || account->mtp().isServerEnrollmentHeld()
 			|| account->mtp().isTestMode()) {
 			continue;
 		}
@@ -73,7 +87,7 @@ std::vector<not_null<Main::Account*>> ProxyRotationManager::productionAccounts()
 
 not_null<Main::Account*> ProxyRotationManager::accountForChecks() const {
 	if (App().someSessionExists() && App().activeAccount().sessionExists()
-		&& !App().activeAccount().loggingOut()
+		&& !App().activeAccount().mtp().isServerEnrollmentHeld()
 		&& !App().activeAccount().mtp().isTestMode()) {
 		return &App().activeAccount();
 	}

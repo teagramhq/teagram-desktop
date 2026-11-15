@@ -19,6 +19,10 @@ class Account;
 
 namespace Core {
 
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+void SetProxyRotationConnectionUpdatesSuppressedForTest(bool suppressed);
+#endif
+
 class ProxyRotationManager final {
 public:
 	ProxyRotationManager();

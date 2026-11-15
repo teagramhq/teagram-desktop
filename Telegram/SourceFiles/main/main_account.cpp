@@ -9,6 +9,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "base/platform/base_platform_info.h"
 #include "intro/intro_server_discovery.h"
+#include "lang/lang_keys.h"
 #include "core/application.h"
 #include "storage/storage_account.h"
 #include "storage/details/storage_file_utilities.h"
@@ -1225,6 +1226,24 @@ void Account::finishLogoutCleanup(bool success) {
 		_logoutCleanupFailed = true;
 		LOG(("MTP Error: logout storage cleanup failed; keeping enrollment "
 			 "blocked."));
+		if (sessionExists()) {
+			const auto retry = crl::guard(this, [=] { logOut(); });
+			auto message = Box([=](not_null<Ui::GenericBox *> box) {
+				box->addRow(object_ptr<Ui::FlatLabel>(
+								box.get(),
+								tr::lng_teagram_logout_storage_failed(tr::now),
+								st::boxLabel),
+							st::boxPadding);
+				box->addButton(tr::lng_intro_server_try_again(), [=] {
+					box->closeBox();
+					retry();
+				});
+				box->addButton(tr::lng_cancel(), [=] { box->closeBox(); });
+			});
+			if (const auto window = Core::App().windowFor(not_null{this})) {
+				window->show(std::move(message));
+			}
+		}
 		_logoutCleanupChanges.fire({});
 		return;
 	}

@@ -526,6 +526,7 @@ void Domain::activate(not_null<Main::Account*> account) {
 	}
 	_accountToActivate = i->index;
 	_active = account.get();
+	_activations.fire({});
 	_active.current()->sessionValue(
 	) | rpl::start_to_stream(_activeSessions, _activeLifetime);
 
