@@ -1034,6 +1034,42 @@ awk '
 [[ -s "$temp_dir/main-thread-work-gate.sh" ]] \
   || contract_fail 'The blocked-time main-thread work budget predicate was not found.'
 source "$temp_dir/main-thread-work-gate.sh"
+if ! main_thread_work_estimate_within_budget \
+  0 100000000 RRRRR 50000000 0,25000000,50000000,75000000,100000000; then
+  contract_fail 'Runnable samples 25 ms apart must cover the window.'
+fi
+if main_thread_work_estimate_within_budget \
+  0 104000000 RRRRR 50000000 0,26000000,52000000,78000000,104000000; then
+  contract_fail 'A 26 ms sample gap must fall back to wall time.'
+fi
+if main_thread_work_estimate_within_budget \
+  0 100000000 RRRRW 25000000 0,25000000,50000000,75000000,100000000; then
+  contract_fail 'A waiting end sample must charge the whole preceding gap.'
+fi
+if ! main_thread_work_estimate_within_budget \
+  0 100000000 RRRRW 25000001 0,25000000,50000000,75000000,100000000; then
+  contract_fail 'A waiting end sample must charge exactly its preceding gap.'
+fi
+if main_thread_work_estimate_within_budget \
+  0 100000000 RRURR 50000000 0,25000000,50000000,75000000,100000000; then
+  contract_fail 'An uninterruptible sample must charge both adjacent gaps.'
+fi
+if ! main_thread_work_estimate_within_budget \
+  0 100000000 RRURR 50000001 0,25000000,50000000,75000000,100000000; then
+  contract_fail 'Adjacent blocked gaps must be charged exactly once.'
+fi
+if main_thread_work_estimate_within_budget \
+  0 100000000 RRRR 25000000 10000000,35000000,60000000,85000000; then
+  contract_fail 'Unobserved window edges must count as blocked time.'
+fi
+if ! main_thread_work_estimate_within_budget \
+  0 100000000 RRRR 25000001 10000000,35000000,60000000,85000000; then
+  contract_fail 'Unobserved window edges must be charged exactly once.'
+fi
+if main_thread_work_estimate_within_budget \
+  0 100000000 RRRR 50000000 26000000,50000000,75000000,100000000; then
+  contract_fail 'A 26 ms uncovered edge must fall back to wall time.'
+fi
 startup_offsets=""
 for ((offset = 0; offset <= 100000000; offset += 5000000)); do
   startup_offsets="${startup_offsets:+$startup_offsets,}$offset"
@@ -1060,21 +1096,21 @@ if ! main_thread_work_estimate_within_budget \
   "$chat_switch_offsets"; then
   contract_fail 'A runnable 225 ms window with 18 ms CPU must pass.'
 fi
-if main_thread_work_estimate_within_budget \
+if ! main_thread_work_estimate_within_budget \
   18000000 225000000 \
   "$(printf '%15s' '' | tr ' ' R)$(printf '%4s' '' | tr ' ' W)" \
   100000000 "$sparse_startup_offsets"; then
-  contract_fail 'A 12.5 ms sample gap must fall back to wall time.'
+  contract_fail 'A 12.5 ms gap must count blocked intervals and remain covered.'
 fi
 six_millisecond_offsets=""
 for ((offset = 0; offset <= 222000000; offset += 6000000)); do
   six_millisecond_offsets="${six_millisecond_offsets:+$six_millisecond_offsets,}$offset"
 done
 six_millisecond_trace="$(printf '%38s' '' | tr ' ' R)"
-if main_thread_work_estimate_within_budget \
+if ! main_thread_work_estimate_within_budget \
   18000000 225000000 "$six_millisecond_trace" 100000000 \
   "$six_millisecond_offsets"; then
-  contract_fail 'A 6 ms sample gap must fall back to wall time.'
+  contract_fail 'A 6 ms sample gap must remain covered.'
 fi
 if main_thread_work_estimate_within_budget \
   18000000 225000000 RRRW 100000000 0,75000000,150000000,225000000; then

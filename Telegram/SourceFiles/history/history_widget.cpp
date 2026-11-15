@@ -7477,10 +7477,10 @@ bool HistoryWidget::pushTabbedSelectorToThirdSection(
 }
 
 bool HistoryWidget::returnTabbedSelector() {
-	if (_tabbedPanel && _tabbedPanel->isSelectorStolen()) {
-		controller()->tabbedSelector()->setParent(_tabbedPanel.get());
-	} else {
+	if (!_tabbedPanel) {
 		createTabbedPanel();
+	} else if (_tabbedPanel->isSelectorStolen()) {
+		controller()->tabbedSelector()->setParent(_tabbedPanel.get());
 	}
 	moveFieldControls();
 	return true;
