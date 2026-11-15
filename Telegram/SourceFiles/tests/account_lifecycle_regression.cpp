@@ -3100,6 +3100,7 @@ class LocalEndpointRefreshDiscoveryStub final {
 		return fail("the restored auth key was unavailable");
 	}
 	const auto retryRefresh = [&] {
+		discovery.deferVerifierReply();
 		AccountLifecycleRegressionAccess::cancelEndpointRefresh(*account);
 		mtp.resume();
 		return mtp.isServerEnrollmentNetworkAllowed() && requestRefresh()
