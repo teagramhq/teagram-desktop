@@ -26,6 +26,7 @@ class UiStallWatchdog final : public QObject {
   public:
 	struct Settings {
 		bool captureShortStalls = false;
+		bool disableRateLimit = false;
 		bool captureSchedulerTrace = false;
 	};
 

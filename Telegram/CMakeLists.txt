@@ -1526,6 +1526,8 @@ PRIVATE
     main/session/session_show.h
     tests/signup_controls_regression.cpp
     tests/signup_controls_regression.h
+    tests/font_startup_regression.cpp
+    tests/font_startup_regression.h
     tests/account_lifecycle_regression.cpp
     tests/account_lifecycle_regression.h
     media/audio/media_audio.cpp

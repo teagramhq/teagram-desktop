@@ -412,7 +412,9 @@ UiStallWatchdog::UiStallWatchdog(
 	  _countThreshold(kCountThreshold),
 	  _logThreshold(settings.captureShortStalls ? kShortLogThreshold
 												: kLogThreshold),
-	  _logRateLimit(settings.captureShortStalls ? 0ms : kLogRateLimit),
+	  _logRateLimit(settings.captureShortStalls || settings.disableRateLimit
+						? 0ms
+						: kLogRateLimit),
 	  _captureSchedulerTrace(settings.captureSchedulerTrace) {
 #if defined(Q_OS_LINUX) || defined(Q_OS_MAC)
 	_canCaptureStack = InstallSignalHandler();
