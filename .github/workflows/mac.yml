@@ -20,6 +20,7 @@ on:
       - '.github/scripts/macos_libraries_image.sh'
       - '.github/scripts/ccache_*.sh'
       - '.github/scripts/mac_ccache_profile.sh'
+      - '.github/scripts/macos_perf_fixture.py'
   schedule:
     - cron: '0 3 * * *'
   workflow_dispatch:
@@ -1421,13 +1422,81 @@ jobs:
           elapsed_minutes=$((elapsed_seconds / 60))
           printf 'MacOS job wall time from first step: %s seconds (%s minutes).\n' \
             "$elapsed_seconds" "$elapsed_minutes"
-          printf '### MacOS job duration\n\n- Wall time from first step: %s seconds (%s minutes)\n' \
+          printf '### MacOS job duration before fixture setup\n\n- Wall time from first step: %s seconds (%s minutes)\n' \
             "$elapsed_seconds" "$elapsed_minutes" >> "$GITHUB_STEP_SUMMARY"
           if [ "$GITHUB_EVENT_NAME" = "pull_request" ] \
               && [ -n "$CCACHE_MATCHED_KEY" ] \
               && [ "$LIBRARIES_CACHE_HIT" = "true" ] \
               && ((elapsed_seconds > 1800)); then
             echo "::warning::Warm-cache MacOS PR build exceeded the 30-minute target (${elapsed_seconds}s); the source build result remains authoritative."
+          fi
+
+      - name: Start performance fixture timing.
+        id: perf-fixture-start
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          echo "PERF_FIXTURE_STARTED_AT=$(date -u +%s)" >> "$GITHUB_ENV"
+          echo "PERF_FIXTURE_PHASE_FILE=$RUNNER_TEMP/macos-perf-fixture-phase" >> "$GITHUB_ENV"
+          echo "PERF_FIXTURE_TIMES_FILE=$RUNNER_TEMP/macos-perf-fixture-times" >> "$GITHUB_ENV"
+          echo "PERF_FIXTURE_SUMMARY_FILE=$RUNNER_TEMP/macos-perf-fixture-summary" >> "$GITHUB_ENV"
+          echo 'tool setup' > "$RUNNER_TEMP/macos-perf-fixture-phase"
+          : > "$RUNNER_TEMP/macos-perf-fixture-times"
+
+      - name: Set up fixture server Go.
+        id: perf-fixture-go
+        if: ${{ !cancelled() && steps.perf-fixture-start.outcome == 'success' }}
+        continue-on-error: true
+        timeout-minutes: 6
+        uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5
+        with:
+          go-version: '1.27.3'
+          cache: false
+
+      - name: Set up fixture migrations.
+        id: perf-fixture-atlas
+        if: ${{ !cancelled() && steps.perf-fixture-go.outcome == 'success' }}
+        continue-on-error: true
+        timeout-minutes: 6
+        uses: ariga/setup-atlas@2f3c785c89a15e1c0d07bcae3900fb5feb969eea
+        with:
+          version: v1.2.0
+
+      - name: Restore and run performance fixtures (informational).
+        id: perf-fixture
+        if: ${{ !cancelled() && steps.perf-fixture-start.outcome == 'success' }}
+        continue-on-error: true
+        timeout-minutes: 20
+        env:
+          PERF_GO_OUTCOME: ${{ steps.perf-fixture-go.outcome }}
+          PERF_ATLAS_OUTCOME: ${{ steps.perf-fixture-atlas.outcome }}
+        run: python3 "$REPO_NAME/.github/scripts/macos_perf_fixture.py"
+
+      - name: Report interrupted fixture setup.
+        if: ${{ !cancelled() && steps.perf-fixture-start.outcome == 'success' && steps.perf-fixture.outcome != 'success' }}
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          if [ ! -f "$PERF_FIXTURE_SUMMARY_FILE" ]; then
+            finished_at="$(date -u +%s)"
+            phase="$(cat "$PERF_FIXTURE_PHASE_FILE")"
+            {
+              echo '### macOS live performance fixture'
+              printf '\nStatus: **failed**. Failed phase: **%s** (setup was interrupted).\n\n' "$phase"
+              printf '| Phase | Wall time |\n| --- | ---: |\n'
+              for name in 'tool setup' download 'postgres setup' 'restore 1x' 'restore 100x' migrations 'server build' 'server ready' cleanup; do
+                seconds="$(awk -F '|' -v name="$name" '$1 == name {print $2}' "$PERF_FIXTURE_TIMES_FILE")"
+                if [ -n "$seconds" ]; then
+                  printf '| %s | %s s |\n' "$name" "$seconds"
+                elif [ "$name" = "$phase" ]; then
+                  printf '| %s | interrupted |\n' "$name"
+                else
+                  printf '| %s | not reached |\n' "$name"
+                fi
+              done
+              printf '| Total added to job | %s s |\n' "$((finished_at - PERF_FIXTURE_STARTED_AT))"
+            } >> "$GITHUB_STEP_SUMMARY"
           fi
 
   test-libiconv:
