@@ -1861,6 +1861,7 @@ void HistoryWidget::ensureFieldAutocomplete() {
 	}
 	if (_autocomplete) {
 		_autocomplete->setCurrentPeer(_peer);
+		ensureEmojiSuggestions();
 		return;
 	}
 #ifdef TDESKTOP_LIFECYCLE_REGRESSION
@@ -1934,12 +1935,26 @@ void HistoryWidget::ensureFieldAutocomplete() {
 		},
 	});
 	_autocomplete->setBoundings(_scroll->geometry());
+	ensureEmojiSuggestions();
+}
+
+void HistoryWidget::scheduleEmojiSuggestions() {
+	if (!_emojiSuggestions && _autocomplete && _field->hasText()) {
+		InvokeQueued(this, [=] { ensureEmojiSuggestions(); });
+	}
+}
+
+void HistoryWidget::ensureEmojiSuggestions() {
+	if (_emojiSuggestions || !_peer || !_autocomplete || !_field->hasText()) {
+		return;
+	}
 	const auto allow = [=](const auto &) { return _peer && _peer->isSelf(); };
 	_emojiSuggestions.reset(Ui::Emoji::SuggestionsController::Init(
 		this,
 		_field,
 		&controller()->session(),
 		{ .suggestCustomEmoji = true, .allowCustomWithoutPremium = allow }));
+	_emojiSuggestions->processCurrentTextChange();
 }
 
 InlineBotQuery HistoryWidget::parseInlineBotQuery() const {
@@ -2177,6 +2192,7 @@ bool HistoryWidget::suppressSendAction() const {
 }
 
 void HistoryWidget::fieldChanged() {
+	scheduleEmojiSuggestions();
 	const auto updateTyping = (_textUpdateEvents
 		& TextUpdateEvent::SendTyping);
 
@@ -6921,6 +6937,14 @@ void HistoryWidget::resetFieldAutocompleteForRegressionTest() {
 	_emojiSuggestions.reset();
 	_autocomplete.reset();
 	_fieldAutocompleteBuildCountForRegressionTest = 0;
+}
+
+bool HistoryWidget::emojiSuggestionsCreatedForRegressionTest() const {
+	return _emojiSuggestions != nullptr;
+}
+
+bool HistoryWidget::emojiSuggestionsShownForRegressionTest() const {
+	return _emojiSuggestions && _emojiSuggestions->shown();
 }
 
 void HistoryWidget::initFieldAutocompleteForRegressionTest() {

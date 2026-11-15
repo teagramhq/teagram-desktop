@@ -12310,6 +12310,20 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		   == secondUiHistory->peer.get());
 	const auto autocompleteFocusedAfterFocus
 		= historyWidget->fieldFocusedForRegressionTest();
+	QCoreApplication::processEvents();
+	const auto emojiSuggestionsDeferred
+		= historyWidget->fieldFocusedForRegressionTest()
+		  && !historyWidget->emojiSuggestionsCreatedForRegressionTest();
+	const auto savedSuggestEmoji = Core::App().settings().suggestEmoji();
+	Core::App().settings().setSuggestEmoji(true);
+	historyWidget->setDraftTextForRegressionTest(u":smil"_q);
+	const auto emojiSuggestionsShown = WaitForRegressionCondition(
+		[&] { return historyWidget->emojiSuggestionsShownForRegressionTest(); },
+		5000);
+	historyWidget->setDraftTextForRegressionTest(QString());
+	Core::App().settings().setSuggestEmoji(savedSuggestEmoji);
+	std::fprintf(stderr, "Emoji suggestions fixture: deferred=%d shown=%d.\n",
+				 emojiSuggestionsDeferred, emojiSuggestionsShown);
 	std::fprintf(
 		stderr,
 		"Focused autocomplete fixture: built_on_focus=%d peer_matches=%d "
@@ -12358,6 +12372,7 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 	result.chatSwitchComposeUiReused
 		= repeatedSelectorReturnReused && autocompleteDeferredUntilFocus
 		  && autocompleteBuiltOnFocus && (autocompleteBuildsAfterFocus == 1)
+		  && emojiSuggestionsDeferred && emojiSuggestionsShown
 		  && autocompletePeerMatchesAfterFocus && autocompleteFocusedAfterFocus
 		  && (autocompleteBuildsAfterSwitch == autocompleteBuildsAfterFocus)
 		  && (tabbedPanelBuildsAfterSwitch == tabbedPanelBuildsBeforeSwitch)

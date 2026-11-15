@@ -837,6 +837,13 @@ void SuggestionsController::setReplaceCallback(
 	}
 }
 
+void SuggestionsController::processCurrentTextChange() {
+	const auto wasAfterKeyPress = _textChangeAfterKeyPress;
+	_textChangeAfterKeyPress = true;
+	handleTextChange();
+	_textChangeAfterKeyPress = wasAfterKeyPress;
+}
+
 void SuggestionsController::handleTextChange() {
 	if (Core::App().settings().suggestEmoji()
 		&& _field->textCursor().position() > 0) {

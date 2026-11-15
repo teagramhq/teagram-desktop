@@ -382,6 +382,18 @@ run_bundle_keyed_probe() {
 	fi
 }
 
+capture_stuck_profile_process() {
+	local pid="$1"
+	local output="$2"
+	if command -v sample >/dev/null 2>&1; then
+		sample "$pid" 5 -file "$output" >"$output.log" 2>&1 || true
+		printf 'profile_process_sample_log=%s\n' "$output.log"
+		if [[ -s "$output" ]]; then
+			printf 'profile_process_sample=%s\n' "$output"
+		fi
+	fi
+}
+
 run_spoiler_cache_symlink_case() {
 	local case_name="$1"
 	local link_name="$2"
@@ -510,6 +522,7 @@ run_spoiler_cache_symlink_case() {
 	done
 	if kill -0 "$FIRST_PID" 2>/dev/null; then
 		report_result "${case_name}_first_instance_exit" false "pid=$FIRST_PID still_alive=1" || true
+		capture_stuck_profile_process "$FIRST_PID" "$case_home/first-instance.sample.txt"
 		return 1
 	fi
 	set +e

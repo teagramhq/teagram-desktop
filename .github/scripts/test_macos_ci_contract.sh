@@ -1034,6 +1034,25 @@ awk '
 [[ -s "$temp_dir/main-thread-work-gate.sh" ]] \
   || contract_fail 'The blocked-time main-thread work budget predicate was not found.'
 source "$temp_dir/main-thread-work-gate.sh"
+awk '
+  /^capture_stuck_profile_process\(\) \{$/ { copy = 1 }
+  copy { print }
+  copy && /^}$/ { exit }
+' "$profile_harness" > "$temp_dir/profile-hang-sample.sh"
+[[ -s "$temp_dir/profile-hang-sample.sh" ]] \
+  || contract_fail 'A stuck profile process must retain a diagnostic sample.'
+# shellcheck disable=SC1091
+source "$temp_dir/profile-hang-sample.sh"
+# shellcheck disable=SC2329
+sample() {
+  printf '%s\n' "$@" > "$temp_dir/profile-hang-sample-args"
+  return 1
+}
+capture_stuck_profile_process 123 "$temp_dir/first-instance.sample.txt"
+[[ "$(cat "$temp_dir/profile-hang-sample-args")" == \
+  "$(printf '%s\n' 123 5 -file "$temp_dir/first-instance.sample.txt")" ]] \
+  || contract_fail 'A stuck profile process must sample the exact child PID.'
+unset -f sample
 if ! main_thread_work_estimate_within_budget \
   0 100000000 RRRRR 50000000 0,25000000,50000000,75000000,100000000; then
   contract_fail 'Runnable samples 25 ms apart must cover the window.'

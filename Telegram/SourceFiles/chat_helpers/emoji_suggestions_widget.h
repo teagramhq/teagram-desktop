@@ -54,6 +54,8 @@ public:
 		const Options &options);
 
 	void raise();
+	// Process an edit that happened before this controller was installed.
+	void processCurrentTextChange();
 	[[nodiscard]] bool shown() const {
 		return _shown && !_forceHidden;
 	}

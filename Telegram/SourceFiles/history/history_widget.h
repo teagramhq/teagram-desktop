@@ -336,6 +336,8 @@ public:
 	attachMenuContainsBotForRegressionTest(UserId botId) const;
 	[[nodiscard]] int attachMenuCacheSizeForRegressionTest() const;
 	[[nodiscard]] int fieldAutocompleteBuildCountForRegressionTest() const;
+	[[nodiscard]] bool emojiSuggestionsCreatedForRegressionTest() const;
+	[[nodiscard]] bool emojiSuggestionsShownForRegressionTest() const;
 	[[nodiscard]] PeerData *fieldAutocompletePeerForRegressionTest() const;
 	[[nodiscard]] bool fieldFocusedForRegressionTest() const;
 	[[nodiscard]] bool
@@ -486,6 +488,8 @@ private:
 	void fieldResized();
 
 	void initFieldAutocomplete();
+	void scheduleEmojiSuggestions();
+	void ensureEmojiSuggestions();
 	void ensureFieldAutocomplete();
 	void cancelInlineBot();
 	void saveDraft(bool delayed = false);
