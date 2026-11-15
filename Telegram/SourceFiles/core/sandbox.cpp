@@ -73,7 +73,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <pthread.h>
 #include <signal.h>
 #include <functional>
+#include <algorithm>
 #include <chrono>
+#include <memory>
 #include <system_error>
 #include <thread>
 #include <sys/un.h>
@@ -100,11 +102,14 @@ void *ProbeFrames[kProbeMaxFrames];
 std::atomic_int ProbeDepth = -1;
 
 void ProbeSignal(int) {
-	ProbeDepth.store(backtrace(ProbeFrames, kProbeMaxFrames),
-					 std::memory_order_release);
+	const auto depth = backtrace(ProbeFrames, kProbeMaxFrames);
+	ProbeDepth.store(depth, std::memory_order_release);
 }
 
 [[nodiscard]] bool InstallProbeSignal() {
+	// The first backtrace() call may allocate, so make it outside a handler.
+	void *primed[1];
+	static_cast<void>(backtrace(primed, 1));
 	struct sigaction action = {};
 	action.sa_handler = ProbeSignal;
 	sigemptyset(&action.sa_mask);
@@ -112,10 +117,10 @@ void ProbeSignal(int) {
 	return sigaction(SIGUSR1, &action, nullptr) == 0;
 }
 
-[[nodiscard]] bool StackInSystemEnumeration() {
-	for (auto i = 0; i != ProbeDepth.load(std::memory_order_acquire); ++i) {
+[[nodiscard]] bool FramesInSystemEnumeration(void *const *frames, int depth) {
+	for (auto i = 0; i != depth; ++i) {
 		auto info = Dl_info();
-		if (!dladdr(ProbeFrames[i], &info) || !info.dli_sname) {
+		if (!dladdr(frames[i], &info) || !info.dli_sname) {
 			continue;
 		}
 		const auto name = QByteArray(info.dli_sname);
@@ -128,47 +133,47 @@ void ProbeSignal(int) {
 	return false;
 }
 
-// Signals the worker and inspects its stack, so overlap is recorded only when
-// a system family enumeration frame is executing at that moment. Sampling is
-// retried while the worker keeps enumerating.
-[[nodiscard]] bool WorkerInSystemEnumeration(pthread_t worker) {
+enum class StackSample {
+	Failed,
+	OtherWork,
+	InSystemEnumeration,
+};
+
+// Signals the worker and waits until its capture completes, however long the
+// signal takes, then scans a bounded copy of the captured frames.
+[[nodiscard]] StackSample SampleWorkerStack(pthread_t worker) {
 	using Clock = std::chrono::steady_clock;
-	const auto deadline = Clock::now() + std::chrono::seconds(2);
-	while (Clock::now() < deadline) {
-		ProbeDepth.store(-1, std::memory_order_release);
-		if (pthread_kill(worker, SIGUSR1) != 0) {
-			return false;
-		}
-		const auto wait = Clock::now() + std::chrono::milliseconds(50);
-		while (ProbeDepth.load(std::memory_order_acquire) < 0
-			   && Clock::now() < wait) {
-			std::this_thread::yield();
-		}
-		if (StackInSystemEnumeration()) {
-			return true;
-		}
-		std::this_thread::sleep_for(std::chrono::milliseconds(1));
+	ProbeDepth.store(-1, std::memory_order_release);
+	if (pthread_kill(worker, SIGUSR1) != 0) {
+		return StackSample::Failed;
 	}
-	return false;
+	const auto deadline = Clock::now() + std::chrono::seconds(2);
+	auto depth = -1;
+	while ((depth = ProbeDepth.load(std::memory_order_acquire)) < 0) {
+		if (Clock::now() >= deadline) {
+			return StackSample::Failed;
+		}
+		std::this_thread::yield();
+	}
+	depth = std::min(depth, kProbeMaxFrames);
+	void *frames[kProbeMaxFrames];
+	std::copy(ProbeFrames, ProbeFrames + depth, frames);
+	return FramesInSystemEnumeration(frames, depth)
+			   ? StackSample::InSystemEnumeration
+			   : StackSample::OtherWork;
 }
 
 // Repeats a real system font-family enumeration: registering an application
 // font invalidates the Qt font database, so the next families() call
-// enumerates the system families again. The quit is requested once the loop
-// starts, and the loop runs until aboutToQuit has sampled the worker stack.
-void EnumerateUntilQuit(const std::atomic_bool &quitObserved,
-						const std::function<void()> &requestQuit) {
+// enumerates the system families again. The loop runs until aboutToQuit, so
+// the worker keeps enumerating through the real quit and teardown.
+void EnumerateUntilQuit(const std::atomic_bool &quitObserved) {
 	using Clock = std::chrono::steady_clock;
 	const auto files = QDir(u":/gui/fonts/"_q).entryInfoList();
 	const auto path
 		= files.isEmpty() ? QString() : files.front().canonicalFilePath();
 	const auto deadline = Clock::now() + std::chrono::seconds(10);
-	auto requested = false;
 	while (!quitObserved && Clock::now() < deadline) {
-		if (!requested) {
-			requested = true;
-			requestQuit();
-		}
 		const auto id
 			= path.isEmpty() ? -1 : QFontDatabase::addApplicationFont(path);
 #if QT_VERSION < QT_VERSION_CHECK(6, 0, 0)
@@ -631,17 +636,15 @@ void Sandbox::startFontDatabaseWarmup() {
 	const auto quitRegression
 		= qEnvironmentVariableIsSet("TDESKTOP_FONT_STARTUP_QUIT_REGRESSION");
 	if (quitRegression) {
-		// The worker requests the real quit as its first repeated
-		// enumeration begins and keeps enumerating until aboutToQuit has
-		// sampled its stack for a system enumeration frame.
+		// The main thread samples the worker stack until it sees a system
+		// font enumeration executing, and only then requests the real quit.
+		// The worker keeps enumerating until aboutToQuit, so teardown runs
+		// with that enumeration work still active.
 		if (!InstallProbeSignal()) {
 			fprintf(stderr, "Font shutdown regression: probe=unavailable\n");
 		}
-		connect(this, &QCoreApplication::aboutToQuit, [=] {
-			_fontEnumerationOverlapped = WorkerInSystemEnumeration(
-				_fontDatabaseWarmupThread.native_handle());
-			_fontStartupQuitObserved = true;
-		});
+		connect(this, &QCoreApplication::aboutToQuit,
+				[=] { _fontStartupQuitObserved = true; });
 	}
 	try {
 		_fontDatabaseWarmupThread = std::thread([this, quitRegression] {
@@ -666,10 +669,7 @@ void Sandbox::startFontDatabaseWarmup() {
 			prewarmFontMetrics(QFont().family());
 			prewarmFontMetrics(u"Open Sans"_q);
 			if (quitRegression) {
-				EnumerateUntilQuit(_fontStartupQuitObserved, [this] {
-					QMetaObject::invokeMethod(
-						this, [] { Core::Quit(); }, Qt::QueuedConnection);
-				});
+				EnumerateUntilQuit(_fontStartupQuitObserved);
 				fprintf(stderr,
 						"Font shutdown regression: quit_observed=%d "
 						"font_work=active enumeration_overlapped=%d\n",
@@ -701,6 +701,24 @@ void Sandbox::startFontDatabaseWarmup() {
 		});
 		if (qEnvironmentVariableIsSet("TDESKTOP_FONT_STARTUP_REGRESSION")) {
 			fprintf(stderr, "Font database warmup regression: started=1\n");
+		}
+		if (quitRegression) {
+			const auto timer = Ui::CreateChild<QTimer>(this);
+			const auto started = std::make_shared<QElapsedTimer>();
+			started->start();
+			connect(timer, &QTimer::timeout, this, [=] {
+				const auto sample = SampleWorkerStack(
+					_fontDatabaseWarmupThread.native_handle());
+				const auto sampled
+					= (sample == StackSample::InSystemEnumeration);
+				if (!sampled && started->elapsed() < 10000) {
+					return;
+				}
+				timer->stop();
+				_fontEnumerationOverlapped = sampled;
+				Core::Quit();
+			});
+			timer->start(1);
 		}
 	} catch (const std::system_error &error) {
 		_fontDatabaseWarmupDone = true;
