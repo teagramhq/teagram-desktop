@@ -454,3 +454,81 @@ font_timeout_no_frames = run_font_startup_fixture(
 assert 'font shutdown probe timeout did not report the sampled frames' \
     in font_timeout_no_frames
 print('macOS font startup timing and failure guards: PASS')
+
+
+def run_start_in_tray_fixture(mode, expected_status):
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        executable = root / 'Teagram.app/Contents/MacOS/Teagram'
+        executable.parent.mkdir(parents=True)
+        executable.write_text('''#!/bin/bash
+if [[ " $* " == *" -quit "* ]]; then
+    kill -TERM "$(cat "$HOME/fixture-pid")"
+    exit 0
+fi
+if [[ " $* " != *" -startintray "* \
+    || "${TDESKTOP_MAC_START_IN_TRAY_REGRESSION:-}" != 1 ]]; then
+    echo 'missing tray launch argument or regression flag' >&2
+    exit 1
+fi
+printf '%s\\n' "$$" > "$HOME/fixture-pid"
+trap 'exit 0' TERM
+case "$TRAY_TEST_MODE" in
+    exit-before-startup) exit 0 ;;
+    visible)
+        printf 'Mac start-in-tray regression: startup=complete start_intray=1 window_and_tray=1 hidden=0 splash_visible=1 splash_destroyed=1\\n'
+        for ((i = 0; i < 20; ++i)); do sleep 0.1 & wait "$!" || :; done
+        exit 0
+        ;;
+    wrong-mode)
+        printf 'Mac start-in-tray regression: startup=complete start_intray=1 window_and_tray=0 hidden=1 splash_visible=1 splash_destroyed=1\\n'
+        for ((i = 0; i < 20; ++i)); do sleep 0.1 & wait "$!" || :; done
+        exit 0
+        ;;
+    *)
+        printf 'Mac start-in-tray regression: startup=complete start_intray=1 window_and_tray=1 hidden=1 splash_visible=1 splash_destroyed=1\\n'
+        ;;
+esac
+if [[ "$TRAY_TEST_MODE" == exit-after-startup ]]; then
+    sleep 0.1
+    exit 0
+fi
+while :; do sleep 0.1 & wait "$!" || :; done
+''')
+        executable.chmod(0o755)
+        binaries = root / 'bin'
+        binaries.mkdir()
+        for name, body in {
+            'uname': '#!/bin/bash\necho Darwin\n',
+            'sw_vers': '#!/bin/bash\necho fixture\n',
+            'md5': '#!/usr/bin/env python3\nimport hashlib,sys\nprint(hashlib.md5(sys.stdin.buffer.read()).hexdigest())\n',
+        }.items():
+            stub = binaries / name
+            stub.write_text(body)
+            stub.chmod(0o755)
+        environment = dict(
+            os.environ,
+            TDESKTOP_MAC_PROFILE_TEST_TMP_BASE=str(root),
+            TRAY_TEST_MODE=mode,
+            PATH=str(binaries) + ':' + os.environ['PATH'],
+        )
+        result = subprocess.run(
+            ['bash', 'Telegram/build/test_mac_profile_guard.sh',
+             str(executable), 'start-in-tray'],
+            env=environment, capture_output=True, text=True, timeout=15)
+        output = result.stdout + result.stderr
+        assert result.returncode == expected_status, output
+        return output
+
+
+tray_output = run_start_in_tray_fixture('pass', 0)
+assert 'start_in_tray_regression=PASS hidden=1 alive_after_startup=1' in tray_output
+tray_early_exit = run_start_in_tray_fixture('exit-before-startup', 1)
+assert 'start-in-tray process exited before startup completed' in tray_early_exit
+tray_visible = run_start_in_tray_fixture('visible', 1)
+assert 'start-in-tray process exited before startup completed' in tray_visible
+tray_wrong_mode = run_start_in_tray_fixture('wrong-mode', 1)
+assert 'start-in-tray process exited before startup completed' in tray_wrong_mode
+tray_late_exit = run_start_in_tray_fixture('exit-after-startup', 1)
+assert 'start-in-tray process exited after startup' in tray_late_exit
+print('macOS start-in-tray lifecycle guard: PASS')

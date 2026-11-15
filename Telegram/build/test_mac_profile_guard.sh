@@ -74,6 +74,13 @@ report_result() {
 	fi
 }
 
+process_alive() {
+	local state
+	kill -0 "$1" 2>/dev/null || return 1
+	state="$(ps -o stat= -p "$1" 2>/dev/null)" || return 1
+	[[ -n "$state" && "$state" != *Z* ]]
+}
+
 fixture_unchanged() {
 	local fixture="$1"
 	local is_file="$2"
@@ -1840,6 +1847,76 @@ run_font_startup_regression() {
 	run_font_warmup_thread_failure_regression
 }
 
+run_start_in_tray_regression() {
+	local case_home="$TEST_HOME/start-in-tray"
+	local case_log="$case_home/start.log"
+	local quit_log="$case_home/quit.log"
+	local expected='Mac start-in-tray regression: startup=complete start_intray=1 window_and_tray=1 hidden=1 splash_visible=1 splash_destroyed=1'
+	local ready=false
+	local exit_status
+	mkdir -p "$case_home"
+	env HOME="$case_home" TMPDIR="$TEST_TMP_BASE" \
+		TDESKTOP_MAC_PROFILE_TEST_HOME="$case_home" \
+		TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST=1 \
+		TDESKTOP_MAC_START_IN_TRAY_REGRESSION=1 \
+		"$APP" -noupdate -debug -startintray >"$case_log" 2>&1 &
+	FIRST_PID=$!
+	for ((attempt = 0; attempt < 300; ++attempt)); do
+		if ! process_alive "$FIRST_PID"; then
+			cat "$case_log" >&2
+			echo 'start-in-tray process exited before startup completed' >&2
+			return 1
+		fi
+		if grep -F -q "$expected" "$case_log"; then
+			ready=true
+			break
+		fi
+		sleep 0.2
+	done
+	if [[ "$ready" != true ]]; then
+		cat "$case_log" >&2
+		echo 'start-in-tray startup did not report a hidden window and dismissed splash' >&2
+		return 1
+	fi
+	sleep 1
+	if ! process_alive "$FIRST_PID"; then
+		cat "$case_log" >&2
+		echo 'start-in-tray process exited after startup' >&2
+		return 1
+	fi
+	if ! env HOME="$case_home" TMPDIR="$TEST_TMP_BASE" \
+		TDESKTOP_MAC_PROFILE_TEST_HOME="$case_home" \
+		TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST=1 \
+		"$APP" -quit >"$quit_log" 2>&1; then
+		cat "$case_log" "$quit_log" >&2
+		echo 'start-in-tray quit request failed' >&2
+		return 1
+	fi
+	for ((attempt = 0; attempt < 150; ++attempt)); do
+		if ! process_alive "$FIRST_PID"; then
+			break
+		fi
+		sleep 0.2
+	done
+	if process_alive "$FIRST_PID"; then
+		cat "$case_log" "$quit_log" >&2
+		echo 'start-in-tray process did not exit after quit request' >&2
+		return 1
+	fi
+	if wait "$FIRST_PID"; then
+		exit_status=0
+	else
+		exit_status=$?
+	fi
+	FIRST_PID=""
+	if (( exit_status != 0 )); then
+		cat "$case_log" "$quit_log" >&2
+		printf 'start-in-tray process exited with status %d\n' "$exit_status" >&2
+		return 1
+	fi
+	printf 'start_in_tray_regression=PASS hidden=1 alive_after_startup=1\n'
+}
+
 run_authenticated_lifecycle_regression() {
 local AUTH_HOME="$TEST_HOME/authenticated-lifecycle-regression"
 local AUTH_LOG="$TEST_HOME/authenticated-lifecycle-regression.log"
@@ -2207,6 +2284,7 @@ all)
 	export TDESKTOP_MAC_FONT_STARTUP_ALREADY_RUN=1
 	lifecycle_cases=(
 		profile-ipc
+		start-in-tray
 		spoiler-cache-emoji
 		spoiler-cache-spoiler
 		spoiler-cache-text
@@ -2226,6 +2304,9 @@ all)
 	;;
 profile-ipc)
 	run_protected_profile_ipc_case
+	;;
+start-in-tray)
+	run_start_in_tray_regression
 	;;
 spoiler-cache-emoji)
 	run_spoiler_cache_symlink_case emoji-cache-symlink emoji

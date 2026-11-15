@@ -160,6 +160,7 @@ fi
 
 for case_name in \
 	profile-ipc \
+	start-in-tray \
 	spoiler-cache-emoji \
 	spoiler-cache-spoiler \
 	spoiler-cache-text \

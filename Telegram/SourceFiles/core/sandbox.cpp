@@ -26,6 +26,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "logs.h"
 #ifdef Q_OS_MAC
 #include "window/main_window.h"
+#include "core/core_settings.h"
 #include "core/mac_protected_path_runtime.h"
 #include "ui/style/style_core_font.h"
 #endif // Q_OS_MAC
@@ -681,9 +682,32 @@ void Sandbox::launchApplication() {
 
 		_application->run();
 #ifdef Q_OS_MAC
-		if (_fontStartupWindow) {
-			_fontStartupWindow->close();
-			_fontStartupWindow.reset();
+		const auto trayRegression
+			= MacProtectedPath::IntegrationTestActive()
+			  && qEnvironmentVariableIsSet(
+				  "TDESKTOP_MAC_START_IN_TRAY_REGRESSION");
+		const auto splashVisible = trayRegression && _fontStartupWindow
+								   && _fontStartupWindow->isVisible();
+		_fontStartupWindow.reset();
+		if (trayRegression) {
+			QTimer::singleShot(500, this, [=] {
+				const auto window = _application
+										? _application->activePrimaryWindow()
+										: nullptr;
+				fprintf(stderr,
+						"Mac start-in-tray regression: startup=complete "
+						"start_intray=%d window_and_tray=%d hidden=%d "
+						"splash_visible=%d "
+						"splash_destroyed=%d\n",
+						cStartInTray() ? 1 : 0,
+						(_application
+						 && _application->settings().workMode()
+								== Core::Settings::WorkMode::WindowAndTray)
+							? 1
+							: 0,
+						(window && !window->widget()->isVisible()) ? 1 : 0,
+						splashVisible ? 1 : 0, _fontStartupWindow ? 0 : 1);
+			});
 		}
 #endif // Q_OS_MAC
 	});
