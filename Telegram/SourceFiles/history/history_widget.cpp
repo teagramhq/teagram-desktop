@@ -490,6 +490,13 @@ HistoryWidget::HistoryWidget(
 	) | rpl::filter(rpl::mappers::_1) | rpl::on_next([=] {
 		fieldFocused();
 	}, _field->lifetime());
+	base::install_event_filter(
+		this, _field->rawTextEdit(), [=](not_null<QEvent *> event) {
+			if (event->type() == QEvent::KeyPress && !_emojiSuggestions) {
+				ensureEmojiSuggestions(true);
+			}
+			return base::EventFilterResult::Continue;
+		});
 	_field->changes(
 	) | rpl::on_next([=] {
 		fieldChanged();
@@ -1944,8 +1951,9 @@ void HistoryWidget::scheduleEmojiSuggestions() {
 	}
 }
 
-void HistoryWidget::ensureEmojiSuggestions() {
-	if (_emojiSuggestions || !_peer || !_autocomplete || !_field->hasText()) {
+void HistoryWidget::ensureEmojiSuggestions(bool onKeyPress) {
+	if (_emojiSuggestions || !_peer || !_autocomplete
+		|| (!onKeyPress && !_field->hasText())) {
 		return;
 	}
 	const auto allow = [=](const auto &) { return _peer && _peer->isSelf(); };
@@ -1954,7 +1962,9 @@ void HistoryWidget::ensureEmojiSuggestions() {
 		_field,
 		&controller()->session(),
 		{ .suggestCustomEmoji = true, .allowCustomWithoutPremium = allow }));
-	_emojiSuggestions->processCurrentTextChange();
+	if (onKeyPress) {
+		_emojiSuggestions->markKeyPress();
+	}
 }
 
 InlineBotQuery HistoryWidget::parseInlineBotQuery() const {
@@ -6863,6 +6873,12 @@ void HistoryWidget::setDraftTextForRegressionTest(const QString &text) {
 	_field->setTextWithTags({text, TextWithTags::Tags()});
 }
 
+Ui::InputField *HistoryWidget::fieldForRegressionTest() const {
+	return _field.get();
+}
+
+bool HistoryWidget::applyDraftForRegressionTest() { return applyDraft(); }
+
 Ui::IconButton *HistoryWidget::attachToggleForRegressionTest() const {
 	return _attachToggle.get();
 }
@@ -6945,6 +6961,22 @@ bool HistoryWidget::emojiSuggestionsCreatedForRegressionTest() const {
 
 bool HistoryWidget::emojiSuggestionsShownForRegressionTest() const {
 	return _emojiSuggestions && _emojiSuggestions->shown();
+}
+
+bool HistoryWidget::emojiSuggestionsHaveSelectionForRegressionTest() const {
+	return _emojiSuggestions
+		   && _emojiSuggestions->hasSelectionForRegressionTest();
+}
+
+int HistoryWidget::emojiSuggestionsCustomScansForRegressionTest() const {
+	return _emojiSuggestions
+			   ? _emojiSuggestions->customEmojiScansForRegressionTest()
+			   : -1;
+}
+
+bool HistoryWidget::emojiSuggestionsConsumeReturnForRegressionTest() {
+	return _emojiSuggestions
+		   && _emojiSuggestions->consumeReturnForRegressionTest();
 }
 
 void HistoryWidget::initFieldAutocompleteForRegressionTest() {

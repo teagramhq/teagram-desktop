@@ -305,6 +305,8 @@ public:
 	};
 
 	void setDraftTextForRegressionTest(const QString &text);
+	[[nodiscard]] Ui::InputField *fieldForRegressionTest() const;
+	[[nodiscard]] bool applyDraftForRegressionTest();
 	[[nodiscard]] QString draftTextForRegressionTest() const;
 	[[nodiscard]] TextWithTags draftWithTagsForRegressionTest() const;
 	void initFieldAutocompleteForRegressionTest();
@@ -338,6 +340,9 @@ public:
 	[[nodiscard]] int fieldAutocompleteBuildCountForRegressionTest() const;
 	[[nodiscard]] bool emojiSuggestionsCreatedForRegressionTest() const;
 	[[nodiscard]] bool emojiSuggestionsShownForRegressionTest() const;
+	[[nodiscard]] bool emojiSuggestionsHaveSelectionForRegressionTest() const;
+	[[nodiscard]] int emojiSuggestionsCustomScansForRegressionTest() const;
+	[[nodiscard]] bool emojiSuggestionsConsumeReturnForRegressionTest();
 	[[nodiscard]] PeerData *fieldAutocompletePeerForRegressionTest() const;
 	[[nodiscard]] bool fieldFocusedForRegressionTest() const;
 	[[nodiscard]] bool
@@ -489,7 +494,7 @@ private:
 
 	void initFieldAutocomplete();
 	void scheduleEmojiSuggestions();
-	void ensureEmojiSuggestions();
+	void ensureEmojiSuggestions(bool onKeyPress = false);
 	void ensureFieldAutocomplete();
 	void cancelInlineBot();
 	void saveDraft(bool delayed = false);

@@ -55,6 +55,14 @@ public:
 	void showWithQuery(SuggestionsQuery query, bool force = false);
 	void selectFirstResult();
 	bool handleKeyEvent(int key);
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+	[[nodiscard]] int customEmojiScansForRegressionTest() const {
+		return _customEmojiScansForRegressionTest;
+	}
+	[[nodiscard]] bool hasSelectionForRegressionTest() const {
+		return _selected >= 0;
+	}
+#endif
 
 	[[nodiscard]] rpl::producer<bool> toggleAnimated() const;
 
@@ -136,6 +144,9 @@ private:
 		not_null<DocumentData*>,
 		std::unique_ptr<Ui::Text::CustomEmoji>> _customEmoji;
 	bool _repaintScheduled = false;
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+	mutable int _customEmojiScansForRegressionTest = 0;
+#endif
 
 	std::optional<QPoint> _lastMousePosition;
 	bool _mouseSelection = false;
@@ -235,6 +246,9 @@ auto SuggestionsWidget::lookupCustom(const std::vector<Row> &rows) const
 		|| !Core::App().settings().suggestAnimatedEmoji()) {
 		return {};
 	}
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+	++_customEmojiScansForRegressionTest;
+#endif
 	auto custom = base::flat_multi_map<int, Custom>();
 	const auto premium = _session->premium();
 	const auto stickers = &_session->data().stickers();
@@ -837,12 +851,25 @@ void SuggestionsController::setReplaceCallback(
 	}
 }
 
-void SuggestionsController::processCurrentTextChange() {
-	const auto wasAfterKeyPress = _textChangeAfterKeyPress;
+void SuggestionsController::markKeyPress() {
 	_textChangeAfterKeyPress = true;
-	handleTextChange();
-	_textChangeAfterKeyPress = wasAfterKeyPress;
+	InvokeQueued(_container, [=] { _textChangeAfterKeyPress = false; });
 }
+
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+int SuggestionsController::customEmojiScansForRegressionTest() const {
+	return _suggestions->customEmojiScansForRegressionTest();
+}
+
+bool SuggestionsController::hasSelectionForRegressionTest() const {
+	return _suggestions->hasSelectionForRegressionTest();
+}
+
+bool SuggestionsController::consumeReturnForRegressionTest() {
+	auto event = QKeyEvent(QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier);
+	return fieldFilter(&event);
+}
+#endif
 
 void SuggestionsController::handleTextChange() {
 	if (Core::App().settings().suggestEmoji()
@@ -1119,8 +1146,7 @@ bool SuggestionsController::fieldFilter(not_null<QEvent*> event) {
 			}
 			break;
 		}
-		_textChangeAfterKeyPress = true;
-		InvokeQueued(_container, [=] { _textChangeAfterKeyPress = false; });
+		markKeyPress();
 	} break;
 	}
 	return false;

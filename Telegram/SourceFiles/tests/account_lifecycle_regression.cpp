@@ -56,6 +56,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_download_manager.h"
 #include "data/data_document.h"
 #include "data/data_document_media.h"
+#include "data/data_drafts.h"
 #include "data/data_folder.h"
 #include "data/data_forum.h"
 #include "data/data_forum_topic.h"
@@ -196,6 +197,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <QtCore/QFile>
 #include <QtCore/QFileInfo>
 #include <QtCore/QMetaObject>
+#include <QtCore/QMimeData>
 #include <QtCore/QMutex>
 #include <QtCore/QPointer>
 #include <QtCore/QSemaphore>
@@ -206,6 +208,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <QtCore/QVariant>
 #include <QtGui/QAccessible>
 #include <QtGui/QAction>
+#include <QtGui/QClipboard>
 #include <QtGui/QCursor>
 #include <QtGui/QGuiApplication>
 #include <QtGui/QKeyEvent>
@@ -12016,6 +12019,114 @@ struct CacheReactionProbe final {
 	return groupReady && channelReady && botPhotoDeferred && botPhotoReady;
 }
 
+[[nodiscard]] bool
+EmojiSuggestionsEditOriginRegressionPasses(not_null<HistoryWidget *> widget,
+										   not_null<History *> history) {
+	if (widget->history() != history.get()) {
+		return false;
+	}
+	auto &settings = Core::App().settings();
+	const auto oldSuggest = settings.suggestEmoji();
+	const auto oldAnimated = settings.suggestAnimatedEmoji();
+	settings.setSuggestEmoji(true);
+	settings.setSuggestAnimatedEmoji(true);
+	const auto previousDraft = history->localDraft(MsgId(), PeerId());
+	auto savedDraft = previousDraft
+						  ? std::make_unique<Data::Draft>(*previousDraft)
+						  : nullptr;
+	const auto clipboard = QGuiApplication::clipboard();
+	auto savedClipboard = std::make_unique<QMimeData>();
+	if (const auto source = clipboard->mimeData()) {
+		for (const auto &format : source->formats()) {
+			savedClipboard->setData(format, source->data(format));
+		}
+	}
+	const auto restore = gsl::finally([&] {
+		widget->setDraftTextForRegressionTest(QString());
+		widget->hideFieldAutocompleteForRegressionTest();
+		if (savedDraft) {
+			history->setLocalDraft(std::move(savedDraft));
+		} else {
+			history->clearLocalDraft(MsgId(), PeerId());
+		}
+		settings.setSuggestEmoji(oldSuggest);
+		settings.setSuggestAnimatedEmoji(oldAnimated);
+		clipboard->setMimeData(savedClipboard.release());
+	});
+	const auto reset = [&] {
+		widget->setDraftTextForRegressionTest(QString());
+		widget->hideFieldAutocompleteForRegressionTest();
+		widget->clearFieldFocusForRegressionTest();
+		widget->resetFieldAutocompleteForRegressionTest();
+		QCoreApplication::processEvents();
+	};
+	reset();
+	auto draft = std::make_unique<Data::Draft>();
+	draft->textWithTags.text = u":smil"_q;
+	draft->cursor = MessageCursor(5, 5, 0);
+	history->setLocalDraft(std::move(draft));
+	const auto applied = widget->applyDraftForRegressionTest();
+	widget->focusFieldForRegressionTest();
+	const auto draftReady = WaitForRegressionCondition(
+		[&] {
+			return widget->fieldFocusedForRegressionTest()
+				   && widget->emojiSuggestionsCreatedForRegressionTest()
+				   && widget->draftTextForRegressionTest() == u":smil"_q;
+		},
+		5000);
+	QCoreApplication::processEvents();
+	const auto draftShown = widget->emojiSuggestionsShownForRegressionTest();
+	const auto draftSelected
+		= widget->emojiSuggestionsHaveSelectionForRegressionTest();
+	const auto draftScans
+		= widget->emojiSuggestionsCustomScansForRegressionTest();
+	const auto draftConsumed
+		= widget->emojiSuggestionsConsumeReturnForRegressionTest();
+	const auto draftPreserved
+		= widget->draftTextForRegressionTest() == u":smil"_q;
+
+	reset();
+	widget->focusFieldForRegressionTest();
+	widget->initFieldAutocompleteForRegressionTest();
+	QCoreApplication::processEvents();
+	const auto pasteStartedEmpty
+		= widget->fieldFocusedForRegressionTest()
+		  && !widget->emojiSuggestionsCreatedForRegressionTest();
+	clipboard->setText(u":smil"_q);
+	widget->fieldForRegressionTest()->rawTextEdit()->paste();
+	const auto pasteReady = WaitForRegressionCondition(
+		[&] {
+			return widget->emojiSuggestionsCreatedForRegressionTest()
+				   && widget->draftTextForRegressionTest() == u":smil"_q;
+		},
+		5000);
+	QCoreApplication::processEvents();
+	const auto pasteShown = widget->emojiSuggestionsShownForRegressionTest();
+	const auto pasteSelected
+		= widget->emojiSuggestionsHaveSelectionForRegressionTest();
+	const auto pasteScans
+		= widget->emojiSuggestionsCustomScansForRegressionTest();
+	const auto pasteConsumed
+		= widget->emojiSuggestionsConsumeReturnForRegressionTest();
+	const auto pastePreserved
+		= widget->draftTextForRegressionTest() == u":smil"_q;
+	std::fprintf(stderr,
+				 "Emoji edit origins: draft_applied=%d draft_ready=%d "
+				 "draft_shown=%d draft_selected=%d "
+				 "draft_scans=%d draft_consumed=%d draft_preserved=%d "
+				 "paste_empty=%d paste_ready=%d paste_shown=%d "
+				 "paste_selected=%d paste_scans=%d "
+				 "paste_consumed=%d paste_preserved=%d.\n",
+				 applied, draftReady, draftShown, draftSelected, draftScans,
+				 draftConsumed, draftPreserved, pasteStartedEmpty, pasteReady,
+				 pasteShown, pasteSelected, pasteScans, pasteConsumed,
+				 pastePreserved);
+	return applied && draftReady && !draftShown && !draftSelected
+		   && (draftScans == 0) && !draftConsumed && draftPreserved
+		   && pasteStartedEmpty && pasteReady && !pasteShown && !pasteSelected
+		   && (pasteScans == 0) && !pasteConsumed && pastePreserved;
+}
+
 [[nodiscard]] bool GroupCallBarDeferredButtonRegressionPasses() {
 	auto parent = QWidget();
 	auto changes = rpl::event_stream<Ui::GroupCallBarContent>();
@@ -12316,14 +12427,32 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		  && !historyWidget->emojiSuggestionsCreatedForRegressionTest();
 	const auto savedSuggestEmoji = Core::App().settings().suggestEmoji();
 	Core::App().settings().setSuggestEmoji(true);
-	historyWidget->setDraftTextForRegressionTest(u":smil"_q);
+	const auto rawField
+		= historyWidget->fieldForRegressionTest()->rawTextEdit();
+	for (const auto character : u":smil"_q) {
+		auto key = QKeyEvent(QEvent::KeyPress, character.toUpper().unicode(),
+							 Qt::NoModifier, QString(character));
+		QCoreApplication::sendEvent(rawField.get(), &key);
+		auto release
+			= QKeyEvent(QEvent::KeyRelease, character.toUpper().unicode(),
+						Qt::NoModifier, QString(character));
+		QCoreApplication::sendEvent(rawField.get(), &release);
+		QCoreApplication::processEvents();
+	}
+	const auto typedTextPreserved
+		= (historyWidget->draftTextForRegressionTest() == u":smil"_q);
 	const auto emojiSuggestionsShown = WaitForRegressionCondition(
-		[&] { return historyWidget->emojiSuggestionsShownForRegressionTest(); },
+		[&] {
+			return historyWidget->emojiSuggestionsShownForRegressionTest()
+				   && historyWidget
+						  ->emojiSuggestionsHaveSelectionForRegressionTest();
+		},
 		5000);
 	historyWidget->setDraftTextForRegressionTest(QString());
 	Core::App().settings().setSuggestEmoji(savedSuggestEmoji);
-	std::fprintf(stderr, "Emoji suggestions fixture: deferred=%d shown=%d.\n",
-				 emojiSuggestionsDeferred, emojiSuggestionsShown);
+	std::fprintf(
+		stderr, "Emoji suggestions fixture: deferred=%d typed=%d shown=%d.\n",
+		emojiSuggestionsDeferred, typedTextPreserved, emojiSuggestionsShown);
 	std::fprintf(
 		stderr,
 		"Focused autocomplete fixture: built_on_focus=%d peer_matches=%d "
@@ -12372,8 +12501,9 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 	result.chatSwitchComposeUiReused
 		= repeatedSelectorReturnReused && autocompleteDeferredUntilFocus
 		  && autocompleteBuiltOnFocus && (autocompleteBuildsAfterFocus == 1)
-		  && emojiSuggestionsDeferred && emojiSuggestionsShown
-		  && autocompletePeerMatchesAfterFocus && autocompleteFocusedAfterFocus
+		  && emojiSuggestionsDeferred && typedTextPreserved
+		  && emojiSuggestionsShown && autocompletePeerMatchesAfterFocus
+		  && autocompleteFocusedAfterFocus
 		  && (autocompleteBuildsAfterSwitch == autocompleteBuildsAfterFocus)
 		  && (tabbedPanelBuildsAfterSwitch == tabbedPanelBuildsBeforeSwitch)
 		  && autocompleteRestoredAfterSwitch && autocompletePeerMatches
@@ -12393,6 +12523,11 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		autocompletePeerMatches, autocompleteFocusedAfterFocus,
 		tabbedPanelBuildsBeforeSwitch, tabbedPanelBuildsAfterSwitch,
 		repeatedSelectorReturnReused, result.chatSwitchTransitionsSettled);
+	const auto emojiEditOriginsPreserved
+		= EmojiSuggestionsEditOriginRegressionPasses(historyWidget,
+													 firstUiHistory);
+	result.chatSwitchComposeUiReused
+		= result.chatSwitchComposeUiReused && emojiEditOriginsPreserved;
 	const auto commandBotId = UserId(1081);
 	const auto commandBot = data.processUsers(MTP_vector<MTPUser>({
 		RegressionBotUser(commandBotId),
