@@ -1516,10 +1516,14 @@ jobs:
               printf '| Phase | Wall time |\n| --- | ---: |\n'
               for name in 'tool setup' download 'postgres setup' 'restore 1x' 'restore 100x' migrations 'server build' 'server ready' cleanup; do
                 seconds="$(awk -F '|' -v name="$name" '$1 == name {print $2}' "$PERF_FIXTURE_TIMES_FILE")"
-                if [ -n "$seconds" ]; then
+                if [ "$name" = "$phase" ]; then
+                  if [ -n "$seconds" ]; then
+                    printf '| %s | %s s (interrupted) |\n' "$name" "$seconds"
+                  else
+                    printf '| %s | interrupted |\n' "$name"
+                  fi
+                elif [ -n "$seconds" ]; then
                   printf '| %s | %s s |\n' "$name" "$seconds"
-                elif [ "$name" = "$phase" ]; then
-                  printf '| %s | interrupted |\n' "$name"
                 else
                   printf '| %s | not reached |\n' "$name"
                 fi

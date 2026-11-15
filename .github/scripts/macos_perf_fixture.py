@@ -140,11 +140,12 @@ class Report:
     @contextmanager
     def measure(self, name):
         self.phase = name
-        Path(os.environ['PERF_FIXTURE_PHASE_FILE']).write_text(name)
+        if self.failure_phase is None:
+            Path(os.environ['PERF_FIXTURE_PHASE_FILE']).write_text(name)
         started = time.monotonic()
         try:
             yield
-        except Exception:
+        except BaseException:
             if self.failure_phase is None:
                 self.failure_phase = name
             raise
@@ -300,6 +301,8 @@ def exercise(root, report):
                 report.fingerprints[scale] = wait_for_server(process, log, port)
     except BaseException as error:
         original_error = error
+        if report.failure_phase is None:
+            report.failure_phase = report.phase
         postgres_log = root / 'postgres.log'
         try:
             if postgres_log.exists():

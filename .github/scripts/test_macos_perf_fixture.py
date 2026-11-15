@@ -6,6 +6,7 @@ import io
 import json
 import os
 from pathlib import Path
+import signal
 import socket
 import subprocess
 import sys
@@ -157,7 +158,7 @@ class FixtureReleaseTests(unittest.TestCase):
                 fixture.exercise(self.root, report)
         self.assertIn('Could not read PostgreSQL log: log unreadable', output.getvalue())
 
-    def test_postgres_stop_failure_preserves_prior_restore_failure(self):
+    def test_cleanup_preserves_failure_and_interruption(self):
         migration_sum = 'h1:top\n20261026000006_last.sql h1:last\n'
 
         def checkout(directory):
@@ -168,9 +169,13 @@ class FixtureReleaseTests(unittest.TestCase):
             helper.parent.mkdir(parents=True)
             helper.write_text('func EncKey() []byte { return bytes.Repeat([]byte{0x2a}, 32) }')
 
-        for name, restore_fails, outer_error, server_stop_fails in (
-                ('restore', True, False, False), ('cleanup', False, False, False),
-                ('cleanup-in-except', False, True, False), ('server-stop', False, False, True)):
+        for name, restore_fails, outer_error, server_stop_fails, interrupted, stop_fails in (
+                ('restore', True, False, False, None, True), ('cleanup', False, False, False, None, True),
+                ('cleanup-in-except', False, True, False, None, True), ('server-stop', False, False, True, None, True),
+                ('interrupt-restore', False, False, False, 'restore 1x', False),
+                ('interrupt-restore-stop-failure', False, False, False, 'restore 1x', True),
+                ('interrupt-migrations', False, False, False, 'migrations', False),
+                ('interrupt-migrations-stop-failure', False, False, False, 'migrations', True)):
             with self.subTest(name=name):
                 case = self.root / name
                 case.mkdir()
@@ -181,6 +186,7 @@ class FixtureReleaseTests(unittest.TestCase):
                            PERF_FIXTURE_TIMES_FILE=str(case / 'times'),
                            PERF_FIXTURE_SUMMARY_FILE=str(case / 'summary-written'),
                            GITHUB_STEP_SUMMARY=str(summary))
+                stopped = []
 
                 def run(command, **kwargs):
                     name = Path(command[0]).name
@@ -189,7 +195,11 @@ class FixtureReleaseTests(unittest.TestCase):
                         data.mkdir(parents=True)
                         (data / 'postmaster.pid').touch()
                     if name == 'pg_ctl' and command[-1] == 'stop':
-                        raise subprocess.CalledProcessError(7, command)
+                        stopped.append(True)
+                        if stop_fails:
+                            raise subprocess.CalledProcessError(7, command)
+                    if name == 'pg_restore' and interrupted == 'restore 1x':
+                        signal.raise_signal(signal.SIGINT)
                     if name == 'pg_restore' and restore_fails:
                         raise RuntimeError('restore failed first')
                     output = self.manifest['migration_revision'] if '-XAt' in command else ''
@@ -200,6 +210,12 @@ class FixtureReleaseTests(unittest.TestCase):
                 process.poll.return_value = None if server_stop_fails else 0
                 if server_stop_fails:
                     process.terminate.side_effect = OSError('server stop failed')
+
+                def migrate(*args, **kwargs):
+                    if interrupted == 'migrations':
+                        signal.raise_signal(signal.SIGINT)
+                    return subprocess.CompletedProcess(args[0], 0)
+
                 with patch.dict(os.environ, env), \
                         patch.object(fixture, 'download_fixture', return_value=self.manifest), \
                         patch.object(fixture, 'checkout_server', side_effect=checkout), \
@@ -207,18 +223,32 @@ class FixtureReleaseTests(unittest.TestCase):
                         patch.object(fixture, 'postgres_binaries', return_value=case / 'pg-bin'), \
                         patch.object(fixture, 'available_port', side_effect=range(31000, 31010)), \
                         patch.object(fixture, 'run', side_effect=run), \
-                        patch.object(fixture.subprocess, 'run'), \
+                        patch.object(fixture.subprocess, 'run', side_effect=migrate), \
                         patch.object(fixture.subprocess, 'Popen', return_value=process), \
                         patch.object(fixture, 'wait_for_server', return_value='123'), \
                         contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(error_output):
-                    if outer_error:
+                    if interrupted:
+                        with self.assertRaises(KeyboardInterrupt):
+                            fixture.main()
+                    elif outer_error:
                         try:
                             raise ValueError('unrelated caller error')
                         except ValueError:
                             result = fixture.main()
                     else:
                         result = fixture.main()
-                    self.assertEqual(result, 1)
+                    if not interrupted:
+                        self.assertEqual(result, 1)
+                if interrupted:
+                    self.assertEqual((case / 'phase').read_text(), interrupted)
+                    self.assertIn('cleanup|', (case / 'times').read_text())
+                    self.assertFalse((case / 'summary-written').exists())
+                    self.assertEqual(stopped, [True])
+                    if stop_fails:
+                        self.assertIn('pg_ctl', error_output.getvalue())
+                    else:
+                        self.assertNotIn('Fixture cleanup failed:', error_output.getvalue())
+                    continue
                 text = summary.read_text()
                 if restore_fails:
                     self.assertIn('Failed phase: **restore 1x**. restore failed first', text)

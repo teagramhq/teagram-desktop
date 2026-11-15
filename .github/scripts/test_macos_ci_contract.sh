@@ -727,6 +727,13 @@ for expected in 'Failed phase: **restore 100x**' '| download | 2.0 s |' \
   grep -Fq "$expected" "$fixture_report_dir/summary" \
     || contract_fail "Interrupted fixture summary must contain $expected."
 done
+printf '%s\n' 'restore 100x|4.2' 'cleanup|0.3' >> "$fixture_report_dir/times"
+: > "$fixture_report_dir/summary"
+run_fixture_report
+for expected in 'Failed phase: **restore 100x**' '| restore 100x | 4.2 s (interrupted) |' '| cleanup | 0.3 s |'; do
+  grep -Fq "$expected" "$fixture_report_dir/summary" \
+    || contract_fail "Interrupted fixture summary must preserve recorded timing: $expected."
+done
 printf '%s\n' 'existing summary' > "$fixture_report_dir/summary"
 touch "$fixture_report_dir/written"
 run_fixture_report
