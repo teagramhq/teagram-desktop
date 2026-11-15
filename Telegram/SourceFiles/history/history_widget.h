@@ -83,6 +83,7 @@ class FlatButton;
 class RoundButton;
 class PinnedBar;
 class GroupCallBar;
+struct GroupCallBarContent;
 class RequestsBar;
 struct PreparedList;
 struct PreparedBundle;
@@ -348,6 +349,10 @@ public:
 	[[nodiscard]] bool
 	fieldAutocompleteSuggestionsReadyForRegressionTest() const;
 	[[nodiscard]] int tabbedPanelBuildCountForRegressionTest() const;
+	[[nodiscard]] bool groupCallBarCreatedForRegressionTest() const;
+	[[nodiscard]] int groupCallBarHeightForRegressionTest() const;
+	void finishGroupCallBarForRegressionTest();
+	void setupGroupCallBarForRegressionTest();
 	void clearFieldFocusForRegressionTest();
 	void focusFieldForRegressionTest();
 	[[nodiscard]] bool
@@ -712,6 +717,7 @@ private:
 
 	void checkMessagesTTL();
 	void setupGroupCallBar();
+	void createGroupCallBar(rpl::producer<Ui::GroupCallBarContent> content);
 	void setupRequestsBar();
 
 	void checkSponsoredMessageBar();
@@ -905,6 +911,7 @@ private:
 	std::optional<FullMsgId> _minPinnedId;
 	bool _pinnedBarHasCustomButton = false;
 
+	rpl::lifetime _groupCallBarContentLifetime;
 	std::unique_ptr<Ui::GroupCallBar> _groupCallBar;
 	int _groupCallBarHeight = 0;
 	std::unique_ptr<Ui::RequestsBar> _requestsBar;

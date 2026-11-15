@@ -179,6 +179,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/boxes/report_box_graphics.h"
 #include "ui/chat/pinned_bar.h"
 #include "ui/chat/group_call_bar.h"
+#include "ui/chat/group_call_userpics.h"
 #include "ui/chat/requests_bar.h"
 #include "ui/chat/chat_theme.h"
 #include "ui/chat/chat_style.h"
@@ -3425,6 +3426,8 @@ void HistoryWidget::setHistory(History *history) {
 	if (_history == history) {
 		return;
 	}
+	_groupCallBar = nullptr;
+	_groupCallBarContentLifetime.destroy();
 	_pullToNext->setHistory(history);
 
 	if (_attachBotsMenu) {
@@ -6935,6 +6938,24 @@ int HistoryWidget::fieldAutocompleteBuildCountForRegressionTest() const {
 	return _fieldAutocompleteBuildCountForRegressionTest;
 }
 
+bool HistoryWidget::groupCallBarCreatedForRegressionTest() const {
+	return _groupCallBar != nullptr;
+}
+
+int HistoryWidget::groupCallBarHeightForRegressionTest() const {
+	return _groupCallBar ? _groupCallBar->height() : 0;
+}
+
+void HistoryWidget::finishGroupCallBarForRegressionTest() {
+	if (_groupCallBar) {
+		_groupCallBar->finishAnimating();
+	}
+}
+
+void HistoryWidget::setupGroupCallBarForRegressionTest() {
+	setupGroupCallBar();
+}
+
 PeerData *HistoryWidget::fieldAutocompletePeerForRegressionTest() const {
 	return _autocomplete ? _autocomplete->currentPeer() : nullptr;
 }
@@ -10111,18 +10132,33 @@ void HistoryWidget::refreshPinnedBarButton(bool many, HistoryItem *item) {
 void HistoryWidget::setupGroupCallBar() {
 	Expects(_history != nullptr);
 
+	_groupCallBar = nullptr;
+	_groupCallBarContentLifetime.destroy();
 	const auto peer = _history->peer;
 	if (!peer->isChannel() && !peer->isChat()) {
-		_groupCallBar = nullptr;
 		return;
 	}
+	const auto changes
+		= _groupCallBarContentLifetime
+			  .make_state<rpl::event_stream<Ui::GroupCallBarContent>>();
+	HistoryView::GroupCallBarContentByPeer(
+		peer, st::historyGroupCallUserpics.size, false)
+		| rpl::on_next_done(
+			[=](Ui::GroupCallBarContent content) {
+				if (_groupCallBar) {
+					changes->fire(std::move(content));
+				} else if (content.shown) {
+					createGroupCallBar(
+						changes->events_starting_with(std::move(content)));
+				}
+			},
+			[=] { changes->fire_done(); }, _groupCallBarContentLifetime);
+}
+
+void HistoryWidget::createGroupCallBar(
+	rpl::producer<Ui::GroupCallBarContent> content) {
 	_groupCallBar = std::make_unique<Ui::GroupCallBar>(
-		_topBars.get(),
-		HistoryView::GroupCallBarContentByPeer(
-			peer,
-			st::historyGroupCallUserpics.size,
-			false),
-		Core::App().appDeactivatedValue());
+		_topBars.get(), std::move(content), Core::App().appDeactivatedValue());
 
 	controller()->adaptive().oneColumnValue(
 	) | rpl::on_next([=](bool one) {

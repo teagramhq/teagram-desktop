@@ -12128,6 +12128,57 @@ EmojiSuggestionsEditOriginRegressionPasses(not_null<HistoryWidget *> widget,
 		   && (pasteScans == 0) && !pasteConsumed && pastePreserved;
 }
 
+[[nodiscard]] bool
+GroupCallBarDeferredCreationRegressionPasses(not_null<HistoryWidget *> widget,
+											 not_null<History *> history,
+											 not_null<History *> previous) {
+	const auto chat = history->peer->asChat();
+	const auto previousChat = previous->peer->asChat();
+	if (!chat || !previousChat || widget->history() != history.get()
+		|| chat->groupCall() || previousChat->groupCall()) {
+		return false;
+	}
+	const auto cleanup = gsl::finally([&] {
+		chat->clearGroupCall();
+		previousChat->clearGroupCall();
+		QCoreApplication::processEvents();
+	});
+	const auto deferred = !widget->groupCallBarCreatedForRegressionTest();
+	const auto schedule = base::unixtime::now() + 60;
+	previousChat->setGroupCall(
+		MTP_inputGroupCall(MTP_long(1055001), MTP_long(1)), schedule);
+	QCoreApplication::processEvents();
+	QCoreApplication::processEvents();
+	const auto previousIgnored
+		= !widget->groupCallBarCreatedForRegressionTest();
+	previousChat->clearGroupCall();
+	chat->setGroupCall(MTP_inputGroupCall(MTP_long(1054001), MTP_long(1)),
+					   schedule);
+	const auto shown = [&] {
+		widget->finishGroupCallBarForRegressionTest();
+		return widget->groupCallBarHeightForRegressionTest() > 0;
+	};
+	const auto shownAfterUpdate = WaitForRegressionCondition(shown, 2000);
+	widget->setupGroupCallBarForRegressionTest();
+	const auto shownOnSetup = WaitForRegressionCondition(shown, 2000);
+	chat->clearGroupCall();
+	const auto hiddenAfterUpdate = WaitForRegressionCondition(
+		[&] {
+			widget->finishGroupCallBarForRegressionTest();
+			return widget->groupCallBarCreatedForRegressionTest()
+				   && !widget->groupCallBarHeightForRegressionTest();
+		},
+		2000);
+	std::fprintf(
+		stderr,
+		"Group call bar creation: deferred=%d previous_ignored=%d "
+		"shown_after_update=%d shown_on_setup=%d hidden_after_update=%d.\n",
+		deferred, previousIgnored, shownAfterUpdate, shownOnSetup,
+		hiddenAfterUpdate);
+	return deferred && previousIgnored && shownAfterUpdate && shownOnSetup
+		   && hiddenAfterUpdate;
+}
+
 [[nodiscard]] bool GroupCallBarDeferredButtonRegressionPasses() {
 	auto parent = QWidget();
 	auto changes = rpl::event_stream<Ui::GroupCallBarContent>();
@@ -12529,6 +12580,9 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 													 firstUiHistory);
 	result.chatSwitchComposeUiReused
 		= result.chatSwitchComposeUiReused && emojiEditOriginsPreserved;
+	const auto groupCallBarCreationPassed
+		= GroupCallBarDeferredCreationRegressionPasses(
+			historyWidget, firstUiHistory, secondUiHistory);
 	const auto commandBotId = UserId(1081);
 	const auto commandBot = data.processUsers(MTP_vector<MTPUser>({
 		RegressionBotUser(commandBotId),
@@ -13628,7 +13682,7 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 			  == (kReactionCount / 2 + 1) * kDocumentsPerReaction)
 		  && result.historyScaleInvalidationRebuilt
 		  && result.historyChatModeInvalidationRebuilt && groupCallBarDeferred
-		  && contactStatusRequestText
+		  && groupCallBarCreationPassed && contactStatusRequestText
 		  && MainThreadCpuWorkWithinBudget(
 			  result.attachMenuFirstHoverCallbackCpuNanoseconds,
 			  kMaxChatSwitchNanoseconds)
