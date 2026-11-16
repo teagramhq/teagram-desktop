@@ -7,7 +7,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #pragma once
 
-#include <QtCore/QLockFile>
+#include <QtCore/QString>
 
 namespace Core {
 
@@ -15,22 +15,25 @@ class SingleInstanceLock final {
   public:
 	enum class Result { Acquired, Busy, Error };
 
-	explicit SingleInstanceLock(const QString &path) : _lock(path) {
-		_lock.setStaleLockTime(0);
-	}
+	explicit SingleInstanceLock(QString path);
+	SingleInstanceLock(const SingleInstanceLock &) = delete;
+	SingleInstanceLock &operator=(const SingleInstanceLock &) = delete;
+	~SingleInstanceLock();
 
-	[[nodiscard]] Result tryAcquire() {
-		if (_lock.isLocked() || _lock.tryLock()) {
-			return Result::Acquired;
-		}
-		return (_lock.error() == QLockFile::LockFailedError) ? Result::Busy
-															 : Result::Error;
-	}
-	[[nodiscard]] bool isAcquired() const { return _lock.isLocked(); }
-	void release() { _lock.unlock(); }
+	[[nodiscard]] Result tryAcquire();
+	[[nodiscard]] bool isAcquired() const;
+	void release();
+#ifdef TDESKTOP_UNIT_TESTS
+	static void SetAfterOpenForTests(void (*callback)());
+#endif // TDESKTOP_UNIT_TESTS
 
   private:
-	QLockFile _lock;
+	const QString _path;
+#ifdef Q_OS_WIN
+	void *_handle = nullptr;
+#else  // Q_OS_WIN
+	int _descriptor = -1;
+#endif // Q_OS_WIN
 };
 
 } // namespace Core

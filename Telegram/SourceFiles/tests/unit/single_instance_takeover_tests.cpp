@@ -36,7 +36,63 @@ bool Touch(const QString &path) {
 	return file.open(QIODevice::WriteOnly);
 }
 
+void PauseLockCreation() {
+	const auto child = qEnvironmentVariable("TDESKTOP_INCOMPLETE_LOCK_CHILD");
+	CHECK(Touch(child + u"/created"_q));
+	CHECK(WaitForFile(child + u"/resume"_q));
+}
+
 } // namespace
+
+TEST_CASE(SingleInstanceRecoversIncompleteLockAfterCrash) {
+	const auto child = qEnvironmentVariable("TDESKTOP_INCOMPLETE_LOCK_CHILD");
+	if (!child.isEmpty()) {
+		Core::SingleInstanceLock::SetAfterOpenForTests(&PauseLockCreation);
+		auto lock = Core::SingleInstanceLock(child + u"/profile.lock"_q);
+		const auto result = lock.tryAcquire();
+		CHECK(result
+			  == (qEnvironmentVariableIsSet("TDESKTOP_EXPECT_LOCK_BUSY")
+					  ? Core::SingleInstanceLock::Result::Busy
+					  : Core::SingleInstanceLock::Result::Acquired));
+		return;
+	}
+	auto directory = QTemporaryDir();
+	CHECK(directory.isValid());
+	auto process = QProcess();
+	auto environment = QProcessEnvironment::systemEnvironment();
+	environment.insert(u"TDESKTOP_INCOMPLETE_LOCK_CHILD"_q, directory.path());
+	process.setProcessEnvironment(environment);
+	process.start(
+		QCoreApplication::applicationFilePath(),
+		{u"--case"_q, u"SingleInstanceRecoversIncompleteLockAfterCrash"_q});
+	CHECK(process.waitForStarted(10000));
+	CHECK(WaitForFile(directory.filePath(u"created"_q)));
+	process.kill();
+	CHECK(process.waitForFinished(10000));
+	auto lock = Core::SingleInstanceLock(directory.filePath(u"profile.lock"_q));
+	CHECK(lock.tryAcquire() == Core::SingleInstanceLock::Result::Acquired);
+}
+
+TEST_CASE(SingleInstancePausedCreationRespectsLiveOwner) {
+	auto directory = QTemporaryDir();
+	CHECK(directory.isValid());
+	auto process = QProcess();
+	auto environment = QProcessEnvironment::systemEnvironment();
+	environment.insert(u"TDESKTOP_INCOMPLETE_LOCK_CHILD"_q, directory.path());
+	environment.insert(u"TDESKTOP_EXPECT_LOCK_BUSY"_q, u"1"_q);
+	process.setProcessEnvironment(environment);
+	process.start(
+		QCoreApplication::applicationFilePath(),
+		{u"--case"_q, u"SingleInstanceRecoversIncompleteLockAfterCrash"_q});
+	CHECK(process.waitForStarted(10000));
+	CHECK(WaitForFile(directory.filePath(u"created"_q)));
+	auto owner
+		= Core::SingleInstanceLock(directory.filePath(u"profile.lock"_q));
+	CHECK(owner.tryAcquire() == Core::SingleInstanceLock::Result::Acquired);
+	CHECK(Touch(directory.filePath(u"resume"_q)));
+	CHECK(process.waitForFinished(10000));
+	CHECK_EQ(process.exitCode(), 0);
+}
 
 TEST_CASE(SingleInstanceDifferentProfilesDoNotBlock) {
 	auto directory = QTemporaryDir();

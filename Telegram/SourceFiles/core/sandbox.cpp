@@ -414,7 +414,9 @@ int Sandbox::start() {
 		if (lockDirectory.isEmpty()
 			|| !MacProtectedPath::CheckPath(MacProtectedPath::Operation::Stat,
 											lockPath, Q_FUNC_INFO)
-			|| !MacProtectedPath::CheckPath(MacProtectedPath::Operation::Unlink,
+			|| !MacProtectedPath::CheckPath(MacProtectedPath::Operation::Open,
+											lockPath, Q_FUNC_INFO)
+			|| !MacProtectedPath::CheckPath(MacProtectedPath::Operation::Write,
 											lockPath, Q_FUNC_INFO)
 			|| !MacProtectedPath::CheckPath(MacProtectedPath::Operation::Lock,
 											lockPath, Q_FUNC_INFO)) {
@@ -1152,6 +1154,11 @@ void Sandbox::socketReading() {
 		"activating and quitting..."
 		).arg(processId
 		).arg(windowId));
+#if defined(Q_OS_MAC) && defined(TDESKTOP_LIFECYCLE_REGRESSION)
+	if (qEnvironmentVariableIsSet("TDESKTOP_EMOJI_RELAUNCH_HOLD_FILE")) {
+		fprintf(stderr, "Emoji cache relaunch: forwarded=1\n");
+	}
+#endif // Q_OS_MAC && TDESKTOP_LIFECYCLE_REGRESSION
 	return Quit();
 }
 
@@ -1179,6 +1186,27 @@ void Sandbox::socketError(QLocalSocket::LocalSocketError e) {
 	_localSocket.close();
 #ifndef Q_OS_WINRT
 	if (!_singleInstanceLock->isAcquired()) {
+#if defined(Q_OS_MAC) && defined(TDESKTOP_LIFECYCLE_REGRESSION)
+		const auto holdFile
+			= qEnvironmentVariable("TDESKTOP_INSTANCE_RECHECK_HOLD_FILE");
+		if (!holdFile.isEmpty() && !QFile::exists(holdFile)) {
+			const auto name = QFile::encodeName(_localServerName);
+			fprintf(stderr,
+					"Single instance recheck regression: "
+					"initial_failure=1 socket=%s\n",
+					name.constData());
+			const auto timer = new QTimer(this);
+			connect(timer, &QTimer::timeout, this, [=] {
+				if (QFile::exists(holdFile)) {
+					timer->stop();
+					timer->deleteLater();
+					socketError(e);
+				}
+			});
+			timer->start(10);
+			return;
+		}
+#endif // Q_OS_MAC && TDESKTOP_LIFECYCLE_REGRESSION
 		const auto result = _singleInstanceLock->tryAcquire();
 		if (result == SingleInstanceLock::Result::Error) {
 			LOG(("Could not lock the single instance profile."));
@@ -1334,9 +1362,10 @@ void Sandbox::newInstanceConnected() {
 void Sandbox::readClients() {
 	if (Quitting()) {
 		for (auto &client : _localClients) {
-			client.second.append(client.first->readAll());
+			const auto received = client.first->readAll();
+			client.second.append(received);
 #if defined(Q_OS_MAC) && defined(TDESKTOP_LIFECYCLE_REGRESSION)
-			if (!client.second.isEmpty()
+			if (!received.isEmpty()
 				&& qEnvironmentVariableIsSet(
 					"TDESKTOP_EMOJI_SHUTDOWN_RELEASE_FILE")) {
 				fprintf(stderr,

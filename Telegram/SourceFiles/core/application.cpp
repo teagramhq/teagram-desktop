@@ -109,6 +109,11 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "tests/account_lifecycle_regression.h"
 
 #include <QtCore/QElapsedTimer>
+#if defined(Q_OS_MAC) && defined(TDESKTOP_LIFECYCLE_REGRESSION)
+#include <QtCore/QFile>
+#include <QtCore/QTimer>
+#include <cstdio>
+#endif // Q_OS_MAC && TDESKTOP_LIFECYCLE_REGRESSION
 #include <QtCore/QStandardPaths>
 #include <QtCore/QMimeDatabase>
 #include <QtGui/QGuiApplication>
@@ -375,6 +380,23 @@ void Application::run() {
 #if defined(TDESKTOP_LIFECYCLE_REGRESSION)
 	if (fontStartupRegression) {
 #ifdef Q_OS_MAC
+		const auto holdFile
+			= qEnvironmentVariable("TDESKTOP_EMOJI_RELAUNCH_HOLD_FILE");
+		if (!holdFile.isEmpty()) {
+			const auto result = RunFontFallbackRegression();
+			std::fprintf(stderr,
+						 "Emoji cache relaunch: application_started=1\n");
+			const auto timer = new QTimer(QCoreApplication::instance());
+			QObject::connect(timer, &QTimer::timeout, [=] {
+				if (QFile::exists(holdFile)) {
+					timer->stop();
+					timer->deleteLater();
+					QCoreApplication::exit(result);
+				}
+			});
+			timer->start(10);
+			return;
+		}
 		if (qEnvironmentVariableIsSet(
 				"TDESKTOP_EMOJI_CACHE_SHUTDOWN_REGRESSION")) {
 			const auto result = RunFontFallbackRegression();

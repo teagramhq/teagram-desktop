@@ -215,17 +215,45 @@ if [[ "${TDESKTOP_FONT_STARTUP_QUIT_REGRESSION:-}" == 1 ]]; then
 	printf 'Font shutdown regression: worker_joined=1 application_created=0 teardown=complete\n'
 	exit 0
 fi
+if [[ -n "${TDESKTOP_INSTANCE_RECHECK_HOLD_FILE:-}" ]]; then
+    printf 'Single instance recheck regression: initial_failure=1 socket=%s\n' "$TDESKTOP_INSTANCE_RECHECK_TEST_SOCKET"
+    while [[ ! -e "$TDESKTOP_INSTANCE_RECHECK_HOLD_FILE" ]]; do sleep 0.02; done
+    if [[ "${FONT_TEST_MODE:-}" == emoji-relaunch-skip-recheck ]]; then exit 1; fi
+    python3 -c 'import socket,sys; s=socket.socket(socket.AF_UNIX); s.connect(sys.argv[1]); s.sendall(b"CMD:show;"); s.recv(128)' "$TDESKTOP_INSTANCE_RECHECK_TEST_SOCKET"
+    printf 'Emoji cache relaunch: forwarded=1\n'
+    exit 0
+fi
 if [[ -n "${TDESKTOP_EMOJI_SHUTDOWN_RELEASE_FILE:-}" ]]; then
     printf 'Emoji cache shutdown regression: drain_active=1\n'
-    while [[ ! -e "$TDESKTOP_EMOJI_SHUTDOWN_RELEASE_FILE.peer" ]]; do sleep 0.02; done
-    printf 'Emoji cache shutdown regression: peer_waiting=1\n'
+    if [[ "${TDESKTOP_EMOJI_RELAUNCH_COMPETING:-}" == 1 ]]; then
+        for index in 1 2; do
+            while [[ ! -e "$TDESKTOP_EMOJI_SHUTDOWN_RELEASE_FILE.peer.$index" ]]; do sleep 0.02; done
+            printf 'Emoji cache shutdown regression: peer_waiting=1\n'
+        done
+    else
+        while [[ ! -e "$TDESKTOP_EMOJI_SHUTDOWN_RELEASE_FILE.peer" ]]; do sleep 0.02; done
+        printf 'Emoji cache shutdown regression: peer_waiting=1\n'
+    fi
     while [[ ! -e "$TDESKTOP_EMOJI_SHUTDOWN_RELEASE_FILE" ]]; do sleep 0.02; done
     exit 0
 fi
 if [[ "${TDESKTOP_EMOJI_RELAUNCH_SECONDARY_TEST:-}" == 1 ]]; then
-    touch "$TDESKTOP_EMOJI_RELAUNCH_TEST_FILE.peer"
+    if [[ -n "${TDESKTOP_EMOJI_RELAUNCH_HOLD_FILE:-}" ]]; then
+        touch "$TDESKTOP_EMOJI_RELAUNCH_TEST_FILE.peer.$TDESKTOP_EMOJI_RELAUNCH_INDEX"
+    else
+        touch "$TDESKTOP_EMOJI_RELAUNCH_TEST_FILE.peer"
+    fi
     if [[ "${FONT_TEST_MODE:-}" == emoji-relaunch-early ]]; then exit 0; fi
     while [[ ! -e "$TDESKTOP_EMOJI_RELAUNCH_TEST_FILE" ]]; do sleep 0.02; done
+    if [[ -n "${TDESKTOP_EMOJI_RELAUNCH_HOLD_FILE:-}" ]]; then
+        if [[ "${FONT_TEST_MODE:-}" == emoji-relaunch-double-start ]] || mkdir "$TDESKTOP_EMOJI_RELAUNCH_TEST_FILE.winner" 2>/dev/null; then
+            printf 'Emoji cache relaunch: application_started=1\n'
+            while [[ ! -e "$TDESKTOP_EMOJI_RELAUNCH_HOLD_FILE" ]]; do sleep 0.02; done
+        else
+            printf 'Emoji cache relaunch: forwarded=1\n'
+        fi
+        exit 0
+    fi
     printf 'Font database warmup regression: ready=1 custom-fonts=1\n'
     exit 0
 fi

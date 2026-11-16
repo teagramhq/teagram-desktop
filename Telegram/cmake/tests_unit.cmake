@@ -96,6 +96,7 @@ target_precompile_headers(test_unit PRIVATE
 nice_target_sources(test_unit ${src_loc}
 PRIVATE
     core/shutdown_loop.cpp
+    core/single_instance_lock.cpp
     core/single_instance_lock.h
     core/teagram_icon_choice.cpp
     core/url_scheme_policy.cpp

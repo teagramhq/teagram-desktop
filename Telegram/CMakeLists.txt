@@ -651,6 +651,7 @@ PRIVATE
     core/shutdown_loop.cpp
     core/shutdown_loop.h
     core/sandbox.h
+    core/single_instance_lock.cpp
     core/single_instance_lock.h
     core/ui_stall_watchdog.cpp
     core/ui_stall_watchdog.h
