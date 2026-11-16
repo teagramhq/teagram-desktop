@@ -25,28 +25,36 @@ if [[ "$HOME" == *'Group Containers'* ]]; then
     fi
     exit 1
 fi
+if [[ -n "${TDESKTOP_PROFILE_LOCK_REFUSAL_REGRESSION:-}" ]]; then
+    refusal_window=1
+    refusal_path="$HOME/Library/Group Containers/6N38VWS5BX.ru.keepcoder.Telegram/refused-profile.lock"
+    if [[ "${TDESKTOP_FONT_TEST_MODE:-${FONT_TEST_MODE:-}}" == lock-refusal-no-window ]]; then refusal_window=0; fi
+    if [[ "${TDESKTOP_FONT_TEST_MODE:-${FONT_TEST_MODE:-}}" == lock-refusal-no-path ]]; then refusal_path='missing'; fi
+    printf 'Profile lock refusal regression: failure_window=%s window_contains_error=1 operation=stat path=%s\\n' "$refusal_window" "$refusal_path"
+    exit 1
+fi
 if [[ -n "${TDESKTOP_PROFILE_LOCK_REGRESSION:-}" ]]; then
     lock_window=1
     lock_reason='open failed'
-    if [[ "${FONT_TEST_MODE:-}" == lock-error-no-window ]]; then lock_window=0; fi
-    if [[ "${FONT_TEST_MODE:-}" == lock-error-no-reason ]]; then lock_reason=''; fi
+    if [[ "${TDESKTOP_FONT_TEST_MODE:-${FONT_TEST_MODE:-}}" == lock-error-no-window ]]; then lock_window=0; fi
+    if [[ "${TDESKTOP_FONT_TEST_MODE:-${FONT_TEST_MODE:-}}" == lock-error-no-reason ]]; then lock_reason=''; fi
     printf 'Profile lock regression: failure_window=%s window_contains_error=1 reason=%s\\n' "$lock_window" "$lock_reason"
     exit 0
 fi
 if [[ -n "${TDESKTOP_SOCKET_ERROR_REGRESSION:-}" ]]; then
     printf 'Socket error regression: injected=1\\n'
     if [[ "$TDESKTOP_SOCKET_ERROR_REGRESSION" == persistent ]]; then
-        if [[ "${FONT_TEST_MODE:-}" != socket-error-no-window ]]; then
+        if [[ "${TDESKTOP_FONT_TEST_MODE:-${FONT_TEST_MODE:-}}" != socket-error-no-window ]]; then
             printf 'Socket error regression: failure_window=1\\n'
         fi
         exit 0
     fi
-    if [[ "${FONT_TEST_MODE:-}" == socket-error-no-retry ]]; then exit 1; fi
+    if [[ "${TDESKTOP_FONT_TEST_MODE:-${FONT_TEST_MODE:-}}" == socket-error-no-retry ]]; then exit 1; fi
 fi
 if [[ -n "${TDESKTOP_INSTANCE_RECHECK_HOLD_FILE:-}" ]]; then
     printf 'Single instance recheck regression: initial_failure=1 socket=%s\\n' "$TDESKTOP_INSTANCE_RECHECK_TEST_SOCKET"
     while [[ ! -e "$TDESKTOP_INSTANCE_RECHECK_HOLD_FILE" ]]; do sleep 0.02; done
-    if [[ "${FONT_TEST_MODE:-}" == emoji-relaunch-skip-recheck ]]; then exit 1; fi
+    if [[ "${TDESKTOP_FONT_TEST_MODE:-${FONT_TEST_MODE:-}}" == emoji-relaunch-skip-recheck ]]; then exit 1; fi
     python3 -c 'import socket,sys; s=socket.socket(socket.AF_UNIX); s.connect(sys.argv[1]); s.sendall(b"CMD:show;"); s.recv(128)' "$TDESKTOP_INSTANCE_RECHECK_TEST_SOCKET"
     printf 'Emoji cache relaunch: forwarded=1\\n'
     exit 0
@@ -71,12 +79,12 @@ if [[ "${TDESKTOP_EMOJI_RELAUNCH_SECONDARY_TEST:-}" == 1 ]]; then
     else
         touch "$TDESKTOP_EMOJI_RELAUNCH_TEST_FILE.peer"
     fi
-    if [[ "${FONT_TEST_MODE:-}" == emoji-relaunch-early ]]; then exit 0; fi
+    if [[ "${TDESKTOP_FONT_TEST_MODE:-${FONT_TEST_MODE:-}}" == emoji-relaunch-early ]]; then exit 0; fi
     while [[ ! -e "$TDESKTOP_EMOJI_RELAUNCH_TEST_FILE" ]]; do sleep 0.02; done
     if [[ -n "${TDESKTOP_EMOJI_RELAUNCH_HOLD_FILE:-}" ]]; then
-        if [[ "${FONT_TEST_MODE:-}" == emoji-relaunch-double-start ]] \\
-            || [[ "${FONT_TEST_MODE:-}" == emoji-relaunch-second-wins && "$TDESKTOP_EMOJI_RELAUNCH_INDEX" == 2 ]] \\
-            || [[ "${FONT_TEST_MODE:-}" != emoji-relaunch-second-wins && "$TDESKTOP_EMOJI_RELAUNCH_INDEX" == 1 ]]; then
+        if [[ "${TDESKTOP_FONT_TEST_MODE:-${FONT_TEST_MODE:-}}" == emoji-relaunch-double-start ]] \\
+            || [[ "${TDESKTOP_FONT_TEST_MODE:-${FONT_TEST_MODE:-}}" == emoji-relaunch-second-wins && "$TDESKTOP_EMOJI_RELAUNCH_INDEX" == 2 ]] \\
+            || [[ "${TDESKTOP_FONT_TEST_MODE:-${FONT_TEST_MODE:-}}" != emoji-relaunch-second-wins && "$TDESKTOP_EMOJI_RELAUNCH_INDEX" == 1 ]]; then
             printf 'Emoji cache relaunch: application_started=1\\n'
             while [[ ! -e "$TDESKTOP_EMOJI_RELAUNCH_HOLD_FILE" ]]; do sleep 0.02; done
         else
@@ -172,9 +180,9 @@ printf '%s\n' "$directory"
                            CREATE_REFUSAL_LOCK=str(int(create_lock)), TEST_LOCK_NAME=lock_name,
                            PREEXISTING_LOCK=str(int(preexisting_lock)),
                            PATH=str(binaries) + ':' + os.environ['PATH'])
+        environment.pop('TDESKTOP_FONT_TEST_MODE', None)
         if inherited_mode:
             environment['FONT_TEST_MODE'] = inherited_mode
-        environment.pop('FONT_TEST_MODE', None)
         try:
             result = subprocess.run(['bash', 'Telegram/build/test_mac_profile_guard.sh', str(executable)],
                                     env=environment, capture_output=True, text=True, timeout=15)
@@ -208,7 +216,7 @@ def run_font_startup_fixture(
         executable.parent.mkdir(parents=True)
         executable.write_text('''#!/bin/bash
 count_file="$HOME/font-startup-count"
-mode="$FONT_TEST_MODE"
+mode="${TDESKTOP_FONT_TEST_MODE:-${FONT_TEST_MODE:-}}"
 if [[ "${TDESKTOP_FONT_STARTUP_QUIT_REGRESSION:-}" == 1 ]]; then
     if [[ ( "${TDESKTOP_FONT_STARTUP_TEST_FAILURE:-}" == signal-install \
         && "$FONT_SHUTDOWN_TEST_MODE" != probe-injection-ignored ) \
@@ -274,28 +282,36 @@ if [[ "${TDESKTOP_FONT_STARTUP_QUIT_REGRESSION:-}" == 1 ]]; then
     fi
     exit 0
 fi
+if [[ -n "${TDESKTOP_PROFILE_LOCK_REFUSAL_REGRESSION:-}" ]]; then
+    refusal_window=1
+    refusal_path="$HOME/Library/Group Containers/6N38VWS5BX.ru.keepcoder.Telegram/refused-profile.lock"
+    if [[ "${TDESKTOP_FONT_TEST_MODE:-${FONT_TEST_MODE:-}}" == lock-refusal-no-window ]]; then refusal_window=0; fi
+    if [[ "${TDESKTOP_FONT_TEST_MODE:-${FONT_TEST_MODE:-}}" == lock-refusal-no-path ]]; then refusal_path='missing'; fi
+    printf 'Profile lock refusal regression: failure_window=%s window_contains_error=1 operation=stat path=%s\\n' "$refusal_window" "$refusal_path"
+    exit 1
+fi
 if [[ -n "${TDESKTOP_PROFILE_LOCK_REGRESSION:-}" ]]; then
     lock_window=1
     lock_reason='open failed'
-    if [[ "${FONT_TEST_MODE:-}" == lock-error-no-window ]]; then lock_window=0; fi
-    if [[ "${FONT_TEST_MODE:-}" == lock-error-no-reason ]]; then lock_reason=''; fi
+    if [[ "${TDESKTOP_FONT_TEST_MODE:-${FONT_TEST_MODE:-}}" == lock-error-no-window ]]; then lock_window=0; fi
+    if [[ "${TDESKTOP_FONT_TEST_MODE:-${FONT_TEST_MODE:-}}" == lock-error-no-reason ]]; then lock_reason=''; fi
     printf 'Profile lock regression: failure_window=%s window_contains_error=1 reason=%s\\n' "$lock_window" "$lock_reason"
     exit 0
 fi
 if [[ -n "${TDESKTOP_SOCKET_ERROR_REGRESSION:-}" ]]; then
     printf 'Socket error regression: injected=1\\n'
     if [[ "$TDESKTOP_SOCKET_ERROR_REGRESSION" == persistent ]]; then
-        if [[ "${FONT_TEST_MODE:-}" != socket-error-no-window ]]; then
+        if [[ "${TDESKTOP_FONT_TEST_MODE:-${FONT_TEST_MODE:-}}" != socket-error-no-window ]]; then
             printf 'Socket error regression: failure_window=1\\n'
         fi
         exit 0
     fi
-    if [[ "${FONT_TEST_MODE:-}" == socket-error-no-retry ]]; then exit 1; fi
+    if [[ "${TDESKTOP_FONT_TEST_MODE:-${FONT_TEST_MODE:-}}" == socket-error-no-retry ]]; then exit 1; fi
 fi
 if [[ -n "${TDESKTOP_INSTANCE_RECHECK_HOLD_FILE:-}" ]]; then
     printf 'Single instance recheck regression: initial_failure=1 socket=%s\\n' "$TDESKTOP_INSTANCE_RECHECK_TEST_SOCKET"
     while [[ ! -e "$TDESKTOP_INSTANCE_RECHECK_HOLD_FILE" ]]; do sleep 0.02; done
-    if [[ "${FONT_TEST_MODE:-}" == emoji-relaunch-skip-recheck ]]; then exit 1; fi
+    if [[ "${TDESKTOP_FONT_TEST_MODE:-${FONT_TEST_MODE:-}}" == emoji-relaunch-skip-recheck ]]; then exit 1; fi
     python3 -c 'import socket,sys; s=socket.socket(socket.AF_UNIX); s.connect(sys.argv[1]); s.sendall(b"CMD:show;"); s.recv(128)' "$TDESKTOP_INSTANCE_RECHECK_TEST_SOCKET"
     printf 'Emoji cache relaunch: forwarded=1\\n'
     exit 0
@@ -320,12 +336,12 @@ if [[ "${TDESKTOP_EMOJI_RELAUNCH_SECONDARY_TEST:-}" == 1 ]]; then
     else
         touch "$TDESKTOP_EMOJI_RELAUNCH_TEST_FILE.peer"
     fi
-    if [[ "${FONT_TEST_MODE:-}" == emoji-relaunch-early ]]; then exit 0; fi
+    if [[ "${TDESKTOP_FONT_TEST_MODE:-${FONT_TEST_MODE:-}}" == emoji-relaunch-early ]]; then exit 0; fi
     while [[ ! -e "$TDESKTOP_EMOJI_RELAUNCH_TEST_FILE" ]]; do sleep 0.02; done
     if [[ -n "${TDESKTOP_EMOJI_RELAUNCH_HOLD_FILE:-}" ]]; then
-        if [[ "${FONT_TEST_MODE:-}" == emoji-relaunch-double-start ]] \\
-            || [[ "${FONT_TEST_MODE:-}" == emoji-relaunch-second-wins && "$TDESKTOP_EMOJI_RELAUNCH_INDEX" == 2 ]] \\
-            || [[ "${FONT_TEST_MODE:-}" != emoji-relaunch-second-wins && "$TDESKTOP_EMOJI_RELAUNCH_INDEX" == 1 ]]; then
+        if [[ "${TDESKTOP_FONT_TEST_MODE:-${FONT_TEST_MODE:-}}" == emoji-relaunch-double-start ]] \\
+            || [[ "${TDESKTOP_FONT_TEST_MODE:-${FONT_TEST_MODE:-}}" == emoji-relaunch-second-wins && "$TDESKTOP_EMOJI_RELAUNCH_INDEX" == 2 ]] \\
+            || [[ "${TDESKTOP_FONT_TEST_MODE:-${FONT_TEST_MODE:-}}" != emoji-relaunch-second-wins && "$TDESKTOP_EMOJI_RELAUNCH_INDEX" == 1 ]]; then
             printf 'Emoji cache relaunch: application_started=1\\n'
             while [[ ! -e "$TDESKTOP_EMOJI_RELAUNCH_HOLD_FILE" ]]; do sleep 0.02; done
         else
@@ -457,7 +473,7 @@ printf '%s\\n' "$directory"
             FONT_SPLASH_COLD_NS=str(splash_cold_ns),
             FONT_SPLASH_WARM_NS=str(splash_warm_ns),
             FONT_EXPOSURE_TIMEOUT_NS=str(exposure_timeout_ns),
-            FONT_TEST_MODE=mode,
+            TDESKTOP_FONT_TEST_MODE=mode,
             FONT_FALLBACK_WALL_NS=str(fallback_wall_ns),
             PATH=str(binaries) + ':' + os.environ['PATH'],
         )
@@ -506,6 +522,13 @@ assert 'Socket error recovery=PASS mode=transient' in font_startup_output
 assert 'Socket error recovery=PASS mode=unknown' in font_startup_output
 assert 'Socket error recovery=PASS mode=persistent' in font_startup_output
 assert 'Socket error recovery=PASS mode=lock-error' in font_startup_output
+assert 'Socket error recovery=PASS mode=lock-refused' in font_startup_output
+font_startup_refusal_no_window = run_font_startup_fixture(
+    50_000_000, 50_000_000, 1, mode='lock-refusal-no-window')
+assert 'socket error regression failed: mode=lock-refused' in font_startup_refusal_no_window
+font_startup_refusal_no_path = run_font_startup_fixture(
+    50_000_000, 50_000_000, 1, mode='lock-refusal-no-path')
+assert 'socket error regression failed: mode=lock-refused' in font_startup_refusal_no_path
 font_startup_lock_no_window = run_font_startup_fixture(
     50_000_000, 50_000_000, 1, mode='lock-error-no-window')
 assert 'socket error regression failed: mode=lock-error' in font_startup_lock_no_window

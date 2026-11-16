@@ -75,7 +75,7 @@ public:
 
 class NotStartedWindow : public PreLaunchWindow {
 public:
-  explicit NotStartedWindow(QString diagnostic = QString());
+	NotStartedWindow();
 
 protected:
 	void closeEvent(QCloseEvent *e) override;

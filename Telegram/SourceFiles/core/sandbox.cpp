@@ -84,10 +84,12 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <signal.h>
 #include <functional>
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <memory>
 #include <system_error>
 #include <thread>
+#include <utility>
 #include <sys/un.h>
 #endif // Q_OS_MAC
 
@@ -415,17 +417,48 @@ int Sandbox::start() {
 		if (qEnvironmentVariableIsSet("TDESKTOP_PROFILE_LOCK_REGRESSION")) {
 			lockPath = lockDirectory;
 		}
+		if (qEnvironmentVariableIsSet(
+				"TDESKTOP_PROFILE_LOCK_REFUSAL_REGRESSION")
+			&& MacProtectedPath::IntegrationTestActive()) {
+			lockPath
+				= qEnvironmentVariable("TDESKTOP_MAC_PROFILE_TEST_HOME")
+				  + u"/Library/Group Containers/6N38VWS5BX.ru.keepcoder.Telegram/refused-profile.lock"_q;
+		}
 #endif // Q_OS_MAC && TDESKTOP_LIFECYCLE_REGRESSION
 #ifdef Q_OS_MAC
-		if (lockDirectory.isEmpty()
-			|| !MacProtectedPath::CheckPath(MacProtectedPath::Operation::Stat,
-											lockPath, Q_FUNC_INFO)
-			|| !MacProtectedPath::CheckPath(MacProtectedPath::Operation::Open,
-											lockPath, Q_FUNC_INFO)
-			|| !MacProtectedPath::CheckPath(MacProtectedPath::Operation::Write,
-											lockPath, Q_FUNC_INFO)
-			|| !MacProtectedPath::CheckPath(MacProtectedPath::Operation::Lock,
-											lockPath, Q_FUNC_INFO)) {
+		auto refusedOperation = QString();
+		if (lockDirectory.isEmpty()) {
+			refusedOperation = u"directory"_q;
+		} else {
+			const auto operations = std::array{
+				std::pair{MacProtectedPath::Operation::Stat, "stat"},
+				std::pair{MacProtectedPath::Operation::Open, "open"},
+				std::pair{MacProtectedPath::Operation::Write, "write"},
+				std::pair{MacProtectedPath::Operation::Lock, "lock"},
+			};
+			for (const auto &[operation, name] : operations) {
+				if (!MacProtectedPath::CheckPath(operation, lockPath,
+												 Q_FUNC_INFO)) {
+					refusedOperation = QString::fromLatin1(name);
+					break;
+				}
+			}
+		}
+		if (!refusedOperation.isEmpty()) {
+			const auto diagnostic
+				= u"Protected profile lock path refused (%1): %2"_q.arg(
+					refusedOperation, lockPath);
+			LOG((diagnostic));
+			if (QuitOnStartRequested) {
+				closeApplication();
+				return 1;
+			}
+			QTimer::singleShot(0, this, [this, diagnostic] {
+				showSingleInstanceError(diagnostic);
+			});
+			_started = true;
+			exec();
+			closeApplication();
 			return 1;
 		}
 #endif // Q_OS_MAC
@@ -1385,12 +1418,29 @@ void Sandbox::showSingleInstanceError(QString diagnostic) {
 	if (cQuit()) {
 		return Quit();
 	}
-	[[maybe_unused]] const auto window = new NotStartedWindow(diagnostic);
+	const auto window = new NotStartedWindow();
+	const auto text = window->findChild<QTextEdit *>();
+	if (text && !diagnostic.isEmpty()) {
+		text->setPlainText(diagnostic + u"\n\n"_q + text->toPlainText());
+	}
 #if defined(Q_OS_MAC) && defined(TDESKTOP_LIFECYCLE_REGRESSION)
+	if (qEnvironmentVariableIsSet("TDESKTOP_PROFILE_LOCK_REFUSAL_REGRESSION")) {
+		const auto path
+			= qEnvironmentVariable("TDESKTOP_MAC_PROFILE_TEST_HOME")
+			  + u"/Library/Group Containers/6N38VWS5BX.ru.keepcoder.Telegram/refused-profile.lock"_q;
+		const auto visible = text && text->toPlainText().contains(path)
+							 && text->toPlainText().contains(u"stat"_q);
+		const auto encoded = path.toUtf8();
+		fprintf(stderr,
+				"Profile lock refusal regression: failure_window=%d "
+				"window_contains_error=%d operation=stat path=%s\n",
+				window->isVisible() ? 1 : 0, visible ? 1 : 0,
+				encoded.constData());
+		QTimer::singleShot(0, this, [] { QCoreApplication::exit(1); });
+	}
 	if (qEnvironmentVariableIsSet("TDESKTOP_PROFILE_LOCK_REGRESSION")) {
 		const auto reason = _singleInstanceLock->errorString();
 		const auto encoded = reason.toUtf8();
-		const auto text = window->findChild<QTextEdit *>();
 		fprintf(stderr,
 				"Profile lock regression: failure_window=%d "
 				"window_contains_error=%d reason=%s\n",

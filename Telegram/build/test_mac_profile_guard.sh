@@ -2,6 +2,8 @@
 
 set -euo pipefail
 
+unset FONT_TEST_MODE
+
 if [[ $# -lt 1 || $# -gt 2 ]]; then
 	echo "usage: $0 <Teagram executable> [case]" >&2
 	exit 2
@@ -1780,7 +1782,7 @@ sys.exit(result.returncode if result.returncode >= 0 else 128 - result.returncod
 		TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST=1 \
 		TDESKTOP_FONT_STARTUP_QUIT_REGRESSION=1 \
 		TDESKTOP_FONT_STARTUP_TEST_FAILURE="$forced_failure" \
-		FONT_SHUTDOWN_TEST_MODE="${FONT_TEST_MODE:-pass}" \
+		FONT_SHUTDOWN_TEST_MODE="${TDESKTOP_FONT_TEST_MODE:-pass}" \
 		"${shutdown_command[@]}" >"$shutdown_log" 2>&1; then
 		:
 	else

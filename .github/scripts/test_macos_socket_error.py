@@ -9,7 +9,7 @@ import sys
 
 def main():
     executable, home_arg, temp_arg = sys.argv[1:]
-    for mode in ('transient', 'unknown', 'persistent', 'lock-error'):
+    for mode in ('transient', 'unknown', 'persistent', 'lock-error', 'lock-refused'):
         home = Path(home_arg) / mode
         home.mkdir(parents=True, exist_ok=True)
         env = dict(os.environ, HOME=str(home), TMPDIR=temp_arg,
@@ -19,9 +19,13 @@ def main():
                    TDESKTOP_SOCKET_ERROR_REGRESSION=mode)
         env.pop('TDESKTOP_FONT_STARTUP_TEST_FAILURE', None)
         env.pop('TDESKTOP_PROFILE_LOCK_REGRESSION', None)
+        env.pop('TDESKTOP_PROFILE_LOCK_REFUSAL_REGRESSION', None)
         if mode == 'lock-error':
             env.pop('TDESKTOP_SOCKET_ERROR_REGRESSION', None)
             env['TDESKTOP_PROFILE_LOCK_REGRESSION'] = '1'
+        elif mode == 'lock-refused':
+            env.pop('TDESKTOP_SOCKET_ERROR_REGRESSION', None)
+            env['TDESKTOP_PROFILE_LOCK_REFUSAL_REGRESSION'] = '1'
         try:
             result = subprocess.run([executable, '-noupdate', '-debug'],
                                     env=env, capture_output=True, text=True,
@@ -36,10 +40,16 @@ def main():
         if mode == 'lock-error':
             passed = re.search(r'Profile lock regression: failure_window=1 '
                                r'window_contains_error=1 reason=.+', output)
+        elif mode == 'lock-refused':
+            protected = home / 'Library/Group Containers/6N38VWS5BX.ru.keepcoder.Telegram/refused-profile.lock'
+            passed = ('Profile lock refusal regression: failure_window=1 '
+                      'window_contains_error=1 operation=stat '
+                      f'path={protected}' in output and not protected.exists())
         else:
             passed = ('Socket error regression: injected=1' in output
                       and expected in output)
-        if result.returncode != 0 or not passed:
+        expected_status = 1 if mode == 'lock-refused' else 0
+        if result.returncode != expected_status or not passed:
             print(output, file=sys.stderr)
             print(f'socket error regression failed: mode={mode}', file=sys.stderr)
             return 1

@@ -215,28 +215,36 @@ if [[ "${TDESKTOP_FONT_STARTUP_QUIT_REGRESSION:-}" == 1 ]]; then
 	printf 'Font shutdown regression: worker_joined=1 application_created=0 teardown=complete\n'
 	exit 0
 fi
+if [[ -n "${TDESKTOP_PROFILE_LOCK_REFUSAL_REGRESSION:-}" ]]; then
+    refusal_window=1
+    refusal_path="$HOME/Library/Group Containers/6N38VWS5BX.ru.keepcoder.Telegram/refused-profile.lock"
+    if [[ "${TDESKTOP_FONT_TEST_MODE:-${FONT_TEST_MODE:-}}" == lock-refusal-no-window ]]; then refusal_window=0; fi
+    if [[ "${TDESKTOP_FONT_TEST_MODE:-${FONT_TEST_MODE:-}}" == lock-refusal-no-path ]]; then refusal_path='missing'; fi
+    printf 'Profile lock refusal regression: failure_window=%s window_contains_error=1 operation=stat path=%s\n' "$refusal_window" "$refusal_path"
+    exit 1
+fi
 if [[ -n "${TDESKTOP_PROFILE_LOCK_REGRESSION:-}" ]]; then
     lock_window=1
     lock_reason='open failed'
-    if [[ "${FONT_TEST_MODE:-}" == lock-error-no-window ]]; then lock_window=0; fi
-    if [[ "${FONT_TEST_MODE:-}" == lock-error-no-reason ]]; then lock_reason=''; fi
+    if [[ "${TDESKTOP_FONT_TEST_MODE:-${FONT_TEST_MODE:-}}" == lock-error-no-window ]]; then lock_window=0; fi
+    if [[ "${TDESKTOP_FONT_TEST_MODE:-${FONT_TEST_MODE:-}}" == lock-error-no-reason ]]; then lock_reason=''; fi
     printf 'Profile lock regression: failure_window=%s window_contains_error=1 reason=%s\n' "$lock_window" "$lock_reason"
     exit 0
 fi
 if [[ -n "${TDESKTOP_SOCKET_ERROR_REGRESSION:-}" ]]; then
     printf 'Socket error regression: injected=1\n'
     if [[ "$TDESKTOP_SOCKET_ERROR_REGRESSION" == persistent ]]; then
-        if [[ "${FONT_TEST_MODE:-}" != socket-error-no-window ]]; then
+        if [[ "${TDESKTOP_FONT_TEST_MODE:-${FONT_TEST_MODE:-}}" != socket-error-no-window ]]; then
             printf 'Socket error regression: failure_window=1\n'
         fi
         exit 0
     fi
-    if [[ "${FONT_TEST_MODE:-}" == socket-error-no-retry ]]; then exit 1; fi
+    if [[ "${TDESKTOP_FONT_TEST_MODE:-${FONT_TEST_MODE:-}}" == socket-error-no-retry ]]; then exit 1; fi
 fi
 if [[ -n "${TDESKTOP_INSTANCE_RECHECK_HOLD_FILE:-}" ]]; then
     printf 'Single instance recheck regression: initial_failure=1 socket=%s\n' "$TDESKTOP_INSTANCE_RECHECK_TEST_SOCKET"
     while [[ ! -e "$TDESKTOP_INSTANCE_RECHECK_HOLD_FILE" ]]; do sleep 0.02; done
-    if [[ "${FONT_TEST_MODE:-}" == emoji-relaunch-skip-recheck ]]; then exit 1; fi
+    if [[ "${TDESKTOP_FONT_TEST_MODE:-${FONT_TEST_MODE:-}}" == emoji-relaunch-skip-recheck ]]; then exit 1; fi
     python3 -c 'import socket,sys; s=socket.socket(socket.AF_UNIX); s.connect(sys.argv[1]); s.sendall(b"CMD:show;"); s.recv(128)' "$TDESKTOP_INSTANCE_RECHECK_TEST_SOCKET"
     printf 'Emoji cache relaunch: forwarded=1\n'
     exit 0
@@ -261,12 +269,12 @@ if [[ "${TDESKTOP_EMOJI_RELAUNCH_SECONDARY_TEST:-}" == 1 ]]; then
     else
         touch "$TDESKTOP_EMOJI_RELAUNCH_TEST_FILE.peer"
     fi
-    if [[ "${FONT_TEST_MODE:-}" == emoji-relaunch-early ]]; then exit 0; fi
+    if [[ "${TDESKTOP_FONT_TEST_MODE:-${FONT_TEST_MODE:-}}" == emoji-relaunch-early ]]; then exit 0; fi
     while [[ ! -e "$TDESKTOP_EMOJI_RELAUNCH_TEST_FILE" ]]; do sleep 0.02; done
     if [[ -n "${TDESKTOP_EMOJI_RELAUNCH_HOLD_FILE:-}" ]]; then
-        if [[ "${FONT_TEST_MODE:-}" == emoji-relaunch-double-start ]] \
-            || [[ "${FONT_TEST_MODE:-}" == emoji-relaunch-second-wins && "$TDESKTOP_EMOJI_RELAUNCH_INDEX" == 2 ]] \
-            || [[ "${FONT_TEST_MODE:-}" != emoji-relaunch-second-wins && "$TDESKTOP_EMOJI_RELAUNCH_INDEX" == 1 ]]; then
+        if [[ "${TDESKTOP_FONT_TEST_MODE:-${FONT_TEST_MODE:-}}" == emoji-relaunch-double-start ]] \
+            || [[ "${TDESKTOP_FONT_TEST_MODE:-${FONT_TEST_MODE:-}}" == emoji-relaunch-second-wins && "$TDESKTOP_EMOJI_RELAUNCH_INDEX" == 2 ]] \
+            || [[ "${TDESKTOP_FONT_TEST_MODE:-${FONT_TEST_MODE:-}}" != emoji-relaunch-second-wins && "$TDESKTOP_EMOJI_RELAUNCH_INDEX" == 1 ]]; then
             printf 'Emoji cache relaunch: application_started=1\n'
             while [[ ! -e "$TDESKTOP_EMOJI_RELAUNCH_HOLD_FILE" ]]; do sleep 0.02; done
         else
@@ -314,7 +322,7 @@ EOF
 chmod +x "$FAKE_BIN/uname" "$FAKE_BIN/md5" "$FAKE_BIN/sw_vers" "$FAKE_APP"
 mkdir -p "$TEMP_ROOT/profile-harness"
 
-if FONT_TEST_MODE=pass \
+if TDESKTOP_FONT_TEST_MODE=pass \
 	TDESKTOP_MAC_PROFILE_TEST_TMP_BASE="$TEMP_ROOT/profile-harness" \
 	PATH="$FAKE_BIN:$PATH" bash "$PROFILE_GUARD" "$FAKE_APP" \
 	> "$TEMP_ROOT/profile-entrypoint-output.txt" 2>&1; then

@@ -247,13 +247,13 @@ void PreLaunchCheckbox::setText(const QString &text) {
 	resize(sizeHint());
 }
 
-NotStartedWindow::NotStartedWindow(QString diagnostic)
-	: _label(this), _log(this), _close(this) {
+NotStartedWindow::NotStartedWindow()
+: _label(this)
+, _log(this)
+, _close(this) {
 	_label.setText(u"Could not start Telegram Desktop!\nYou can see complete log below:"_q);
 
-	_log.setPlainText(diagnostic.isEmpty()
-						  ? Logs::full()
-						  : diagnostic + u"\n\n"_q + Logs::full());
+	_log.setPlainText(Logs::full());
 
 	connect(&_close, &QPushButton::clicked, [=] { close(); });
 	_close.setText(u"CLOSE"_q);
