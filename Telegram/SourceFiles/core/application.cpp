@@ -367,6 +367,7 @@ void Application::run() {
 	Ui::InitUsernameInputAccessibility();
 	Ui::InitTextOptions();
 	Ui::StartCachedCorners();
+	Ui::Emoji::Init();
 
 #if defined(TDESKTOP_LIFECYCLE_REGRESSION)
 	if (fontStartupRegression) {
@@ -375,7 +376,8 @@ void Application::run() {
 	}
 #endif // TDESKTOP_LIFECYCLE_REGRESSION
 
-	Ui::Emoji::Init();
+	auto regressionResult = 0;
+
 	Ui::PreloadTextSpoilerMask(_spoilerPreloadLifetime);
 	startShortcuts();
 	startEmojiImageLoader();
@@ -470,10 +472,6 @@ void Application::run() {
 	DEBUG_LOG(("Application Info: window created..."));
 
 	startDomain();
-	if (_domain->starting()) {
-		_domain->startFinished() | rpl::take(1)
-			| rpl::on_next([=] { checkStartUrls(); }, _lifetime);
-	}
 	refreshApplicationIcon();
 #if defined(Q_OS_MAC) && defined(TDESKTOP_TEAGRAM)
 	CompleteTeagramUpdateStartup();
@@ -482,56 +480,39 @@ void Application::run() {
 	}
 #endif // Q_OS_MAC && TDESKTOP_TEAGRAM
 
-	const auto signupRegression
-		= qEnvironmentVariableIsSet("TDESKTOP_SIGNUP_UI_REGRESSION");
-	const auto accountRegression
-		= qEnvironmentVariableIsSet("TDESKTOP_AUTH_LIFECYCLE_REGRESSION");
+	if (qEnvironmentVariableIsSet("TDESKTOP_SIGNUP_UI_REGRESSION")) {
 #if defined(TDESKTOP_LIFECYCLE_REGRESSION)
-	const auto customEmojiRegression
-		= qEnvironmentVariableIsSet("TDESKTOP_CUSTOM_EMOJI_UI_SMOKE");
-	const auto scaleRegression
-		= qEnvironmentVariableIsSet("TDESKTOP_DESKTOP_SCALE_CHECK");
-#else
-	const auto customEmojiRegression = false;
-	const auto scaleRegression = false;
-#endif
-	if (signupRegression || accountRegression || customEmojiRegression
-		|| scaleRegression) {
-		const auto run = [=] {
-			auto result = 0;
-			if (signupRegression) {
+		Expects(!_mediaDevices);
+#endif // TDESKTOP_LIFECYCLE_REGRESSION
+		regressionResult |= RunSignupControlsRegression();
+	}
+
+	if (qEnvironmentVariableIsSet("TDESKTOP_AUTH_LIFECYCLE_REGRESSION")) {
 #if defined(TDESKTOP_LIFECYCLE_REGRESSION)
-				Expects(!_mediaDevices);
-#endif
-				result |= RunSignupControlsRegression();
-			}
-			if (accountRegression) {
-#if defined(TDESKTOP_LIFECYCLE_REGRESSION)
-				Expects(!_mediaDevices);
-#endif
-				Tests::RunAccountLifecycleRegression(
-					[=](int value) { QCoreApplication::exit(result | value); });
-				return;
-			}
-#if defined(TDESKTOP_LIFECYCLE_REGRESSION)
-			if (customEmojiRegression) {
-				Tests::RunCustomEmojiUiSmoke(
-					[=](int value) { QCoreApplication::exit(result | value); });
-				return;
-			}
-			if (scaleRegression && !signupRegression) {
-				result |= Tests::RunDesktopScaleCheck();
-			}
-#endif
-			QCoreApplication::exit(result);
-		};
-		if (_domain->starting()) {
-			_domain->startFinished() | rpl::take(1)
-				| rpl::on_next(run, _lifetime);
-		} else {
-			run();
-		}
+		Expects(!_mediaDevices);
+#endif // TDESKTOP_LIFECYCLE_REGRESSION
+		Tests::RunAccountLifecycleRegression([=](int result) {
+			QCoreApplication::exit(regressionResult | result);
+		});
 		return;
+	}
+	if (qEnvironmentVariableIsSet("TDESKTOP_CUSTOM_EMOJI_UI_SMOKE")) {
+#if defined(TDESKTOP_LIFECYCLE_REGRESSION)
+		Tests::RunCustomEmojiUiSmoke([=](int result) {
+			QCoreApplication::exit(regressionResult | result);
+		});
+		return;
+#endif // TDESKTOP_LIFECYCLE_REGRESSION
+	}
+	if (qEnvironmentVariableIsSet("TDESKTOP_SIGNUP_UI_REGRESSION")) {
+		QCoreApplication::exit(regressionResult);
+		return;
+	}
+	if (qEnvironmentVariableIsSet("TDESKTOP_DESKTOP_SCALE_CHECK")) {
+#if defined(TDESKTOP_LIFECYCLE_REGRESSION)
+		QCoreApplication::exit(Tests::RunDesktopScaleCheck());
+		return;
+#endif // TDESKTOP_LIFECYCLE_REGRESSION
 	}
 	startTray();
 
@@ -543,18 +524,7 @@ void Application::run() {
 	_lastActivePrimaryWindow->finishFirstShow();
 
 	if (!_lastActivePrimaryWindow->locked() && cStartToSettings()) {
-		if (_domain->starting()) {
-			_domain->startFinished() | rpl::take(1)
-				| rpl::on_next(
-					[=] {
-						if (_lastActivePrimaryWindow) {
-							_lastActivePrimaryWindow->showSettings();
-						}
-					},
-					_lifetime);
-		} else {
-			_lastActivePrimaryWindow->showSettings();
-		}
+		_lastActivePrimaryWindow->showSettings();
 	}
 
 	_lastActivePrimaryWindow->updateIsActiveFocus();
@@ -1337,8 +1307,8 @@ rpl::producer<> Application::unreadBadgeChanges() const {
 }
 
 bool Application::offerLegacyLangPackSwitch() const {
-	return _domain->started() && (_domain->accounts().size() == 1)
-		   && activeAccount().sessionExists();
+	return (_domain->accounts().size() == 1)
+		&& activeAccount().sessionExists();
 }
 
 bool Application::canApplyLangPackWithoutRestart() const {
@@ -1351,7 +1321,7 @@ bool Application::canApplyLangPackWithoutRestart() const {
 }
 
 void Application::checkStartUrls() {
-	if (_setupEmailLock.current() || _domain->starting()) {
+	if (_setupEmailLock.current()) {
 		return;
 	}
 	if (!Core::App().passcodeLocked()) {

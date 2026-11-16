@@ -114,7 +114,6 @@ public:
 
 	Session(const Session &other) = delete;
 	Session &operator=(const Session &other) = delete;
-	void startStorageInitialization();
 
 	[[nodiscard]] Account &account() const;
 	[[nodiscard]] Storage::Account &local() const;

@@ -9,10 +9,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "base/platform/base_platform_info.h"
 #include "intro/intro_server_discovery.h"
-#include "lang/lang_keys.h"
 #include "core/application.h"
 #include "storage/storage_account.h"
-#include "storage/details/storage_file_utilities.h"
 #include "storage/storage_domain.h" // Storage::StartResult.
 #include "storage/serialize_common.h"
 #include "storage/serialize_peer.h"
@@ -150,19 +148,6 @@ enum class PinFailure {
 	return result;
 }
 
-[[nodiscard]] bool HasStoredEndpointAuthKey(const MTP::Instance &instance,
-											const MTP::AuthKeyPtr &expected) {
-	if (!expected) {
-		return false;
-	}
-	const auto keys = instance.getKeysForWrite();
-	return ranges::any_of(keys, [&](const auto &key) {
-		return key && key->dcId() == expected->dcId()
-			   && key->type() == MTP::AuthKey::Type::ReadFromFile
-			   && key->equals(expected);
-	});
-}
-
 } // namespace
 
 Account::Account(not_null<Domain *> domain, const QString &dataName, int index)
@@ -184,10 +169,6 @@ Account::Account(not_null<Domain *> domain, const QString &dataName, int index)
 }
 
 Account::~Account() {
-	if (const auto box = _logoutFailureBox.get()) {
-		_logoutFailureBox.reset();
-		box->closeBox();
-	}
 	cancelServerEndpointRefresh();
 	// Auth keys are normally persisted from a postponed write request. During
 	// shutdown the event loop can finish before that callback runs, so take a
@@ -238,8 +219,7 @@ std::unique_ptr<MTP::Config> Account::prepareToStart(
 	return _local->start(std::move(localKey));
 }
 
-void Account::start(std::unique_ptr<MTP::Config> config, bool recoveryOnly) {
-	_startRecoveryOnly = recoveryOnly;
+void Account::start(std::unique_ptr<MTP::Config> config) {
 	if (!details::ShouldRestoreStoredSession(
 			bool(_sessionUserId), !_sessionUserSerialized.isEmpty())) {
 		_sessionUserId = 0;
@@ -247,50 +227,7 @@ void Account::start(std::unique_ptr<MTP::Config> config, bool recoveryOnly) {
 		_sessionUserStreamVersion = 0;
 		_storedSessionSettings.reset();
 	}
-	if (_domain->starting() || _sessionUserId
-		|| (config && config->hasCustomServer())
-		|| _local->hasStoredCustomServer()
-		|| _local->customServerPinUnknown()) {
-		_startPending = true;
-		const auto restoredSession = bool(_sessionUserId);
-		const auto pendingConfig
-			= std::make_shared<std::unique_ptr<MTP::Config>>(std::move(config));
-		crl::on_main(this, [=] {
-			_local->recoverEndpointRefreshConfigAsync(
-				std::move(*pendingConfig), _mtpFields.keys, restoredSession,
-				crl::guard(this, [=](std::unique_ptr<MTP::Config> recovered) {
-					*pendingConfig = std::move(recovered);
-					Storage::details::PrepareWritesAsync(
-						[=] {
-							_preparingStartup = true;
-							const auto prepared = startWithRecoveredConfig(
-								std::move(*pendingConfig));
-							_preparingStartup = false;
-							return prepared;
-						},
-						crl::guard(this, [=](bool persisted) {
-							finishRestoredStartup(persisted);
-						}));
-				}));
-		});
-		return;
-	}
-	static_cast<void>(startWithRecoveredConfig(std::move(config)));
-}
-
-bool Account::startWithRecoveredConfig(std::unique_ptr<MTP::Config> config) {
 	_appConfig = std::make_unique<AppConfig>(this);
-	const auto resumingLogout = _local->endpointRefreshLogoutIntentVerified();
-	const auto storedUserId = _sessionUserId;
-	if (resumingLogout || _startRecoveryOnly) {
-		_loggingOut = resumingLogout;
-		_sessionUserId = 0;
-		_sessionUserSerialized = {};
-		_sessionUserStreamVersion = 0;
-		_storedSessionSettings.reset();
-		_mtpFields.keys.clear();
-		discardStaleAuthorizationState();
-	}
 
 	// An account pinned to a user-entered endpoint and RSA key must
 	// never fall through to Telegram's built-in table and keys, which
@@ -303,15 +240,14 @@ bool Account::startWithRecoveredConfig(std::unique_ptr<MTP::Config> config) {
 		: MTP::CustomServer();
 	const auto forgetBinding = Storage::ServerCacheBinding{
 		.fingerprintKnown = bool(originalPin.key),
-		.fingerprint
-		= originalPin.key ? originalPin.key->fingerprint() : uint64(0),
-		.userIdKnown = bool(storedUserId),
-		.userId = storedUserId.bare,
+		.fingerprint = originalPin.key
+			? originalPin.key->fingerprint()
+			: uint64(0),
+		.userIdKnown = bool(_sessionUserId),
+		.userId = _sessionUserId.bare,
 	};
 	auto failure = [&] {
-		if (resumingLogout) {
-			return PinFailure::None;
-		} else if (_local->serverForgetBlocked()) {
+		if (_local->serverForgetBlocked()) {
 			return PinFailure::ForgetTransitionFailed;
 		} else if (_local->mtpAuthorizationWriteFailed()) {
 			return PinFailure::AuthorizationWriteFailed;
@@ -320,8 +256,8 @@ bool Account::startWithRecoveredConfig(std::unique_ptr<MTP::Config> config) {
 		} else if (_local->customServerPinUnknown()) {
 			return PinFailure::MarkerUnreadable;
 		} else if (details::ShouldBlockRestoredSessionWithoutServerPin(
-					   bool(_sessionUserId),
-					   config && config->hasCustomServer())) {
+				bool(_sessionUserId),
+				config && config->hasCustomServer())) {
 			return PinFailure::PinMissing;
 		} else if (!_local->hasStoredCustomServer()) {
 			return PinFailure::None;
@@ -430,70 +366,17 @@ bool Account::startWithRecoveredConfig(std::unique_ptr<MTP::Config> config) {
 			_mtpKeysToDestroyPin = customServer;
 		}
 	}
-	const auto startPaused
-		= _startRecoveryOnly
-		  || (!_sessionUserId
-			  && (!customServer.key
-				  || !config->dcOptions().isAuthorized(customServer.dcId)));
+	const auto startPaused = !_sessionUserId
+		&& (!customServer.key
+			|| !config->dcOptions().isAuthorized(customServer.dcId));
 	if (!startMtp(std::move(config), startPaused)) {
-		return false;
-	}
-	if (_startupSessionPrepared) {
-		return true;
+		return;
 	}
 	if (!startPaused) {
 		_appConfig->start();
 	}
 	watchProxyChanges();
 	watchSessionChanges();
-	return true;
-}
-
-void Account::finishPendingStartup() {
-	_startPending = false;
-	_startFinished.fire({});
-}
-
-void Account::finishRestoredStartup(bool persisted) {
-	if (!persisted && _startupAuthorizationAttempted) {
-		_startupSessionPrepared = false;
-		_startupAuthorizationAttempted = false;
-		if (_mtp) {
-			_mtp->dcOptions().constructBlocked();
-		}
-		_session.reset();
-		_local->writeMtpAuthorizationFailureAsync(
-			crl::guard(this, [=](bool marked) {
-				if (!marked) {
-					LOG(("MTP Error: could not persist all authorization "
-						 "failure state; keeping the account blocked."));
-				}
-				finishPendingStartup();
-			}));
-		return;
-	}
-	if (!persisted && _mtp && !_local->endpointRefreshLogoutIntentVerified()) {
-		_mtp->dcOptions().constructBlocked();
-	}
-	if (persisted && _startupSessionPrepared) {
-		_startupSessionPrepared = false;
-		_startupAuthorizationAttempted = false;
-		publishSession();
-		_sessionUserSerialized = {};
-		_sessionUserStreamVersion = 0;
-		_restoredSession = true;
-		_mtp->resume();
-		_storedSessionSettings = nullptr;
-		_session->changes().sendNotifications();
-		_mtpValue = _mtp.get();
-		_appConfig->start();
-		watchProxyChanges();
-		watchSessionChanges();
-	}
-	if (_local->endpointRefreshLogoutIntentVerified() && _mtp) {
-		loggedOut();
-	}
-	finishPendingStartup();
 }
 
 void Account::prepareToStartAdded(
@@ -613,10 +496,6 @@ bool Account::createSession(
 		QByteArray serialized,
 		int streamVersion,
 		std::unique_ptr<SessionSettings> settings) {
-	if (_loggingOut || _local->endpointRefreshLogoutBlocked()
-		|| (_mtp && _mtp->dcOptions().blocked())) {
-		return false;
-	}
 	Expects(_mtp != nullptr);
 	Expects(_session == nullptr);
 	Expects(_sessionValue.current() == nullptr);
@@ -666,13 +545,19 @@ bool Account::createSession(
 			_mtp->dcOptions().constructBlocked();
 		}
 	};
-	if (_preparingStartup) {
-		_startupAuthorizationAttempted = true;
-		_startupSessionPrepared = _local->writeMtpAuthorization();
-		return _startupSessionPrepared;
-	}
 	const auto committed = details::CommitPostAuthMtpAuthorization(
-		_local.get(), [=] { publishSession(); },
+		_local.get(),
+		[=] {
+			if (!_mtpKeysToDestroy.empty()) {
+				destroyMtpKeys(base::take(_mtpKeysToDestroy));
+			}
+			// Session construction can fail the durable authorization commit.
+			// Register it only after that commit succeeds, while it is still
+			// unpublished and before observers see the session.
+			Core::App().downloadManager().trackSession(_session.get());
+			_sessionValue = _session.get();
+			_sessionUserId = 0;
+		},
 		[=] {
 			if (!local().writeMtpAuthorizationFailure()) {
 				LOG(("MTP Error: could not persist the authorization failure "
@@ -694,19 +579,9 @@ bool Account::createSession(
 		return false;
 	}
 
-	return true;
-}
-
-void Account::publishSession() {
 	Ensures(_session != nullptr);
-	if (!_mtpKeysToDestroy.empty()) {
-		destroyMtpKeys(base::take(_mtpKeysToDestroy));
-	}
-	Core::App().downloadManager().trackSession(_session.get());
-	_sessionValue = _session.get();
-	_session->startStorageInitialization();
-	_sessionUserId = 0;
 	local().writeSelf();
+	return true;
 }
 
 void Account::destroySession(DestroyReason reason) {
@@ -980,8 +855,6 @@ bool Account::startMtp(
 	fields.deviceModel = Platform::DeviceModelPretty();
 	fields.systemVersion = Platform::SystemVersionPretty();
 	fields.startPaused = pausedUntilSessionCommit;
-	fields.startEnrollmentHeld
-		= _loggingOut || _local->endpointRefreshLogoutBlocked();
 	_mtp = std::make_unique<MTP::Instance>(
 		MTP::Instance::Mode::Normal,
 		std::move(fields));
@@ -993,9 +866,7 @@ bool Account::startMtp(
 	}) | rpl::on_next([=] {
 		*writingKeys = true;
 		Ui::PostponeCall(_mtp.get(), [=] {
-			if (!_loggingOut) {
-				local().writeMtpData();
-			}
+			local().writeMtpData();
 			*writingKeys = false;
 		});
 	}, _mtp->lifetime());
@@ -1009,11 +880,7 @@ bool Account::startMtp(
 	}) | rpl::on_next([=] {
 		*writingConfig = true;
 		Ui::PostponeCall(_mtp.get(), [=] {
-			if (_serverEndpointPersistencePending) {
-				_serverEndpointConfigWriteDeferred = true;
-			} else {
-				local().writeMtpConfig();
-			}
+			local().writeMtpConfig();
 			*writingConfig = false;
 		});
 	}, _lifetime);
@@ -1033,8 +900,7 @@ bool Account::startMtp(
 			_mtp->dcstate(_mtp->mainDcId()) == MTP::ConnectedState);
 	_mtp->setStateChangedHandler([=](MTP::ShiftedDcId dc, int32 state) {
 		if (dc == _mtp->mainDcId()) {
-			if (state == MTP::ConnectedState
-				&& _mtp->isServerEnrollmentNetworkAllowed()) {
+			if (state == MTP::ConnectedState) {
 				_serverEndpointRefreshFailures = 0;
 				_serverEndpointRefreshIdentityFailure = false;
 				const auto resumePausedRequests
@@ -1098,9 +964,6 @@ bool Account::startMtp(
 				"keeping the account blocked."));
 			return false;
 		}
-		if (_startupSessionPrepared) {
-			return true;
-		}
 		_sessionUserSerialized = {};
 		_sessionUserStreamVersion = 0;
 		_restoredSession = true;
@@ -1139,9 +1002,6 @@ bool Account::checkForNewSession(const MTP::Response &message) {
 
 void Account::logOut() {
 	if (_loggingOut) {
-		if (_logoutCleanupFailed) {
-			loggedOut();
-		}
 		return;
 	}
 	_loggingOut = true;
@@ -1164,54 +1024,19 @@ void Account::forcedLogOut() {
 }
 
 void Account::loggedOut() {
-	if (_logoutCleanupPending) {
-		return;
-	}
-	if (const auto box = _logoutFailureBox.get()) {
-		_logoutFailureBox.reset();
-		box->closeBox();
-	}
-	const auto hadSession = sessionExists();
-	_loggingOut = true;
-	_logoutCleanupPending = true;
-	_logoutCleanupFailed = false;
+	_loggingOut = false;
 	cancelServerEndpointRefresh();
 	_restoredSession = false;
-	if (_mtp) {
-		_mtp->holdForServerEnrollment();
+	if (!local().clearTelegramStickerBotToken()) {
+		LOG(("Failed to remove saved Telegram sticker bot token at logout."));
 	}
-	_logoutCleanupChanges.fire({});
-	discardStaleAuthorizationState();
-	local().forgetTelegramStickerBotTokenForLogout();
-	local().prepareEndpointRefreshLogout(
-		crl::guard(this,
-				   [=](bool prepared) {
-					   if (!prepared) {
-						   finishLogoutCleanup(false);
-						   return;
-					   }
-					   local().clearTelegramStickerBotTokenAsync(
-						   crl::guard(this, [=](bool cleared) {
-							   if (cleared) {
-								   continueLogoutCleanup();
-							   } else {
-								   finishLogoutCleanup(false);
-							   }
-						   }));
-				   }),
-		crl::guard(this, [=] { destroySession(DestroyReason::LoggedOut); }));
-	if (hadSession) {
-		if (const auto mixer = Media::Player::mixer()) {
-			mixer->stopAndClear();
-		}
-	}
-}
-
-void Account::continueLogoutCleanup() {
+	Media::Player::mixer()->stopAndClear();
+	destroySession(DestroyReason::LoggedOut);
 	if (_mtp) {
 		// Logging out returns the account to enrollment. Stop all queued
 		// work and drop the independent key-destroyer before clearing
 		// authorization, so a proxy callback cannot restart the old pin.
+		_mtp->stopForServerEnrollment();
 		discardStaleAuthorizationState();
 		const auto clearedAuthorization = _mtp->dcOptions().clearAuthorized();
 		const auto unbound = !_mtp->dcOptions().blocked()
@@ -1227,94 +1052,8 @@ void Account::continueLogoutCleanup() {
 		discardStaleAuthorizationState();
 		_mtpFields.keys.clear();
 	}
-	local().reset(crl::guard(this, [=](bool cleaned) {
-		if (!cleaned) {
-			finishLogoutCleanup(false);
-			return;
-		}
-		const auto finish = [=] {
-			local().finishEndpointRefreshLogout(crl::guard(
-				this, [=](bool removed) { finishLogoutCleanup(removed); }));
-		};
-		if (!_mtp || _mtp->dcOptions().blocked()) {
-			finish();
-		} else {
-			Storage::details::PrepareWritesAsync(
-				[=] { return local().writeMtpConfig(true); },
-				crl::guard(this, [=](bool persisted) {
-					if (persisted) {
-						finish();
-					} else {
-						finishLogoutCleanup(false);
-					}
-				}));
-		}
-	}));
+	local().reset();
 	cSetOtherOnline(0);
-}
-
-void Account::finishLogoutCleanup(bool success) {
-	_logoutCleanupPending = false;
-	if (!success) {
-		_logoutCleanupFailed = true;
-		LOG(("MTP Error: logout storage cleanup failed; keeping enrollment "
-			 "blocked."));
-		showLogoutCleanupFailure();
-		if (!sessionExists() && _domain->starting()) {
-			_domain->startFinished() | rpl::take(1)
-				| rpl::on_next([=] { showLogoutCleanupFailure(); }, _lifetime);
-		}
-		_logoutCleanupChanges.fire({});
-		return;
-	}
-	_loggingOut = false;
-	if (_mtp) {
-		_mtp->releaseServerEnrollmentHold();
-	}
-	const auto domain = _domain;
-	_logoutCleanupChanges.fire({});
-	crl::on_main(domain, [=] {
-		if (domain->started() || domain->starting()) {
-			domain->removeRedundantAccounts();
-		}
-	});
-}
-
-void Account::showLogoutCleanupFailure() {
-	if (!_logoutCleanupFailed || _logoutFailureBox) {
-		return;
-	}
-	if (!sessionExists()) {
-		if (!_domain->started() || &_domain->active() == this
-			|| !ranges::any_of(_domain->accounts(), [=](const auto &entry) {
-				   return entry.account.get() == this;
-			   })) {
-			return;
-		}
-	}
-	const auto window = Core::App().windowFor(not_null{this});
-	if (!window) {
-		return;
-	}
-	const auto retry = crl::guard(this, [=] {
-		_logoutFailureBox.reset();
-		if (_logoutCleanupFailed) {
-			logOut();
-		}
-	});
-	auto message = Box([=](not_null<Ui::GenericBox *> box) {
-		box->addRow(object_ptr<Ui::FlatLabel>(
-						box.get(),
-						tr::lng_teagram_logout_storage_failed(tr::now),
-						st::boxLabel),
-					st::boxPadding);
-		box->addButton(tr::lng_intro_server_try_again(), [=] {
-			box->closeBox();
-			retry();
-		});
-		box->addButton(tr::lng_cancel(), [=] { box->closeBox(); });
-	});
-	_logoutFailureBox = window->show(std::move(message));
 }
 
 void Account::discardStaleAuthorizationState() {
@@ -1382,9 +1121,7 @@ void Account::destroyMtpKeys(MTP::AuthKeysList &&keys) {
 		crl::on_main(this, [=] {
 			_mtpForKeysDestroy = nullptr;
 			_mtpForKeysDestroyPin.reset();
-			if (!_loggingOut) {
-				local().writeMtpData();
-			}
+			local().writeMtpData();
 		});
 	}, _mtpForKeysDestroy->lifetime());
 }
@@ -1613,6 +1350,7 @@ void Account::serverEndpointRefreshDiscovered(
 		return;
 	}
 	fields.keys.push_back(key);
+	_endpointRefreshProofKey = key;
 	fields.deviceModel = Platform::DeviceModelPretty();
 	fields.systemVersion = Platform::SystemVersionPretty();
 	fields.startPaused = true;
@@ -1650,127 +1388,80 @@ void Account::serverEndpointVerificationFinished(bool authenticated) {
 	if (_serverEndpointRefreshDiscovery) {
 		_serverEndpointRefreshDiscovery->cancel();
 	}
-	if (!_endpointRefresh.hasCandidate() || !_mtp
-		|| !_mtpForEndpointVerification) {
+	if (!_endpointRefresh.hasCandidate() || !_mtp) {
 		_mtpForEndpointVerification = nullptr;
+		_endpointRefreshProofKey = nullptr;
 		return;
 	}
 	auto verifier = std::move(_mtpForEndpointVerification);
 	Expects(verifier != nullptr);
+	const auto proofKey = base::take(_endpointRefreshProofKey);
 	const auto original = _endpointRefresh.original();
 	const auto candidate = _endpointRefresh.candidate();
 	const auto current = _mtp->dcOptions().customServer();
-	const auto verifiedKey = [&] {
-		for (const auto &key : verifier->getKeysForWrite()) {
-			if (key && key->dcId() == original.dcId
-				&& key->type() == MTP::AuthKey::Type::ReadFromFile) {
-				return key;
-			}
-		}
-		return MTP::AuthKeyPtr();
-	}();
-	if (authenticated && HasStoredEndpointAuthKey(*_mtp, verifiedKey)
+	const auto keys = _mtp->getKeysForWrite();
+	const auto proofKeyUnchanged
+		= proofKey && ranges::any_of(keys, [&](const auto &key) {
+			  return key && key->dcId() == proofKey->dcId()
+					 && key->type() == MTP::AuthKey::Type::ReadFromFile
+					 && key->equals(proofKey);
+		  });
+	auto committed = false;
+	if (authenticated && proofKeyUnchanged
 		&& MTP::SameCustomServerPin(original, current)) {
-		auto originalConfig = MTP::Config(_mtp->config());
-		auto candidateConfig = MTP::Config(originalConfig);
-		if (candidateConfig.dcOptions().refreshCustomServerEndpoint(
-				original, candidate)) {
-			_serverEndpointPersistencePending = true;
-			const auto generation = ++_serverEndpointPersistenceGeneration;
-			local().writeEndpointRefreshRecord(
-				originalConfig, candidateConfig, verifiedKey, false,
-				crl::guard(this, [=](bool staged) {
-					serverEndpointRecordStaged(generation, staged, verifiedKey);
-				}));
-			return;
-		}
-		LOG(("MTP Error: could not stage the verified endpoint for dc %1.")
-				.arg(original.dcId));
+		const auto committedRefresh = _endpointRefresh.commit(
+			authenticated,
+			[&] {
+				const auto refreshed
+					= _mtp->dcOptions().refreshCustomServerEndpoint(original,
+																	candidate);
+				if (!refreshed) {
+					LOG(("MTP Error: could not update the active endpoint for "
+						 "dc %1.")
+							.arg(original.dcId));
+				}
+				return refreshed;
+			},
+			[&] {
+				const auto persisted = local().writeMtpConfig(true);
+				if (!persisted) {
+					LOG(("MTP Error: could not persist the refreshed endpoint "
+						 "for dc %1.")
+							.arg(original.dcId));
+				}
+				return persisted;
+			},
+			[&] {
+				if (_mtpKeysToDestroyPin
+					&& MTP::SameCustomServerPin(*_mtpKeysToDestroyPin,
+												original)) {
+					_mtpKeysToDestroyPin = candidate;
+				}
+				_mtp->resume();
+			},
+			[&] {
+				if (!_mtp->dcOptions().refreshCustomServerEndpoint(candidate,
+																   original)) {
+					LOG(("MTP Error: could not roll back the unpersisted "
+						 "endpoint for dc %1.")
+							.arg(original.dcId));
+				}
+			});
+		committed = committedRefresh;
 	} else if (!authenticated) {
 		LOG(("MTP Error: refreshed endpoint failed auth-key proof for dc %1.")
 				.arg(_endpointRefresh.original().dcId));
-	} else if (!HasStoredEndpointAuthKey(*_mtp, verifiedKey)) {
-		LOG(("MTP Error: endpoint verification key changed for dc %1.")
-				.arg(original.dcId));
 	} else {
-		LOG(("MTP Error: pin changed before endpoint verification committed "
+		LOG(("MTP Error: pin or auth key changed before endpoint verification "
+			 "committed "
 			 "for dc %1.")
 				.arg(original.dcId));
 	}
 	_endpointRefresh.reset();
-	++_serverEndpointRefreshFailures;
-	scheduleServerEndpointRefreshRetry();
-}
-
-void Account::serverEndpointRecordStaged(uint64 generation, bool staged,
-										 const MTP::AuthKeyPtr &verifiedKey) {
-	if (!_serverEndpointPersistencePending
-		|| generation != _serverEndpointPersistenceGeneration) {
-		return;
-	}
-	if (!staged || !_mtp || !_endpointRefresh.hasCandidate()
-		|| !canRefreshServerEndpoint()
-		|| _mtp->isServerEnrollmentNetworkAllowed()
-		|| !HasStoredEndpointAuthKey(*_mtp, verifiedKey)
-		|| !MTP::SameCustomServerPin(_endpointRefresh.original(),
-									 _mtp->dcOptions().customServer())) {
-		serverEndpointPersistenceFinished(generation, false, verifiedKey);
-		return;
-	}
-	auto originalConfig = MTP::Config(_mtp->config());
-	auto candidateConfig = MTP::Config(originalConfig);
-	if (!candidateConfig.dcOptions().refreshCustomServerEndpoint(
-			_endpointRefresh.original(), _endpointRefresh.candidate())) {
-		serverEndpointPersistenceFinished(generation, false, verifiedKey);
-		return;
-	}
-	local().writeEndpointRefreshRecord(
-		originalConfig, candidateConfig, verifiedKey, true,
-		crl::guard(this, [=](bool persisted) {
-			serverEndpointPersistenceFinished(generation, persisted,
-											  verifiedKey);
-		}));
-}
-
-void Account::serverEndpointPersistenceFinished(
-	uint64 generation, bool persisted, const MTP::AuthKeyPtr &verifiedKey) {
-	if (!_serverEndpointPersistencePending
-		|| generation != _serverEndpointPersistenceGeneration) {
-		return;
-	}
-	_serverEndpointPersistencePending = false;
-	const auto writeDeferred = base::take(_serverEndpointConfigWriteDeferred);
-	if (!_mtp || !_endpointRefresh.hasCandidate()) {
-		return;
-	}
-	const auto original = _endpointRefresh.original();
-	const auto candidate = _endpointRefresh.candidate();
-	const auto current = _mtp->dcOptions().customServer();
-	if (persisted && canRefreshServerEndpoint()
-		&& !_mtp->isServerEnrollmentNetworkAllowed()
-		&& HasStoredEndpointAuthKey(*_mtp, verifiedKey)
-		&& MTP::SameCustomServerPin(original, current)
-		&& _mtp->dcOptions().refreshCustomServerEndpoint(original, candidate)) {
-		_endpointRefresh.reset();
+	if (committed) {
 		_serverEndpointRefreshFailures = 0;
 		_serverEndpointRefreshRetryTimer->stop();
-		if (_mtpKeysToDestroyPin
-			&& MTP::SameCustomServerPin(*_mtpKeysToDestroyPin, original)) {
-			_mtpKeysToDestroyPin = candidate;
-		}
-		_mtp->resume();
 		return;
-	}
-	if (!persisted) {
-		LOG(("MTP Error: could not persist the refreshed endpoint for dc %1.")
-				.arg(original.dcId));
-	} else {
-		LOG(("MTP Error: could not apply the persisted endpoint for dc %1.")
-				.arg(original.dcId));
-	}
-	_endpointRefresh.reset();
-	if (persisted || writeDeferred) {
-		local().writeMtpConfig();
 	}
 	++_serverEndpointRefreshFailures;
 	scheduleServerEndpointRefreshRetry();
@@ -1793,14 +1484,7 @@ void Account::cancelServerEndpointRefresh() {
 	_serverEndpointRefreshRetryTimer->stop();
 	_serverEndpointVerificationTimer->stop();
 	_mtpForEndpointVerification = nullptr;
-	if (_serverEndpointPersistencePending) {
-		_serverEndpointPersistencePending = false;
-		++_serverEndpointPersistenceGeneration;
-		_serverEndpointConfigWriteDeferred = false;
-		if (_mtp) {
-			local().writeMtpConfig();
-		}
-	}
+	_endpointRefreshProofKey = nullptr;
 	_endpointRefresh.reset();
 }
 

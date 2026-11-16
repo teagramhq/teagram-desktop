@@ -122,8 +122,6 @@ public:
 	void restart();
 	void restart(ShiftedDcId shiftedDcId);
 	void stopForServerEnrollment();
-	void holdForServerEnrollment();
-	void releaseServerEnrollmentHold();
 	void pauseForServerEndpointRefresh();
 	void pauseForServerEnrollment(bool preserveAcceptedRequests);
 	void requestServerEndpointRefresh(ShiftedDcId shiftedDcId);
@@ -235,9 +233,6 @@ private:
 
 	[[nodiscard]] bool networkAllowed() const {
 		return _serverEnrollmentGate.networkAllowed();
-	}
-	[[nodiscard]] bool serverEnrollmentHeld() const {
-		return _serverEnrollmentGate.held();
 	}
 
 	void importDone(
@@ -383,9 +378,6 @@ Instance::Private::Private(
 , _serverEnrollmentGate(fields.startPaused)
 , _proxySettings(Core::App().settings().proxy()) {
 	Expects(_config != nullptr);
-	if (fields.startEnrollmentHeld) {
-		_serverEnrollmentGate.hold();
-	}
 
 	const auto idealThreadPoolSize = QThread::idealThreadCount();
 	_fileSessionThreads.resize(2 * std::max(idealThreadPoolSize / 2, 1));
@@ -475,15 +467,6 @@ void Instance::Private::resume() {
 
 void Instance::Private::stopForServerEnrollment() {
 	pauseForServerEnrollment(false);
-}
-
-void Instance::Private::holdForServerEnrollment() {
-	_serverEnrollmentGate.hold();
-	stopForServerEnrollment();
-}
-
-void Instance::Private::releaseServerEnrollmentHold() {
-	_serverEnrollmentGate.releaseHold();
 }
 
 void Instance::Private::pauseForServerEndpointRefresh() {
@@ -2380,10 +2363,6 @@ bool Instance::isServerEnrollmentNetworkAllowed() const {
 	return _private->networkAllowed();
 }
 
-bool Instance::isServerEnrollmentHeld() const {
-	return _private->serverEnrollmentHeld();
-}
-
 uint64 Instance::serverEnrollmentStopToken() const {
 	return _private->serverEnrollmentStopToken();
 }
@@ -2394,14 +2373,6 @@ bool Instance::isServerEnrollmentStopTokenCurrent(uint64 token) const {
 
 void Instance::stopForServerEnrollment() {
 	_private->stopForServerEnrollment();
-}
-
-void Instance::holdForServerEnrollment() {
-	_private->holdForServerEnrollment();
-}
-
-void Instance::releaseServerEnrollmentHold() {
-	_private->releaseServerEnrollmentHold();
 }
 
 void Instance::pauseForServerEndpointRefresh() {

@@ -109,13 +109,13 @@ std::unique_ptr<MTP::Config> Account::prepareToStart(
 void Account::prepareToStartAdded(std::shared_ptr<MTP::AuthKey>) {
 }
 
-void Account::start(std::unique_ptr<MTP::Config> config, bool) {
+void Account::start(std::unique_ptr<MTP::Config> config) {
 	_testStartedUnenrolled = config
 		&& config->dcOptions().unenrolled();
 }
 
 uint64 Account::willHaveSessionUniqueId(MTP::Config *) const {
-	return (_testIndex == 0 || _testIndex == 2) ? uint64(42) : uint64(0);
+	return (_testIndex == 0) ? uint64(42) : uint64(0);
 }
 
 bool Account::startedUnenrolledForTest() const {
@@ -133,11 +133,7 @@ const std::vector<Domain::AccountWithIndex> &Domain::accounts() const {
 	return _accounts;
 }
 
-void Domain::accountAddedInStorage(AccountWithIndex accountWithIndex,
-								   bool recoveryOnly) {
-	if (recoveryOnly) {
-		_startupRecoveryOnly.emplace(accountWithIndex.index);
-	}
+void Domain::accountAddedInStorage(AccountWithIndex accountWithIndex) {
 	_accounts.push_back(std::move(accountWithIndex));
 }
 

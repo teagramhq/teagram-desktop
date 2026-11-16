@@ -19,7 +19,6 @@ namespace details {
 [[nodiscard]] bool KeyAlreadyUsed(QString &name);
 [[nodiscard]] FileKey GenerateKey(const QString &basePath);
 void ClearKey(const FileKey &key, const QString &basePath);
-[[nodiscard]] bool PreparingWrites();
 
 [[nodiscard]] bool CheckStreamStatus(QDataStream &stream);
 [[nodiscard]] MTP::AuthKeyPtr CreateLocalKey(
@@ -66,7 +65,6 @@ public:
 		bool sync = false);
 	~FileWriteDescriptor();
 
-	void finishAsync(Fn<void(bool)> done);
 	void writeData(const QByteArray &data);
 	void writeEncrypted(
 		EncryptedDescriptor &data,
@@ -75,7 +73,6 @@ public:
 
 private:
 	void init(const QString &name);
-	[[nodiscard]] bool finish(Fn<void(bool)> done);
 
 	const QString _basePath;
 	QBuffer _buffer;
@@ -88,14 +85,6 @@ private:
 	bool _success = true;
 
 };
-
-#if defined(TDESKTOP_LIFECYCLE_REGRESSION) || defined(TDESKTOP_UNIT_TESTS)
-void SetEndpointConfigWriteHookForRegressionTest(Fn<bool()> hook);
-void SetPreparedWriteHooksForTest(std::vector<Fn<bool()>> hooks);
-void SetEndpointRecoveryReadHookForTest(Fn<void()> hook);
-void SetEndpointRecoveryReadHooksForTest(std::vector<Fn<void()>> hooks);
-void SetEndpointRefreshRemovalHookForTest(Fn<bool()> hook);
-#endif
 
 bool ReadFile(
 	FileReadDescriptor &result,
@@ -120,8 +109,6 @@ bool ReadEncryptedFile(
 	const MTP::AuthKeyPtr &key);
 
 void Sync();
-void RunOnStorageWorker(Fn<void()> task);
-void PrepareWritesAsync(Fn<bool()> prepare, Fn<void(bool)> done);
 void Finish();
 
 } // namespace details

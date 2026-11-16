@@ -198,16 +198,19 @@ Domain::StartModernResult Domain::startModern(
 		// A pending wipe deliberately has no session id. Keep it even if
 		// another unenrolled slot already contributed the zero sentinel.
 		const auto wasEmpty = selector.empty();
-		const auto selected
-			= selector.keep(sessionId, pendingServerReenrollment, entry.isLast);
-		const auto recoveryOnly = !selected;
-		if (selected && wasEmpty) {
-			active = entry.index;
+		if (selector.keep(
+				sessionId,
+				pendingServerReenrollment,
+				entry.isLast)) {
+			if (wasEmpty) {
+				active = entry.index;
+			}
+			account->start(std::move(config));
+			_owner->accountAddedInStorage({
+				.index = entry.index,
+				.account = std::move(account)
+			});
 		}
-		account->start(std::move(config), recoveryOnly);
-		_owner->accountAddedInStorage(
-			{.index = entry.index, .account = std::move(account)},
-			recoveryOnly);
 	}
 	if (selector.empty()) {
 		LOG(("App Error: no accounts read."));

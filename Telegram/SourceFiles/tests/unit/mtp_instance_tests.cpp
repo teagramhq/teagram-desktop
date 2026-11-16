@@ -244,36 +244,11 @@ TEST_CASE(PausingEnrollmentInvalidatesTheCurrentGeneration) {
 	CHECK(gate.pause());
 	CHECK(!gate.stopTokenIsCurrent(beforePause));
 	CHECK(!gate.networkAllowed());
-	CHECK(!gate.held());
 
 	const auto whilePaused = gate.stopToken();
 	CHECK(gate.resume().resumed);
 	CHECK(!gate.stopTokenIsCurrent(whilePaused));
 	CHECK(gate.networkAllowed());
-}
-
-TEST_CASE(LogoutHoldRefusesResumeUntilCleanupCompletes) {
-	auto gate = ServerEnrollmentGate();
-	CHECK(gate.start());
-	CHECK(!gate.held());
-	gate.hold();
-	CHECK(gate.held());
-	CHECK(gate.pause());
-	auto resumed = 0;
-	gate.resumeIf(true, [] {}, [&] { ++resumed; });
-	CHECK_EQ(resumed, 0);
-	CHECK(!gate.networkAllowed());
-	gate.releaseHold();
-	CHECK(!gate.held());
-	gate.resumeIf(true, [] {}, [&] { ++resumed; });
-	CHECK_EQ(resumed, 1);
-	CHECK(gate.networkAllowed());
-	auto starting = ServerEnrollmentGate(true, true);
-	starting.resumeIf(true, [&] { CHECK(starting.start()); }, [] {});
-	CHECK(!starting.networkAllowed());
-	starting.releaseHold();
-	starting.resumeIf(true, [&] { CHECK(starting.start()); }, [] {});
-	CHECK(starting.networkAllowed());
 }
 
 // An untrusted delegated background value must not reach the special-config

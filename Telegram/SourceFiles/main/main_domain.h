@@ -7,7 +7,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #pragma once
 
-#include "base/flat_set.h"
 #include "base/timer.h"
 #include "base/weak_ptr.h"
 
@@ -39,10 +38,6 @@ public:
 	~Domain();
 
 	[[nodiscard]] bool started() const;
-	[[nodiscard]] bool starting() const { return _starting; }
-	[[nodiscard]] rpl::producer<> startFinished() const {
-		return _startFinished.events();
-	}
 	[[nodiscard]] Storage::StartResult start(const QByteArray &passcode);
 	void resetWithForgottenPasscode();
 	void finish();
@@ -65,9 +60,6 @@ public:
 	// Expects(started());
 	[[nodiscard]] Account &active() const;
 	[[nodiscard]] rpl::producer<not_null<Account*>> activeChanges() const;
-	[[nodiscard]] rpl::producer<> activations() const {
-		return _activations.events();
-	}
 
 	[[nodiscard]] rpl::producer<Session*> activeSessionValue() const;
 	[[nodiscard]] rpl::producer<Session*> activeSessionChanges() const;
@@ -87,15 +79,13 @@ public:
 	void removeRedundantAccounts();
 
 	// Interface for Storage::Domain.
-	void accountAddedInStorage(AccountWithIndex accountWithIndex,
-							   bool recoveryOnly = false);
+	void accountAddedInStorage(AccountWithIndex accountWithIndex);
 	void activateFromStorage(int index);
 	[[nodiscard]] int activeForStorage() const;
 
 private:
 	void activateAfterStarting();
 	void closeAccountWindows(not_null<Main::Account*> account);
-	void waitForAccountsToStart();
 	bool removePasscodeIfEmpty();
 	void watchSession(not_null<Account*> account);
 	void scheduleWriteAccounts();
@@ -108,16 +98,11 @@ private:
 	const std::unique_ptr<Storage::Domain> _local;
 
 	std::vector<AccountWithIndex> _accounts;
-	base::flat_set<int> _startupRecoveryOnly;
 	rpl::event_stream<> _accountsChanges;
 	rpl::variable<Account*> _active = nullptr;
-	rpl::event_stream<> _activations;
 	int _accountToActivate = -1;
 	int _lastActiveIndex = -1;
 	bool _writeAccountsScheduled = false;
-	bool _starting = false;
-	bool _removeRedundantAfterStarting = false;
-	rpl::event_stream<> _startFinished;
 
 	rpl::event_stream<Session*> _activeSessions;
 

@@ -426,7 +426,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 "lng_intro_server_browser_only"      = "This server works only in the browser.";
 "lng_server_feature_unavailable"    = "This feature isn't available on this server.";
 "lng_intro_server_save_failed"       = "Could not save this server on this device. Try again.";
-"lng_teagram_logout_storage_failed"  = "Could not finish logging out because local data could not be saved. This account stays blocked. Check that storage is writable, then try again.";
 "lng_intro_server_key_mismatch"      = "This server no longer matches this account. Connection is blocked. Contact your server administrator.";
 "lng_intro_server_dc_mismatch"       = "This server's configuration does not match this account. Connection is blocked. Contact your server administrator.";
 "lng_intro_server_identity_title"     = "Server identity changed";

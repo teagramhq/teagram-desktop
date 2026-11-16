@@ -12,15 +12,10 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "mtproto/mtproto_server_enrollment.h"
 #include "mtproto/mtp_instance.h"
 #include "base/weak_ptr.h"
-#include "base/weak_qptr.h"
 
 #include <optional>
 
 class QTimer;
-
-namespace Ui {
-class GenericBox;
-} // namespace Ui
 
 namespace Storage {
 class Account;
@@ -75,11 +70,7 @@ public:
 		std::shared_ptr<MTP::AuthKey> localKey);
 	void prepareToStartAdded(
 		std::shared_ptr<MTP::AuthKey> localKey);
-	void start(std::unique_ptr<MTP::Config> config, bool recoveryOnly = false);
-	[[nodiscard]] bool startPending() const { return _startPending; }
-	[[nodiscard]] rpl::producer<> startFinished() const {
-		return _startFinished.events();
-	}
+	void start(std::unique_ptr<MTP::Config> config);
 
 	[[nodiscard]] uint64 willHaveSessionUniqueId(MTP::Config *config) const;
 	bool createSession(
@@ -94,15 +85,6 @@ public:
 	void logOut();
 	void forcedLogOut();
 	[[nodiscard]] bool loggingOut() const;
-	[[nodiscard]] bool logoutCleanupPending() const {
-		return _logoutCleanupPending;
-	}
-	[[nodiscard]] bool logoutCleanupFailed() const {
-		return _logoutCleanupFailed;
-	}
-	[[nodiscard]] rpl::producer<> logoutCleanupChanges() const {
-		return _logoutCleanupChanges.events();
-	}
 
 	[[nodiscard]] AppConfig &appConfig() const {
 		Expects(_appConfig != nullptr);
@@ -201,10 +183,6 @@ private:
 	using Owned = std::unique_ptr<Type>;
 #endif
 
-	bool startWithRecoveredConfig(std::unique_ptr<MTP::Config> config);
-	void finishRestoredStartup(bool persisted);
-	void finishPendingStartup();
-	void publishSession();
 	bool startMtp(
 		std::unique_ptr<MTP::Config> config,
 		bool startPaused = false);
@@ -229,17 +207,10 @@ private:
 	void requestServerEndpointRefresh(MTP::ShiftedDcId shiftedDcId);
 	void serverEndpointRefreshDiscovered(MTP::ServerDiscoveryResult result);
 	void serverEndpointVerificationFinished(bool authenticated);
-	void serverEndpointRecordStaged(uint64 generation, bool staged,
-									const MTP::AuthKeyPtr &verifiedKey);
-	void serverEndpointPersistenceFinished(uint64 generation, bool persisted,
-										   const MTP::AuthKeyPtr &verifiedKey);
 	void scheduleServerEndpointRefreshRetry();
 	void cancelServerEndpointRefresh();
 
 	void loggedOut();
-	void continueLogoutCleanup();
-	void finishLogoutCleanup(bool success);
-	void showLogoutCleanupFailure();
 	void destroySession(DestroyReason reason);
 
 	const not_null<Domain*> _domain;
@@ -249,6 +220,7 @@ private:
 	rpl::variable<MTP::Instance*> _mtpValue;
 	std::unique_ptr<MTP::Instance> _mtpForKeysDestroy;
 	std::unique_ptr<MTP::Instance> _mtpForEndpointVerification;
+	MTP::AuthKeyPtr _endpointRefreshProofKey;
 	std::unique_ptr<Intro::details::ServerEndpointRefreshDiscovery>
 		_serverEndpointRefreshDiscovery;
 	std::unique_ptr<QTimer> _serverEndpointRefreshRetryTimer;
@@ -256,9 +228,6 @@ private:
 	rpl::event_stream<MTPUpdates> _mtpUpdates;
 	rpl::event_stream<> _mtpNewSessionCreated;
 	rpl::event_stream<> _serverCacheBindingMismatch;
-	rpl::event_stream<> _startFinished;
-	rpl::event_stream<> _logoutCleanupChanges;
-	base::weak_qptr<Ui::GenericBox> _logoutFailureBox;
 
 	Owned<AppConfig> _appConfig;
 
@@ -277,19 +246,9 @@ private:
 	std::optional<MTP::CustomServer> _mtpForKeysDestroyPin;
 	MTP::ServerEndpointRefreshTransaction _endpointRefresh;
 	bool _loggingOut = false;
-	bool _logoutCleanupPending = false;
-	bool _logoutCleanupFailed = false;
-	bool _startPending = false;
-	bool _startRecoveryOnly = false;
-	bool _preparingStartup = false;
-	bool _startupAuthorizationAttempted = false;
-	bool _startupSessionPrepared = false;
 	bool _restoredSession = false;
 	bool _serverCacheBindingMismatchPending = false;
 	bool _serverEndpointRefreshIdentityFailure = false;
-	bool _serverEndpointPersistencePending = false;
-	bool _serverEndpointConfigWriteDeferred = false;
-	uint64 _serverEndpointPersistenceGeneration = 0;
 	int _serverEndpointRefreshFailures = 0;
 	MTP::ShiftedDcId _serverEndpointRefreshDcId = 0;
 

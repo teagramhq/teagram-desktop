@@ -536,15 +536,6 @@ base::flat_set<QString> Account::collectGoodNames() const {
 		"mtp_authorization_write_faileds",
 		"mtp_authorization_write_failed0",
 		"mtp_authorization_write_failed1",
-		"mtp_endpoint_refreshs",
-		"mtp_endpoint_refresh0",
-		"mtp_endpoint_refresh1",
-		"mtp_endpoint_refresh_stageds",
-		"mtp_endpoint_refresh_staged0",
-		"mtp_endpoint_refresh_staged1",
-		"mtp_endpoint_refresh_logouts",
-		"mtp_endpoint_refresh_logout0",
-		"mtp_endpoint_refresh_logout1",
 		"server_cache_bindings",
 		"server_cache_binding0",
 		"server_cache_binding1",
@@ -859,8 +850,7 @@ Account::ReadMapResult Account::readMapWith(
 	return ReadMapResult::Success;
 }
 
-void Account::reset(Fn<void(bool)> done) {
-	Expects(done != nullptr);
+void Account::reset() {
 	_writeSearchSuggestionsTimer.cancel();
 
 	auto names = collectGoodNames();
@@ -927,34 +917,21 @@ void Account::reset(Fn<void(bool)> done) {
 	wvclear(_webviewStorageIdOther, wvother);
 
 	_mapChanged = true;
-	const auto remaining = std::make_shared<int>(2);
-	const auto succeeded = std::make_shared<bool>(true);
-	const auto complete
-		= [remaining, succeeded, done = std::move(done)](bool ok) {
-			  *succeeded = *succeeded && ok;
-			  if (--*remaining == 0) {
-				  done(*succeeded);
-			  }
-		  };
-	const auto alive = std::weak_ptr<char>(_endpointRecoveryLifetime);
-	details::PrepareWritesAsync(
-		[=] { return writeMap(true) && writeMtpData(true); },
-		[=](bool ok) {
-			if (alive.expired()) {
-				return;
-			}
-			if (!ok) {
-				_mapChanged = true;
-			}
-			complete(ok);
-		});
+	writeMap();
+	writeMtpData();
 
-	crl::async([base = _basePath, temp = _tempPath, names = std::move(names),
-				wvbots, wvother, complete] {
+	crl::async([
+		base = _basePath,
+		temp = _tempPath,
+		names = std::move(names),
+		wvbots,
+		wvother
+	] {
 		for (const auto &name : names) {
-			if (!name.endsWith(u"map0"_q) && !name.endsWith(u"map1"_q)
-				&& !name.endsWith(u"maps"_q) && !name.endsWith(u"configs"_q)
-				&& !name.startsWith(u"mtp_endpoint_refresh"_q)) {
+			if (!name.endsWith(u"map0"_q)
+				&& !name.endsWith(u"map1"_q)
+				&& !name.endsWith(u"maps"_q)
+				&& !name.endsWith(u"configs"_q)) {
 				const auto path = base + name;
 				if (CheckAccountPath(Operation::Unlink, path,
 									 "Storage::Account::remove")) {
@@ -983,10 +960,9 @@ void Account::reset(Fn<void(bool)> done) {
 							 "Storage::Account::remove")) {
 			QDir(temp).removeRecursively();
 		}
-		QMetaObject::invokeMethod(
-			QCoreApplication::instance(), [complete] { complete(true); },
-			Qt::QueuedConnection);
 	});
+
+	Local::sync();
 }
 
 void Account::writeLocations() {
@@ -1369,12 +1345,6 @@ std::unique_ptr<MTP::Config> Account::readMtpConfig() {
 	}
 	return MTP::Config::FromSerialized(serialized);
 }
-
-#ifdef TDESKTOP_LIFECYCLE_REGRESSION
-std::unique_ptr<MTP::Config> Account::readMtpConfigForRegressionTest() {
-	return readMtpConfig();
-}
-#endif
 
 template <typename Callback>
 void EnumerateDrafts(

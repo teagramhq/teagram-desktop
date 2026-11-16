@@ -183,11 +183,12 @@ public:
 		bool wasStarted = false;
 	};
 
-	explicit ServerEnrollmentGate(bool startPaused = false, bool held = false)
-		: _startPaused(startPaused), _held(held) {}
+	explicit ServerEnrollmentGate(bool startPaused = false)
+	: _startPaused(startPaused) {
+	}
 
 	[[nodiscard]] bool start() {
-		if (_started || _startPaused || _held.load()) {
+		if (_started || _startPaused) {
 			return false;
 		}
 		_started = true;
@@ -195,9 +196,6 @@ public:
 	}
 
 	[[nodiscard]] ResumeResult resume() {
-		if (_held.load()) {
-			return {};
-		}
 		const auto wasPaused = _startPaused || _paused.load();
 		if (!wasPaused) {
 			return {};
@@ -249,17 +247,8 @@ public:
 	}
 
 	[[nodiscard]] bool networkAllowed() const {
-		return _started.load() && !_paused.load() && !_held.load();
+		return _started.load() && !_paused.load();
 	}
-	[[nodiscard]] bool held() const { return _held.load(); }
-
-	void hold() {
-		if (!_started.load()) {
-			_startPaused = true;
-		}
-		_held = true;
-	}
-	void releaseHold() { _held = false; }
 
 	[[nodiscard]] uint64 stopToken() const {
 		return _stopGeneration.load(std::memory_order_acquire);
@@ -271,7 +260,6 @@ public:
 
 private:
 	bool _startPaused = false;
-	std::atomic_bool _held = false;
 	std::atomic_bool _started = false;
 	std::atomic_bool _paused = false;
 	std::atomic<uint64> _stopGeneration = 0;
@@ -339,7 +327,6 @@ public:
 		// New, unauthenticated accounts are held without a session until
 		// the intro flow has committed a server enrollment pin.
 		bool startPaused = false;
-		bool startEnrollmentHeld = false;
 	};
 
 	enum class Mode {
@@ -412,7 +399,6 @@ public:
 	[[nodiscard]] rpl::producer<> resumed() const;
 	// Thread-safe.
 	[[nodiscard]] bool isServerEnrollmentNetworkAllowed() const;
-	[[nodiscard]] bool isServerEnrollmentHeld() const;
 	[[nodiscard]] uint64 serverEnrollmentStopToken() const;
 	[[nodiscard]] bool isServerEnrollmentStopTokenCurrent(
 		uint64 token) const;
@@ -422,8 +408,6 @@ public:
 	// A subsequent setCustomServer() followed by resume() lets the sessions
 	// try the newly confirmed endpoint again.
 	void stopForServerEnrollment();
-	void holdForServerEnrollment();
-	void releaseServerEnrollmentHold();
 	void pauseForServerEndpointRefresh();
 	void requestServerEndpointRefresh(ShiftedDcId shiftedDcId);
 	void restart(ShiftedDcId shiftedDcId);

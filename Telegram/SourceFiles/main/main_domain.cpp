@@ -59,53 +59,25 @@ Domain::Domain(const QString &dataName)
 
 Domain::~Domain() = default;
 
-bool Domain::started() const { return _active.current() != nullptr; }
+bool Domain::started() const {
+	return !_accounts.empty();
+}
 
 Storage::StartResult Domain::start(const QByteArray &passcode) {
-	Expects(!started() && !_starting && _accounts.empty());
+	Expects(!started());
 
-	_starting = true;
 	const auto result = _local->start(passcode);
 	if (result == Storage::StartResult::Success) {
-		waitForAccountsToStart();
+		activateAfterStarting();
+		crl::on_main(&Core::App(), [=] { suggestExportIfNeeded(); });
 	} else {
-		_starting = false;
 		Assert(!started());
 	}
 	return result;
 }
 
-void Domain::waitForAccountsToStart() {
-	const auto finish = [=] {
-		if (!_starting || ranges::any_of(_accounts, [](const auto &entry) {
-				return entry.account->startPending();
-			})) {
-			return;
-		}
-		_starting = false;
-		activateAfterStarting();
-		const auto activated = base::make_weak(_active.current());
-		crl::on_main(this, [=] {
-			if (started() && activated.get()) {
-				suggestExportIfNeeded();
-			}
-		});
-		_startFinished.fire({});
-	};
-	for (const auto &entry : _accounts) {
-		if (entry.account->startPending()) {
-			entry.account->startFinished() | rpl::take(1)
-				| rpl::on_next(finish, _lifetime);
-		}
-	}
-	finish();
-}
-
 void Domain::finish() {
-	_starting = false;
-	_removeRedundantAfterStarting = false;
 	_accountToActivate = -1;
-	_startupRecoveryOnly.clear();
 	_active.reset(nullptr);
 	base::take(_accounts);
 }
@@ -123,18 +95,13 @@ void Domain::suggestExportIfNeeded() {
 	}
 }
 
-void Domain::accountAddedInStorage(AccountWithIndex accountWithIndex,
-								   bool recoveryOnly) {
+void Domain::accountAddedInStorage(AccountWithIndex accountWithIndex) {
 	Expects(accountWithIndex.account != nullptr);
 
 	for (const auto &[index, _] : _accounts) {
 		if (index == accountWithIndex.index) {
 			Unexpected("Repeated account index.");
 		}
-	}
-	if (recoveryOnly) {
-		_startupRecoveryOnly.emplace(accountWithIndex.index);
-		_removeRedundantAfterStarting = true;
 	}
 	_accounts.push_back(std::move(accountWithIndex));
 }
@@ -149,9 +116,8 @@ int Domain::activeForStorage() const {
 
 void Domain::resetWithForgottenPasscode() {
 	if (_accounts.empty()) {
-		_starting = true;
 		_local->startFromScratch();
-		waitForAccountsToStart();
+		activateAfterStarting();
 	} else {
 		for (const auto &[index, account] : _accounts) {
 			account->logOut();
@@ -160,36 +126,18 @@ void Domain::resetWithForgottenPasscode() {
 }
 
 void Domain::activateAfterStarting() {
-	Expects(!_accounts.empty());
+	Expects(started());
 
-	auto toActivate = static_cast<Account *>(nullptr);
+	auto toActivate = _accounts.front().account.get();
 	for (const auto &[index, account] : _accounts) {
-		if (!toActivate && !_startupRecoveryOnly.contains(index)) {
+		if (index == _accountToActivate) {
 			toActivate = account.get();
 		}
 		watchSession(account.get());
 	}
-	Assert(toActivate != nullptr);
-	for (const auto &[index, account] : _accounts) {
-		if (index == _accountToActivate
-			&& (!_startupRecoveryOnly.contains(index) || account->loggingOut()
-				|| account->mtp().dcOptions().blocked())) {
-			toActivate = account.get();
-			break;
-		}
-	}
 
 	activate(toActivate);
-	if (_removeRedundantAfterStarting) {
-		const auto activated = base::make_weak(toActivate);
-		crl::on_main(this, [=] {
-			if (started() && activated.get()) {
-				removeRedundantAccounts();
-			}
-		});
-	} else {
-		removePasscodeIfEmpty();
-	}
+	removePasscodeIfEmpty();
 }
 
 const std::vector<Domain::AccountWithIndex> &Domain::accounts() const {
@@ -267,8 +215,9 @@ rpl::producer<Session*> Domain::activeSessionChanges() const {
 }
 
 rpl::producer<Session*> Domain::activeSessionValue() const {
-	const auto account = _active.current();
-	const auto current = account ? account->maybeSession() : nullptr;
+	const auto current = _accounts.empty()
+		? nullptr
+		: active().maybeSession();
 	return rpl::single(current) | rpl::then(_activeSessions.events());
 }
 
@@ -453,8 +402,7 @@ void Domain::closeAccountWindows(not_null<Main::Account*> account) {
 }
 
 bool Domain::removePasscodeIfEmpty() {
-	if (_accounts.size() != 1 || _active.current()->sessionExists()
-		|| _active.current()->loggingOut()) {
+	if (_accounts.size() != 1 || _active.current()->sessionExists()) {
 		return false;
 	}
 	Local::reset();
@@ -473,11 +421,7 @@ bool Domain::removePasscodeIfEmpty() {
 }
 
 void Domain::removeRedundantAccounts() {
-	if (!started()) {
-		_removeRedundantAfterStarting = true;
-		return;
-	}
-	_removeRedundantAfterStarting = false;
+	Expects(started());
 
 	const auto was = _accounts.size();
 	for (auto i = _accounts.begin(); i != _accounts.end();) {
@@ -485,15 +429,11 @@ void Domain::removeRedundantAccounts() {
 		// headless regression, but dropping it invalidates _active.
 		if (i->account.get() == _active.current()
 			|| Core::App().separateWindowFor(not_null(i->account.get()))
-			|| i->account->sessionExists() || i->account->loggingOut()
-			|| (_startupRecoveryOnly.contains(i->index)
-				&& (i->account->startPending()
-					|| i->account->mtp().dcOptions().blocked()))) {
+			|| i->account->sessionExists()) {
 			++i;
 			continue;
 		}
 		checkForLastProductionConfig(i->account.get());
-		_startupRecoveryOnly.remove(i->index);
 		i = _accounts.erase(i);
 	}
 
@@ -556,7 +496,6 @@ void Domain::activate(not_null<Main::Account*> account) {
 	}
 	_accountToActivate = i->index;
 	_active = account.get();
-	_activations.fire({});
 	_active.current()->sessionValue(
 	) | rpl::start_to_stream(_activeSessions, _activeLifetime);
 
