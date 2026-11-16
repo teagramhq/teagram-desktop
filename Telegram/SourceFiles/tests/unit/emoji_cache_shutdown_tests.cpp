@@ -8,6 +8,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "tests/unit/unit_test.h"
 #include "core/shutdown_loop.h"
 
+#include "styles/style_widgets.h"
 #include "ui/emoji_config.h"
 #include "ui/integration.h"
 #include "ui/style/style_core.h"
@@ -80,6 +81,8 @@ TEST_CASE(EmojiCacheShutdownDrainsActualCleanupWithoutBlockingGui) {
 	style::SetDevicePixelRatio(1);
 	style::internal::StartFonts();
 	style::StartManager(style::kScaleDefault);
+	const auto placeholderFont = st::defaultInputField.placeholderFont->f;
+	CHECK(style::FindAdjustResult(placeholderFont) != nullptr);
 	Ui::Emoji::Init();
 
 	integration->arm();
@@ -133,5 +136,10 @@ TEST_CASE(EmojiCacheShutdownDrainsActualCleanupWithoutBlockingGui) {
 	static auto fallback = CacheShutdownIntegration();
 	Ui::Integration::Set(&fallback);
 	integration.reset();
-	style::StopManager();
+	// Style data is process-wide and is still used by subsequent unit cases.
+	const auto resolved = style::FindAdjustResult(placeholderFont);
+	CHECK(resolved != nullptr);
+	if (resolved) {
+		CHECK(st::defaultInputField.placeholderFont->width(u"operator"_q) > 0);
+	}
 }
