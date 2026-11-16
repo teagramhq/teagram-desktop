@@ -303,9 +303,9 @@ void Application::run() {
 		= qEnvironmentVariableIsSet("TDESKTOP_SIGNUP_UI_REGRESSION")
 		  || authLifecycleRegression || customEmojiUiSmoke || desktopScaleCheck
 		  || fontStartupRegression;
-	const auto windowedApplication
-		= !headlessRegression || authLifecycleRegression || customEmojiUiSmoke
-		  || desktopScaleCheck;
+	const auto windowedApplication = !headlessRegression
+									 || authLifecycleRegression
+									 || customEmojiUiSmoke || desktopScaleCheck;
 	if (headlessRegression) {
 		// The regression exercises QWidget paths only. Keep unrelated GPU
 		// probing out of the headless process before its first RpWindow.
