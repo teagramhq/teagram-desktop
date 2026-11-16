@@ -102,6 +102,7 @@ base::options::toggle OptionDeadlockDetector({
 
 constexpr auto kCleanupIpcTimeout = 10 * crl::time(1000);
 constexpr auto kCleanupQuitTimeout = 30 * crl::time(1000);
+constexpr auto kUnexpectedSingleInstanceErrorLimit = 3;
 
 #ifndef Q_OS_WINRT
 [[nodiscard]] bool
@@ -543,7 +544,22 @@ int Sandbox::start() {
 		return 1;
 	}
 #endif // Q_OS_MAC
-	_localSocket.connectToServer(_localServerName);
+#if defined(Q_OS_MAC) && defined(TDESKTOP_LIFECYCLE_REGRESSION)
+	if (qEnvironmentVariableIsSet("TDESKTOP_SOCKET_ERROR_REGRESSION")) {
+		QTimer::singleShot(0, this, [=] {
+			fprintf(stderr, "Socket error regression: injected=1\n");
+			const auto mode
+				= qEnvironmentVariable("TDESKTOP_SOCKET_ERROR_REGRESSION");
+			socketError(
+				(mode == u"unknown"_q)		? QLocalSocket::UnknownSocketError
+				: (mode == u"persistent"_q) ? QLocalSocket::SocketAccessError
+											: QLocalSocket::SocketTimeoutError);
+		});
+	} else
+#endif // Q_OS_MAC && TDESKTOP_LIFECYCLE_REGRESSION
+	{
+		_localSocket.connectToServer(_localServerName);
+	}
 
 	if (QuitOnStartRequested) {
 		closeApplication();
@@ -1101,6 +1117,7 @@ bool Sandbox::event(QEvent *e) {
 
 void Sandbox::socketConnected() {
 	LOG(("Socket connected, this is not the first application instance, sending show command..."));
+	_unexpectedSingleInstanceErrors = 0;
 	if (_singleInstanceLock && _singleInstanceLock->isAcquired()) {
 		_singleInstanceLock->release();
 	}
@@ -1174,9 +1191,17 @@ void Sandbox::socketError(QLocalSocket::LocalSocketError e) {
 	}
 	if (e != QLocalSocket::ServerNotFoundError
 		&& e != QLocalSocket::ConnectionRefusedError) {
-		LOG(("Single instance connection failed: %1").arg(e));
-		return Quit();
+		LOG(("Single instance connection failed: %1 (%2)")
+				.arg(e)
+				.arg(_localSocket.errorString()));
+		_localSocket.close();
+		if (++_unexpectedSingleInstanceErrors
+			>= kUnexpectedSingleInstanceErrorLimit) {
+			return showSingleInstanceError();
+		}
+		return retrySingleInstance();
 	}
+	_unexpectedSingleInstanceErrors = 0;
 
 	if (e == QLocalSocket::ServerNotFoundError) {
 		LOG(("This is the only instance of Telegram, starting server and app..."));
@@ -1328,15 +1353,39 @@ void Sandbox::retrySingleInstance() {
 	}
 	if (++_singleInstanceRetries > 600) {
 		LOG(("Single instance retry timed out."));
-		return Quit();
+		return showSingleInstanceError();
 	}
 	_singleInstanceRetryScheduled = true;
 	QTimer::singleShot(50, this, [=] {
 		_singleInstanceRetryScheduled = false;
 		if (!Quitting()) {
+#if defined(Q_OS_MAC) && defined(TDESKTOP_LIFECYCLE_REGRESSION)
+			if (qEnvironmentVariable("TDESKTOP_SOCKET_ERROR_REGRESSION")
+				== u"persistent"_q) {
+				return socketError(QLocalSocket::SocketAccessError);
+			}
+#endif // Q_OS_MAC && TDESKTOP_LIFECYCLE_REGRESSION
 			_localSocket.connectToServer(_localServerName);
 		}
 	});
+}
+
+void Sandbox::showSingleInstanceError() {
+	if (_singleInstanceLock && _singleInstanceLock->isAcquired()) {
+		_singleInstanceLock->release();
+	}
+	if (cQuit()) {
+		return Quit();
+	}
+	[[maybe_unused]] const auto window = new NotStartedWindow();
+#if defined(Q_OS_MAC) && defined(TDESKTOP_LIFECYCLE_REGRESSION)
+	if (qEnvironmentVariable("TDESKTOP_SOCKET_ERROR_REGRESSION")
+		== u"persistent"_q) {
+		fprintf(stderr, "Socket error regression: failure_window=%d\n",
+				window->isVisible() ? 1 : 0);
+		QTimer::singleShot(0, this, [] { QCoreApplication::exit(0); });
+	}
+#endif // Q_OS_MAC && TDESKTOP_LIFECYCLE_REGRESSION
 }
 
 void Sandbox::newInstanceConnected() {

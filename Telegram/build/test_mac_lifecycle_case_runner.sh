@@ -215,6 +215,16 @@ if [[ "${TDESKTOP_FONT_STARTUP_QUIT_REGRESSION:-}" == 1 ]]; then
 	printf 'Font shutdown regression: worker_joined=1 application_created=0 teardown=complete\n'
 	exit 0
 fi
+if [[ -n "${TDESKTOP_SOCKET_ERROR_REGRESSION:-}" ]]; then
+    printf 'Socket error regression: injected=1\n'
+    if [[ "$TDESKTOP_SOCKET_ERROR_REGRESSION" == persistent ]]; then
+        if [[ "${FONT_TEST_MODE:-}" != socket-error-no-window ]]; then
+            printf 'Socket error regression: failure_window=1\n'
+        fi
+        exit 0
+    fi
+    if [[ "${FONT_TEST_MODE:-}" == socket-error-no-retry ]]; then exit 1; fi
+fi
 if [[ -n "${TDESKTOP_INSTANCE_RECHECK_HOLD_FILE:-}" ]]; then
     printf 'Single instance recheck regression: initial_failure=1 socket=%s\n' "$TDESKTOP_INSTANCE_RECHECK_TEST_SOCKET"
     while [[ ! -e "$TDESKTOP_INSTANCE_RECHECK_HOLD_FILE" ]]; do sleep 0.02; done

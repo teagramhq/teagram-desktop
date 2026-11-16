@@ -2223,6 +2223,8 @@ sys.exit(result.returncode if result.returncode >= 0 else 128 - result.returncod
 		"$APP" "$TEST_HOME/emoji-relaunch-competing" "$TEST_TMP_BASE" competing
 	python3 "$REPO_ROOT/.github/scripts/test_macos_shutdown_relaunch.py" \
 		"$APP" "$TEST_HOME/emoji-relaunch-recheck" "$TEST_TMP_BASE" recheck
+	python3 "$REPO_ROOT/.github/scripts/test_macos_socket_error.py" \
+		"$APP" "$TEST_HOME/socket-error" "$TEST_TMP_BASE"
 }
 
 run_start_in_tray_regression() {

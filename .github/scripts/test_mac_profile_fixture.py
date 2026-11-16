@@ -23,6 +23,16 @@ if [[ "$HOME" == *'Group Containers'* ]]; then
     fi
     exit 1
 fi
+if [[ -n "${TDESKTOP_SOCKET_ERROR_REGRESSION:-}" ]]; then
+    printf 'Socket error regression: injected=1\\n'
+    if [[ "$TDESKTOP_SOCKET_ERROR_REGRESSION" == persistent ]]; then
+        if [[ "${FONT_TEST_MODE:-}" != socket-error-no-window ]]; then
+            printf 'Socket error regression: failure_window=1\\n'
+        fi
+        exit 0
+    fi
+    if [[ "${FONT_TEST_MODE:-}" == socket-error-no-retry ]]; then exit 1; fi
+fi
 if [[ -n "${TDESKTOP_INSTANCE_RECHECK_HOLD_FILE:-}" ]]; then
     printf 'Single instance recheck regression: initial_failure=1 socket=%s\\n' "$TDESKTOP_INSTANCE_RECHECK_TEST_SOCKET"
     while [[ ! -e "$TDESKTOP_INSTANCE_RECHECK_HOLD_FILE" ]]; do sleep 0.02; done
@@ -249,6 +259,16 @@ if [[ "${TDESKTOP_FONT_STARTUP_QUIT_REGRESSION:-}" == 1 ]]; then
     fi
     exit 0
 fi
+if [[ -n "${TDESKTOP_SOCKET_ERROR_REGRESSION:-}" ]]; then
+    printf 'Socket error regression: injected=1\\n'
+    if [[ "$TDESKTOP_SOCKET_ERROR_REGRESSION" == persistent ]]; then
+        if [[ "${FONT_TEST_MODE:-}" != socket-error-no-window ]]; then
+            printf 'Socket error regression: failure_window=1\\n'
+        fi
+        exit 0
+    fi
+    if [[ "${FONT_TEST_MODE:-}" == socket-error-no-retry ]]; then exit 1; fi
+fi
 if [[ -n "${TDESKTOP_INSTANCE_RECHECK_HOLD_FILE:-}" ]]; then
     printf 'Single instance recheck regression: initial_failure=1 socket=%s\\n' "$TDESKTOP_INSTANCE_RECHECK_TEST_SOCKET"
     while [[ ! -e "$TDESKTOP_INSTANCE_RECHECK_HOLD_FILE" ]]; do sleep 0.02; done
@@ -454,6 +474,15 @@ assert 'Emoji cache shutdown relaunch=normal PASS waited=1 new_application=1' in
 assert 'Emoji cache shutdown relaunch=crash PASS waited=1 new_application=1' in font_startup_output
 assert 'Emoji cache shutdown relaunch=competing PASS waited=1 new_application=1' in font_startup_output
 assert 'Single instance server recheck=PASS forwarded=1' in font_startup_output
+assert 'Socket error recovery=PASS mode=transient' in font_startup_output
+assert 'Socket error recovery=PASS mode=unknown' in font_startup_output
+assert 'Socket error recovery=PASS mode=persistent' in font_startup_output
+font_startup_socket_no_retry = run_font_startup_fixture(
+    50_000_000, 50_000_000, 1, mode='socket-error-no-retry')
+assert 'socket error regression failed: mode=transient' in font_startup_socket_no_retry
+font_startup_socket_no_window = run_font_startup_fixture(
+    50_000_000, 50_000_000, 1, mode='socket-error-no-window')
+assert 'socket error regression failed: mode=persistent' in font_startup_socket_no_window
 font_startup_no_recheck = run_font_startup_fixture(
     50_000_000, 50_000_000, 1, mode='emoji-relaunch-skip-recheck')
 assert 'relaunch exited without rechecking the server' in font_startup_no_recheck

@@ -128,6 +128,7 @@ private:
 	void socketError(QLocalSocket::LocalSocketError e);
 	void socketDisconnected();
 	void retrySingleInstance();
+	void showSingleInstanceError();
 	void socketWritten(qint64 bytes);
 	void socketReading();
 	void newInstanceConnected();
@@ -159,6 +160,7 @@ private:
 	bool _retryingSingleInstance = false;
 	bool _singleInstanceRetryScheduled = false;
 	int _singleInstanceRetries = 0;
+	int _unexpectedSingleInstanceErrors = 0;
 	bool _started = false;
 	static bool QuitOnStartRequested;
 	static bool SystemShuttingDown;
