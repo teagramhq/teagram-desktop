@@ -5254,7 +5254,7 @@ FindAuthorizationBlockedAccount(const Main::Domain &domain) {
 	if (!WaitForRegressionCondition([&] { return findRetry() != nullptr; })) {
 		return false;
 	}
-	Ui::hideLayer(anim::type::instant);
+	window->hideLayer(anim::type::instant);
 	account.reset();
 	Storage::details::Sync();
 	auto restarted = std::make_unique<Main::Account>(&domain, dataName, 0);
