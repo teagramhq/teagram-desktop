@@ -95,6 +95,7 @@ target_precompile_headers(test_unit PRIVATE
 
 nice_target_sources(test_unit ${src_loc}
 PRIVATE
+    core/shutdown_loop.cpp
     core/teagram_icon_choice.cpp
     core/url_scheme_policy.cpp
     core/teagram_update_verification.cpp
@@ -248,6 +249,7 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
     nice_target_sources(test_unit ${src_loc}
     PRIVATE
         platform/linux/app_data_path.cpp
+        tests/unit/emoji_cache_shutdown_tests.cpp
         tests/unit/linux_data_path_tests.cpp
         tests/unit/linux_desktop_identity_tests.cpp
         tests/unit/username_input_tests.cpp

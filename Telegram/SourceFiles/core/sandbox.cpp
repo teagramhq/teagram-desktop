@@ -37,6 +37,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "base/qthelp_url.h"
 #include "base/qthelp_regex.h"
 #include "ui/ui_utility.h"
+#include "ui/emoji_config.h"
 #include "ui/effects/animations.h"
 
 #ifdef Q_OS_MAC
@@ -468,9 +469,8 @@ int Sandbox::start() {
 		// HWNDs crash on virtual dispatch through stale QWindow*. Detect
 		// that path and defer cleanup to the next main-loop tick so Qt
 		// finishes delivering shutdown messages on still-live windows.
-		// On a normal quit (Ctrl+Q etc.) aboutToQuit fires from the
-		// exec() epilogue after the event loop has exited and queued
-		// events would not run, so we keep the synchronous teardown.
+		// On a normal quit, start draining here and finish teardown in the
+		// shutdown event loop after exec() returns.
 		if (SystemShuttingDown) {
 			QMetaObject::invokeMethod(this, [=] {
 				customEnterFromEventLoop([&] {
@@ -505,6 +505,13 @@ int Sandbox::start() {
 	}
 	_started = true;
 	const auto result = exec();
+	if (_application && CurrentLaunchState() != LaunchState::QuitProcessed) {
+		closeApplication();
+	}
+	if (_closingApplication) {
+		// Retain the application while the workers drain without blocking Qt.
+		_shutdownLoop.run([this] { return _closingApplication; });
+	}
 #ifdef Q_OS_MAC
 	// closeApplication() has run from aboutToQuit by now. Wait for the font
 	// warmup worker so it never outlives the Qt and style state it touches.
@@ -1479,7 +1486,22 @@ void Sandbox::closeApplication() {
 		return;
 	}
 	SetLaunchState(LaunchState::QuitProcessed);
+	if (!_application) {
+		finishCloseApplication();
+		return;
+	}
+	_closingApplication = true;
+	Ui::Emoji::StopAndDrain([this] {
+		QMetaObject::invokeMethod(
+			this,
+			[this] {
+				customEnterFromEventLoop([&] { finishCloseApplication(); });
+			},
+			Qt::QueuedConnection);
+	});
+}
 
+void Sandbox::finishCloseApplication() {
 	_application = nullptr;
 
 	_localServer.close();
@@ -1491,6 +1513,8 @@ void Sandbox::closeApplication() {
 	_localSocket.close();
 
 	_updateChecker = nullptr;
+	_closingApplication = false;
+	_shutdownLoop.quit();
 }
 
 uint64 Sandbox::execExternal(const QString &cmd) {

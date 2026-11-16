@@ -215,6 +215,11 @@ if [[ "${TDESKTOP_FONT_STARTUP_QUIT_REGRESSION:-}" == 1 ]]; then
 	printf 'Font shutdown regression: worker_joined=1 application_created=0 teardown=complete\n'
 	exit 0
 fi
+if [[ "${TDESKTOP_EMOJI_CACHE_SHUTDOWN_REGRESSION:-}" == 1 ]]; then
+	printf 'Emoji cache shutdown regression: worker_blocked=1\n'
+	printf 'Emoji cache shutdown regression: gui_responsive=1 integration_alive=1 worker_returned=1 wait_timed_out=0\n'
+	exit 0
+fi
 if [[ "${TDESKTOP_FONT_STARTUP_REGRESSION:-}" == 1 ]]; then
 	if [[ "${TDESKTOP_FONT_STARTUP_TEST_FAILURE:-}" == thread-start ]]; then
 		printf 'Font database warmup regression: started=0\n'

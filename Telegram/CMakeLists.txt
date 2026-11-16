@@ -648,6 +648,8 @@ PRIVATE
     core/phone_click_handler.cpp
     core/phone_click_handler.h
     core/sandbox.cpp
+    core/shutdown_loop.cpp
+    core/shutdown_loop.h
     core/sandbox.h
     core/ui_stall_watchdog.cpp
     core/ui_stall_watchdog.h

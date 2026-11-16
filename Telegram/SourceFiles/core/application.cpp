@@ -245,6 +245,9 @@ void Application::closeAdditionalWindows() {
 }
 
 Application::~Application() {
+#if defined(Q_OS_MAC) && defined(TDESKTOP_LIFECYCLE_REGRESSION)
+	EmojiCacheShutdownApplicationDestroying();
+#endif // Q_OS_MAC && TDESKTOP_LIFECYCLE_REGRESSION
 	if (_saveSettingsTimer && _saveSettingsTimer->isActive()) {
 		Local::writeSettings();
 	}
@@ -371,6 +374,16 @@ void Application::run() {
 
 #if defined(TDESKTOP_LIFECYCLE_REGRESSION)
 	if (fontStartupRegression) {
+#ifdef Q_OS_MAC
+		if (qEnvironmentVariableIsSet(
+				"TDESKTOP_EMOJI_CACHE_SHUTDOWN_REGRESSION")) {
+			const auto result = RunFontFallbackRegression();
+			RunEmojiCacheShutdownRegression([=](bool ready) {
+				QCoreApplication::exit(result | (ready ? 0 : 1));
+			});
+			return;
+		}
+#endif // Q_OS_MAC
 		QCoreApplication::exit(RunFontFallbackRegression());
 		return;
 	}

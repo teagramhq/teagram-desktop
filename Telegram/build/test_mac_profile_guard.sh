@@ -2186,6 +2186,34 @@ run_font_startup_regression() {
 	fi
 	printf 'Font shutdown retry timeout ordering=PASS\n'
 	run_font_warmup_thread_failure_regression
+	local emoji_shutdown_log="$TEST_HOME/emoji-cache-shutdown.log"
+	if ! env -u TDESKTOP_FONT_STARTUP_TEST_FAILURE \
+		HOME="$font_home" TMPDIR="$TEST_TMP_BASE" \
+		TDESKTOP_MAC_PROFILE_TEST_HOME="$font_home" \
+		TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST=1 \
+		TDESKTOP_FONT_STARTUP_REGRESSION=1 \
+		TDESKTOP_EMOJI_CACHE_SHUTDOWN_REGRESSION=1 \
+		python3 -c '
+import subprocess
+import sys
+try:
+    result = subprocess.run(sys.argv[1:], timeout=30, check=False)
+except subprocess.TimeoutExpired:
+    print("emoji cache shutdown process hung", file=sys.stderr)
+    sys.exit(124)
+sys.exit(result.returncode if result.returncode >= 0 else 128 - result.returncode)
+' "$APP" -noupdate -debug >"$emoji_shutdown_log" 2>&1; then
+		cat "$emoji_shutdown_log" >&2
+		echo 'emoji cache shutdown launch failed' >&2
+		return 1
+	fi
+	if ! grep -Fq 'Emoji cache shutdown regression: worker_blocked=1' "$emoji_shutdown_log" \
+		|| ! grep -Fq 'Emoji cache shutdown regression: gui_responsive=1 integration_alive=1 worker_returned=1 wait_timed_out=0' "$emoji_shutdown_log"; then
+		cat "$emoji_shutdown_log" >&2
+		echo 'emoji cache shutdown ordering was not observed' >&2
+		return 1
+	fi
+	printf 'Emoji cache shutdown lifetime and GUI responsiveness=PASS\n'
 }
 
 run_start_in_tray_regression() {

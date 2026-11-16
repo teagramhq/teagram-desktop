@@ -19,41 +19,26 @@ namespace {
 using namespace std::chrono_literals;
 using Ui::Emoji::internal::BackgroundTasks;
 
-[[nodiscard]] bool WaitUntilClosed(BackgroundTasks &tasks) {
-	const auto deadline = std::chrono::steady_clock::now() + 2s;
-	while (std::chrono::steady_clock::now() < deadline) {
-		if (!tasks.start()) {
-			return true;
-		}
-		std::this_thread::yield();
-	}
-	return false;
-}
-
 } // namespace
 
-TEST_CASE(EmojiShutdownWaitsForQueuedAndRunningCacheWork) {
-
+TEST_CASE(EmojiShutdownDrainsQueuedAndRunningWork) {
 	auto tasks = BackgroundTasks();
 	tasks.restart();
 	auto pending = tasks.start();
 	CHECK(pending.has_value());
-
-	auto entered = std::promise<void>();
-	auto finished = std::async(std::launch::async, [&] {
-		entered.set_value();
-		tasks.stopAndWait();
-	});
-	entered.get_future().wait();
-	const auto closedWithPending = WaitUntilClosed(tasks);
+	auto done = std::promise<void>();
+	auto drained = done.get_future();
+	tasks.stop([&] { done.set_value(); });
+	const auto closedWithPending = !tasks.start().has_value();
 	const auto waitedForPending
-		= finished.wait_for(0ms) == std::future_status::timeout;
+		= drained.wait_for(0ms) == std::future_status::timeout;
 	pending.reset();
-	finished.get();
-
+	const auto drainedPending
+		= drained.wait_for(2s) == std::future_status::ready;
 	CHECK(closedWithPending);
+	CHECK(drainedPending);
 	CHECK(waitedForPending);
-	CHECK(!tasks.start().has_value());
+	CHECK(tasks.stoppedAndDrained());
 
 	tasks.restart();
 	auto running = tasks.start();
@@ -68,15 +53,18 @@ TEST_CASE(EmojiShutdownWaitsForQueuedAndRunningCacheWork) {
 			token.reset();
 		});
 	started.get_future().wait();
-	auto shutdown
-		= std::async(std::launch::async, [&] { tasks.stopAndWait(); });
-	const auto closedWithWorker = WaitUntilClosed(tasks);
+	auto stopped = std::promise<void>();
+	auto shutdown = stopped.get_future();
+	tasks.stop([&] { stopped.set_value(); });
+	const auto closedWithWorker = !tasks.start().has_value();
 	const auto waitedForWorker
 		= shutdown.wait_for(0ms) == std::future_status::timeout;
 	release.set_value();
 	worker.join();
-	shutdown.get();
+	const auto drainedWorker
+		= shutdown.wait_for(2s) == std::future_status::ready;
 	CHECK(closedWithWorker);
+	CHECK(drainedWorker);
 	CHECK(waitedForWorker);
 }
 
@@ -108,14 +96,16 @@ TEST_CASE(EmojiShutdownWaitsForTaskCaptureDestruction) {
 	auto worker = std::thread([task = std::move(task)]() mutable { task(); });
 	const auto destructorStarted
 		= destroying.get_future().wait_for(2s) == std::future_status::ready;
-	auto shutdown
-		= std::async(std::launch::async, [&] { tasks.stopAndWait(); });
-	const auto closed = WaitUntilClosed(tasks);
+	auto stopped = std::promise<void>();
+	auto shutdown = stopped.get_future();
+	tasks.stop([&] { stopped.set_value(); });
+	const auto closed = !tasks.start().has_value();
 	const auto waited = shutdown.wait_for(0ms) == std::future_status::timeout;
 	release.set_value();
 	worker.join();
-	shutdown.get();
+	const auto drained = shutdown.wait_for(2s) == std::future_status::ready;
 	CHECK(destructorStarted);
+	CHECK(drained);
 	CHECK(closed);
 	CHECK(waited);
 }

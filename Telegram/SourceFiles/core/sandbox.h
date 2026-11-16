@@ -8,6 +8,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #pragma once
 
 #include "mtproto/mtproto_proxy_data.h"
+#include "core/shutdown_loop.h"
 
 #include <QtWidgets/QApplication>
 #include <QtNetwork/QLocalServer>
@@ -100,6 +101,7 @@ private:
 	};
 
 	void closeApplication(); // will be done in aboutToQuit()
+	void finishCloseApplication();
 	void checkForQuit(); // will be done in exec()
 	void checkForEmptyLoopNestingLevel();
 	void registerEnterFromEventLoop();
@@ -141,6 +143,8 @@ private:
 	bool _postponedCallsDeferred = false;
 
 	std::unique_ptr<Application> _application;
+	bool _closingApplication = false;
+	ShutdownLoop _shutdownLoop;
 
 	QString _localServerName, _localSocketReadData;
 	QLocalServer _localServer;
