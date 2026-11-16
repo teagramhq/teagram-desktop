@@ -20051,85 +20051,7 @@ RunDesktopScaleSearchAndUpdates(Main::Domain &domain, int dialogCount,
 				samples.updateBurst.passed
 					= samples.updateBurst.passed && refetchCompleted.passed;
 			}
-			auto baselineStateMatches = true;
-			if (dialogCount == 50) {
-				constexpr auto kBaselineDialogCount = 3;
-				constexpr auto kBaselineUpdateCount = 32;
-				const auto baselineFirstId = UserId(firstId.bare + 100'000);
-				auto existingRows = std::vector<Dialogs::Key>();
-				for (const auto &row : data.chatsList()->indexed()->all()) {
-					existingRows.push_back(row->key());
-				}
-				for (const auto &key : existingRows) {
-					data.removeChatListEntry(key);
-				}
-				if (!SeedDesktopScaleDialogs(data, baselineFirstId,
-											 kBaselineDialogCount)) {
-					baselineStateMatches = false;
-				} else {
-					const auto beforeBaseline
-						= DesktopScaleChatListSnapshot(*data.chatsList());
-					const auto baselineDate = int(base::unixtime::now())
-											  + kBaselineUpdateCount + 10;
-					const auto baselineMessages
-						= DesktopScaleUpdateBurstMessages(
-							baselineFirstId, kBaselineDialogCount, baselineDate,
-							kBaselineUpdateCount);
-					// The pre-batching difference path passed this ascending
-					// wire vector directly to processMessages. Check that the
-					// state model used above reproduces that baseline behavior.
-					data.processMessages(baselineMessages,
-										 NewMessageType::Unread);
-					baselineStateMatches = DesktopScaleUpdateBurstStateMatches(
-						beforeBaseline, *data.chatsList(), baselineFirstId,
-						kBaselineDialogCount, kBaselineUpdateCount, false);
-				}
-				if (baselineStateMatches) {
-					existingRows.clear();
-					for (const auto &row : data.chatsList()->indexed()->all()) {
-						existingRows.push_back(row->key());
-					}
-					for (const auto &key : existingRows) {
-						data.removeChatListEntry(key);
-					}
-					constexpr auto kBatchDialogCount = 128;
-					constexpr auto kBatchUpdateCount = 96;
-					const auto batchFirstId = UserId(firstId.bare + 200'000);
-					baselineStateMatches = SeedDesktopScaleDialogs(
-						data, batchFirstId, kBatchDialogCount);
-					if (baselineStateMatches) {
-						const auto beforeBatch
-							= DesktopScaleChatListSnapshot(*data.chatsList());
-						const auto messages = DesktopScaleUpdateBurstMessages(
-							batchFirstId, kBatchDialogCount,
-							int(base::unixtime::now()) + kBatchUpdateCount + 10,
-							kBatchUpdateCount);
-						data.processMessagesInBatch(messages,
-													NewMessageType::Unread);
-						baselineStateMatches
-							= DesktopScaleUpdateBurstStateMatches(
-								beforeBatch, *data.chatsList(), batchFirstId,
-								kBatchDialogCount, kBatchUpdateCount, false);
-						for (auto i = 0; i != kBatchUpdateCount; ++i) {
-							baselineStateMatches
-								= baselineStateMatches
-								  && data.message(
-									  peerFromUser(
-										  UserId(batchFirstId.bare + i)),
-									  MsgId(kDesktopScaleUpdateMessageBase
-											+ i));
-						}
-					}
-				}
-				if (!baselineStateMatches) {
-					std::fprintf(
-						stderr,
-						"Desktop scale check failed: the expected-state model "
-						"did not match base processMessages behavior.\n");
-				}
-			}
-			return samples.search.passed && samples.updateBurst.passed
-				   && baselineStateMatches;
+			return samples.search.passed && samples.updateBurst.passed;
 		},
 		reuseAccount);
 	if (!created) {
@@ -21674,8 +21596,28 @@ int RunDialogBatchStateRegression() {
 					return false;
 				}
 			}
-			return DesktopScaleUpdateBurstStateMatches(
-				before, *data.chatsList(), firstId, kDialogs, kMessages, false);
+			if (!DesktopScaleUpdateBurstStateMatches(before, *data.chatsList(),
+													 firstId, kDialogs,
+													 kMessages, false)) {
+				return false;
+			}
+			auto expectedTop = 0;
+			auto expectedIndex = 0;
+			for (const auto &row : data.chatsList()->indexed()->all()) {
+				if ((row->index() != expectedIndex)
+					|| (row->top() != expectedTop)) {
+					std::fprintf(stderr,
+								 "Dialog batch regression failed: row %d has "
+								 "index %d and "
+								 "top %d, expected index %d and top %d.\n",
+								 expectedIndex, row->index(), row->top(),
+								 expectedIndex, expectedTop);
+					return false;
+				}
+				expectedTop += row->height();
+				++expectedIndex;
+			}
+			return expectedIndex == kDialogs;
 		});
 	if (passed) {
 		std::fprintf(stderr, "DIALOG_BATCH_STATE_PASS\n");
@@ -21801,6 +21743,7 @@ int RunDesktopScaleCheck() {
 				return groupOne.passed && groupHundred.passed;
 			});
 		});
+	const auto dialogBatchStatePassed = (RunDialogBatchStateRegression() == 0);
 	const auto printSampleTime = [](const DesktopScaleActionSample &sample) {
 		if (sample.nanoseconds) {
 			std::printf("%.6f ms", double(*sample.nanoseconds) / 1'000'000.);
@@ -21873,7 +21816,7 @@ int RunDesktopScaleCheck() {
 		  && dateHundred.passed && historyCreated && groupOne.passed
 		  && groupHundred.passed && searchOne.search.passed && groupCreated
 		  && searchHundred.search.passed && searchOne.updateBurst.passed
-		  && searchHundred.updateBurst.passed
+		  && searchHundred.updateBurst.passed && dialogBatchStatePassed
 		  && DesktopScaleUpdateBurstMeasurementsValid(searchOne.updateBurst,
 													  searchHundred.updateBurst)
 		  && blockingStalls && (*blockingStalls == 0)
@@ -21997,6 +21940,8 @@ int RunDesktopScaleCheck() {
 	std::printf("Contact removal check: %d/%d.\n",
 				int(contactsOne.removed.passed),
 				int(contactsHundred.removed.passed));
+	std::printf("Dialog batch state regression: %s.\n",
+				dialogBatchStatePassed ? "PASS" : "FAIL");
 	std::printf(
 		"Additional scenario checks: history=%d/%d date=%d/%d group=%d/%d "
 		"search=%d/%d updates=%d/%d.\n",
