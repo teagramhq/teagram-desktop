@@ -21552,14 +21552,22 @@ std::optional<qint64> ProcessCpuTimeNanosecondsForRegressionTest() {
 }
 #endif
 
-int RunDialogBatchStateRegression() {
+int RunDialogBatchStateRegression(not_null<Main::Account *> reuseAccount) {
 	constexpr auto kDialogs = 128;
 	constexpr auto kMessages = 96;
-	const auto firstId = UserId(8'000'000);
+	const auto firstId = UserId(8'200'000);
 	const auto passed = WithDesktopScaleAccount(
-		Core::App().domain(), UserId(firstId.bare - 1), [&](auto account) {
+		Core::App().domain(), UserId(firstId.bare - 1),
+		[&](auto account) {
 			auto &session = account->session();
 			auto &data = session.data();
+			auto existingRows = std::vector<Dialogs::Key>();
+			for (const auto &row : data.chatsList()->indexed()->all()) {
+				existingRows.push_back(row->key());
+			}
+			for (const auto &key : existingRows) {
+				data.removeChatListEntry(key);
+			}
 			if (!SeedDesktopScaleDialogs(data, firstId, kDialogs)) {
 				return false;
 			}
@@ -21618,7 +21626,8 @@ int RunDialogBatchStateRegression() {
 				++expectedIndex;
 			}
 			return expectedIndex == kDialogs;
-		});
+		},
+		reuseAccount.get());
 	if (passed) {
 		std::fprintf(stderr, "DIALOG_BATCH_STATE_PASS\n");
 	}
@@ -21729,6 +21738,7 @@ int RunDesktopScaleCheck() {
 		});
 	auto groupOne = DesktopScaleFsSample();
 	auto groupHundred = DesktopScaleFsSample();
+	auto dialogBatchStatePassed = false;
 	const auto groupCreated = WithDesktopScaleAccount(
 		domain, UserId(8'000'000), [&](auto account) {
 			return WithDesktopScaleWindow(account, [&](auto windowController) {
@@ -21740,10 +21750,11 @@ int RunDesktopScaleCheck() {
 					domain, 2'000, UserId(8'100'000), UserId(8'100'001),
 					ChannelId(8'100'002), account.get(),
 					windowController.get());
+				dialogBatchStatePassed
+					= (RunDialogBatchStateRegression(account) == 0);
 				return groupOne.passed && groupHundred.passed;
 			});
 		});
-	const auto dialogBatchStatePassed = (RunDialogBatchStateRegression() == 0);
 	const auto printSampleTime = [](const DesktopScaleActionSample &sample) {
 		if (sample.nanoseconds) {
 			std::printf("%.6f ms", double(*sample.nanoseconds) / 1'000'000.);
