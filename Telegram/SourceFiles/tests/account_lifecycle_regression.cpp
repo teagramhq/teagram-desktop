@@ -267,6 +267,9 @@ class AccountLifecycleRegressionAccess {
 	[[nodiscard]] static bool hasMtp(const Main::Account &account) {
 		return account._mtp != nullptr;
 	}
+	[[nodiscard]] static bool hasPreparedSession(const Main::Account &account) {
+		return account._session != nullptr;
+	}
 	[[nodiscard]] static bool
 	logoutCleanupPending(const Main::Account &account) {
 		return account._logoutCleanupPending;
@@ -4939,10 +4942,12 @@ FindAuthorizationBlockedAccount(const Main::Domain &domain) {
 	first->start(std::move(firstConfig));
 	second->start(std::move(secondConfig));
 	auto responsive = false;
+	auto pendingTicks = 0;
 	auto probe = QTimer();
 	QObject::connect(&probe, &QTimer::timeout, [&] {
 		if (waiting->load()
-			&& AccountLifecycleRegressionAccess::hasMtp(*first)) {
+			&& AccountLifecycleRegressionAccess::hasPreparedSession(*first)
+			&& ++pendingTicks >= 10) {
 			responsive = first->startPending() && !first->sessionExists();
 			release->release();
 		}

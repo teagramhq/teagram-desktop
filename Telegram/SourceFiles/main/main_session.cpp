@@ -190,6 +190,19 @@ Session::Session(
 		_selfUserpicView = view.cloud;
 	}, lifetime());
 
+#ifndef TDESKTOP_DISABLE_SPELLCHECK
+	Spellchecker::Start(this);
+#endif // TDESKTOP_DISABLE_SPELLCHECK
+
+	_api->requestNotifySettings(MTP_inputNotifyUsers());
+	_api->requestNotifySettings(MTP_inputNotifyChats());
+	_api->requestNotifySettings(MTP_inputNotifyBroadcasts());
+
+	appConfig().value()
+		| rpl::on_next([=] { appConfigRefreshed(); }, _lifetime);
+}
+
+void Session::startStorageInitialization() {
 	crl::on_main_queue(this, { [=] {
 		using Flag = Data::PeerUpdate::Flag;
 		changes().peerUpdates(
@@ -220,14 +233,6 @@ Session::Session(
 			saveSettingsDelayed();
 		}
 	}, [=] {
-		// Storage::Account uses Main::Account::session() in those methods.
-		// So they can't be called during Main::Session construction.
-		//
-		// They are deferred via crl::on_main which fires after the
-		// constructor returns and _session is set.
-		//
-		// Steps are chained via crl::on_main so that paint events
-		// can be processed between heavy file reads.
 		local().readInstalledStickers();
 	}, [=] {
 		local().readInstalledMasks();
@@ -249,19 +254,6 @@ Session::Session(
 		data().stickers().notifySavedGifsUpdated();
 		DEBUG_LOG(("Init: Account stored data load finished."));
 	} }).dispatch();
-
-#ifndef TDESKTOP_DISABLE_SPELLCHECK
-	Spellchecker::Start(this);
-#endif // TDESKTOP_DISABLE_SPELLCHECK
-
-	_api->requestNotifySettings(MTP_inputNotifyUsers());
-	_api->requestNotifySettings(MTP_inputNotifyChats());
-	_api->requestNotifySettings(MTP_inputNotifyBroadcasts());
-
-	appConfig().value(
-	) | rpl::on_next([=] {
-		appConfigRefreshed();
-	}, _lifetime);
 }
 
 void Session::appConfigRefreshed() {

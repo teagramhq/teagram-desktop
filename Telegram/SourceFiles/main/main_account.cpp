@@ -704,6 +704,7 @@ void Account::publishSession() {
 	}
 	Core::App().downloadManager().trackSession(_session.get());
 	_sessionValue = _session.get();
+	_session->startStorageInitialization();
 	_sessionUserId = 0;
 	local().writeSelf();
 }
