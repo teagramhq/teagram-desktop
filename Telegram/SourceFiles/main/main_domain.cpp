@@ -84,7 +84,12 @@ void Domain::waitForAccountsToStart() {
 		}
 		_starting = false;
 		activateAfterStarting();
-		crl::on_main(&Core::App(), [=] { suggestExportIfNeeded(); });
+		const auto activated = base::make_weak(_active.current());
+		crl::on_main(this, [=] {
+			if (started() && activated.get()) {
+				suggestExportIfNeeded();
+			}
+		});
 		_startFinished.fire({});
 	};
 	for (const auto &entry : _accounts) {

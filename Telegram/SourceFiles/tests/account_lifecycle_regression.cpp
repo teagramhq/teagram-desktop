@@ -3617,6 +3617,7 @@ RestartDomain(Main::Domain &domain,
 	if (teardownWriteCounts) {
 		*teardownWriteCounts = GetLifecycleWriteCountsForRegressionTest();
 	}
+	QCoreApplication::processEvents();
 	Storage::details::Sync();
 	if (beforeStart) {
 		beforeStart();
