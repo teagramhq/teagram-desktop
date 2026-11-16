@@ -218,6 +218,9 @@ else
     sample='cold'
     printf 'started' > "$count_file"
 fi
+if [[ "$mode" == emoji-shutdown-invalid ]]; then
+    printf 'Mac protected path refusal: operation=read class=invalid callsite=emojiCacheFolder\\n'
+fi
 if [[ "$mode" == font-stall ]]; then
     printf 'UI stall 197 ms (started 2026-11-13T00:00:00): QFontDatabase::addApplicationFont <- CTFontManagerCopyAvailableFontFamilyNames\\n'
 elif [[ "$mode" == descriptor-stall ]]; then
@@ -348,6 +351,10 @@ font_startup_failure = run_font_startup_fixture(50_000_000, 100_000_000, 1)
 assert 'StartFonts warm exceeded the 100ms budget' in font_startup_failure
 font_startup_cold_failure = run_font_startup_fixture(100_000_000, 50_000_000, 1)
 assert 'StartFonts cold exceeded the 100ms budget' in font_startup_cold_failure
+font_startup_emoji_shutdown = run_font_startup_fixture(
+    50_000_000, 50_000_000, 1, mode='emoji-shutdown-invalid')
+assert 'emoji cache accessed an invalid profile during shutdown' \
+    in font_startup_emoji_shutdown
 font_startup_font_stall = run_font_startup_fixture(
     50_000_000, 50_000_000, 1, mode='font-stall')
 assert 'Font-code startup cold produced a main-thread stall' in font_startup_font_stall

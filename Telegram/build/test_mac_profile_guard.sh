@@ -1937,6 +1937,13 @@ run_font_startup_regression() {
 				"$sample" "$launch_status" >&2
 			return 1
 		fi
+		if grep -Fq 'Mac protected path refusal: operation=read class=invalid callsite=emojiCacheFolder' \
+			"$sample_log"; then
+			cat "$sample_log" >&2
+			printf 'emoji cache accessed an invalid profile during shutdown: %s\n' \
+				"$sample" >&2
+			return 1
+		fi
 		local splash_timing
 		splash_timing="$(grep -E 'Font startup splash regression: visible=1 wall_ns=[0-9]+' \
 			"$sample_log" 2>/dev/null | tail -n 1 || true)"
