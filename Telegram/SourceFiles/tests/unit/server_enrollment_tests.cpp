@@ -371,7 +371,7 @@ DiscoverMovedEndpoint() {
 		}
 	});
 	const auto started = discovery.start(
-		selection, origin,
+		selection, origin, std::nullopt,
 		{
 			.finished =
 				[&](MTP::ServerDiscoveryResult value) {
@@ -438,7 +438,7 @@ TEST_CASE(EndpointRefreshDiscoveryReportsNamedRefusal) {
 	auto failure
 		= std::optional<Intro::details::ServerEndpointRefreshFailure>();
 	const auto started = discovery.start(
-		MTP::CheckServerSelection(QString()), QString(),
+		MTP::CheckServerSelection(QString()), QString(), std::nullopt,
 		{
 			.failed =
 				[&](Intro::details::ServerEndpointRefreshFailure value) {

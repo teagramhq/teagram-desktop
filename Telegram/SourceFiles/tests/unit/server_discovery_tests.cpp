@@ -10,6 +10,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "intro/intro_server_discovery.h"
 #include "lang/lang_keys.h"
 #include "mtproto/mtproto_dc_options.h"
+#include "mtproto/mtproto_proxy_data.h"
 #include "mtproto/mtproto_server_discovery.h"
 
 #include <QtCore/QEventLoop>
@@ -21,6 +22,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <QtCore/QTimer>
 #include <QtCore/QUrl>
 #include <QtNetwork/QHostInfo>
+#include <QtNetwork/QNetworkProxy>
+#include <QtNetwork/QNetworkReply>
 #include <QtNetwork/QNetworkRequest>
 #include <QtNetwork/QTcpServer>
 #include <QtNetwork/QTcpSocket>
@@ -2179,6 +2182,54 @@ TEST_CASE(DiscoveryJsonRejectsHttpPort) {
 		selection,
 		PublicResponse(u"server.example.com:80"_q)).status
 		== ServerDiscoveryResponseStatus::UnsafeEndpoint);
+}
+
+TEST_CASE(ServerEndpointRefreshUsesConfiguredProxyRoute) {
+	auto proxy = MTP::ProxyData();
+	proxy.type = MTP::ProxyData::Type::Socks5;
+	proxy.host = u"127.0.0.1"_q;
+	proxy.port = 1080;
+	const auto configured = Intro::details::ServerEndpointRefreshNetworkProxy(
+		MTP::ProxyData::Settings::Enabled, proxy);
+	CHECK(configured.has_value());
+	if (configured) {
+		CHECK(configured->type() == QNetworkProxy::Socks5Proxy);
+		CHECK_EQ(configured->hostName(), u"127.0.0.1"_q);
+		CHECK_EQ(configured->port(), quint16(1080));
+	}
+
+	const auto system = Intro::details::ServerEndpointRefreshNetworkProxy(
+		MTP::ProxyData::Settings::System, proxy);
+	CHECK(system.has_value());
+	if (system) {
+		CHECK(system->type() == QNetworkProxy::DefaultProxy);
+	}
+
+	const auto disabled = Intro::details::ServerEndpointRefreshNetworkProxy(
+		MTP::ProxyData::Settings::Disabled, proxy);
+	CHECK(disabled.has_value());
+	if (disabled) {
+		CHECK(disabled->type() == QNetworkProxy::NoProxy);
+	}
+
+	proxy.type = MTP::ProxyData::Type::Mtproto;
+	const auto mtproto = Intro::details::ServerEndpointRefreshNetworkProxy(
+		MTP::ProxyData::Settings::Enabled, proxy);
+	CHECK(!mtproto.has_value());
+}
+
+TEST_CASE(ServerEndpointRefreshDistinguishesProxyErrors) {
+	using Intro::details::ServerEndpointRefreshFailureStatus;
+	const auto classify
+		= Intro::details::ServerEndpointRefreshNetworkFailureStatus;
+	CHECK(classify(QNetworkReply::ProxyConnectionRefusedError, 0)
+		  == ServerEndpointRefreshFailureStatus::ProxyFailure);
+	CHECK(classify(QNetworkReply::ProxyAuthenticationRequiredError, 0)
+		  == ServerEndpointRefreshFailureStatus::ProxyFailure);
+	CHECK(classify(QNetworkReply::ContentAccessDenied, 407)
+		  == ServerEndpointRefreshFailureStatus::ProxyFailure);
+	CHECK(classify(QNetworkReply::ConnectionRefusedError, 0)
+		  == ServerEndpointRefreshFailureStatus::NetworkFailure);
 }
 
 } // namespace

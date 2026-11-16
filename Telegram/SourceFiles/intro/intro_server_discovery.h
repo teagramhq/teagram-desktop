@@ -8,12 +8,15 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #pragma once
 
 #include "mtproto/mtproto_server_discovery.h"
+#include "mtproto/mtproto_proxy_data.h"
 
 #include <QtCore/QByteArray>
 #include <QtCore/QList>
 #include <QtCore/QObject>
 #include <QtCore/QString>
 #include <QtNetwork/QHostAddress>
+#include <QtNetwork/QNetworkProxy>
+#include <QtNetwork/QNetworkReply>
 
 #include <functional>
 #include <optional>
@@ -21,7 +24,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 class QSocketNotifier;
 class QHostInfo;
 class QNetworkAccessManager;
-class QNetworkReply;
 class QTimer;
 
 namespace Intro {
@@ -59,6 +61,7 @@ enum class ServerEndpointRefreshFailureStatus {
 	TlsFailure,
 	Redirect,
 	NetworkFailure,
+	ProxyFailure,
 	HttpFailure,
 	InvalidResponse,
 	UnsafeEndpoint,
@@ -73,6 +76,14 @@ struct ServerEndpointRefreshFailure {
 
 [[nodiscard]] const char *
 ServerEndpointRefreshFailureName(ServerEndpointRefreshFailureStatus status);
+
+[[nodiscard]] std::optional<QNetworkProxy>
+ServerEndpointRefreshNetworkProxy(MTP::ProxyData::Settings settings,
+								  const MTP::ProxyData &proxy);
+
+[[nodiscard]] ServerEndpointRefreshFailureStatus
+ServerEndpointRefreshNetworkFailureStatus(QNetworkReply::NetworkError error,
+										  int httpStatusCode);
 
 [[nodiscard]] PublicDiscoveryAddressResolution
 ResolvePublicDiscoveryAddresses(const MTP::ServerSelectionCheck &selection,
@@ -193,7 +204,9 @@ class ServerEndpointRefreshDiscovery final : public QObject {
 	~ServerEndpointRefreshDiscovery() override;
 
 	[[nodiscard]] bool start(const MTP::ServerSelectionCheck &selection,
-							 const QString &origin, Callbacks callbacks);
+							 const QString &origin,
+							 std::optional<QNetworkProxy> networkProxy,
+							 Callbacks callbacks);
 	[[nodiscard]] bool running() const { return _running; }
 	void cancel();
 
@@ -216,6 +229,7 @@ class ServerEndpointRefreshDiscovery final : public QObject {
 
 	MTP::ServerSelectionCheck _selection;
 	QString _origin;
+	std::optional<QNetworkProxy> _networkProxy;
 	std::optional<MTP::ServerDiscoveryAttempt> _attemptToken;
 	QNetworkAccessManager *_network = nullptr;
 	QNetworkReply *_reply = nullptr;

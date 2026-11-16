@@ -21,6 +21,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include <openssl/sha.h>
 
+#include <QtCore/QCoreApplication>
+#include <QtCore/QEvent>
+
 #include <array>
 #include <cstring>
 #include <memory>
@@ -293,6 +296,10 @@ class SessionPrivateTestAccess final {
 								qint32 errorCode) {
 		session.onError(not_null<AbstractConnection *>(connection), errorCode,
 						{});
+	}
+
+	static void ReceiveTimeout(SessionPrivate &session) {
+		session.waitReceivedFailed();
 	}
 
 	static bool GaveUpOnBrowserOnlyServer(const SessionPrivate &session) {
@@ -911,6 +918,25 @@ TEST_CASE(SessionRequestsEndpointRefreshOnlyForTransportFailure) {
 	QCoreApplication::processEvents();
 	CHECK(MTP::UnitServerEndpointRefreshRequests.empty());
 	MTP::details::SessionPrivateTestAccess::Disconnect(*responseSession);
+}
+
+TEST_CASE(SessionRequestsEndpointRefreshAfterReceiveTimeout) {
+	auto instance
+		= MTP::Instance(MTP::Instance::Mode::Normal, MTP::Instance::Fields());
+	auto data = std::make_shared<MTP::details::SessionData>(
+		not_null<MTP::details::Session *>(
+			reinterpret_cast<MTP::details::Session *>(quintptr(1))));
+	auto session
+		= MTP::details::SessionPrivateTestAccess::Create(data, &instance);
+	MTP::UnitServerEndpointRefreshRequests.clear();
+
+	MTP::details::SessionPrivateTestAccess::ReceiveTimeout(*session);
+	QCoreApplication::sendPostedEvents(&instance, QEvent::MetaCall);
+
+	CHECK_EQ(int(MTP::UnitServerEndpointRefreshRequests.size()), 1);
+	if (!MTP::UnitServerEndpointRefreshRequests.empty()) {
+		CHECK_EQ(int(MTP::UnitServerEndpointRefreshRequests.front()), 2);
+	}
 }
 
 TEST_CASE(ServerErrorFromPacketDoesNotRecordBrowserOnlyRefusal) {

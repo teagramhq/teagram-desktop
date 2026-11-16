@@ -1214,12 +1214,15 @@ void Account::requestServerEndpointRefresh(MTP::ShiftedDcId shiftedDcId) {
 	}
 	const auto selection = MTP::CheckServerSelection(
 		QString::fromStdString(pin.serverSelection));
+	auto &proxySettings = Core::App().settings().proxy();
+	const auto networkProxy = Intro::details::ServerEndpointRefreshNetworkProxy(
+		proxySettings.settings(), proxySettings.selected());
 	if (!_serverEndpointRefreshDiscovery) {
 		_serverEndpointRefreshDiscovery = std::make_unique<
 			Intro::details::ServerEndpointRefreshDiscovery>();
 	}
 	const auto started = _serverEndpointRefreshDiscovery->start(
-		selection, QString::fromStdString(pin.discoveryOrigin),
+		selection, QString::fromStdString(pin.discoveryOrigin), networkProxy,
 		{
 			.finished =
 				[=](MTP::ServerDiscoveryResult result) {

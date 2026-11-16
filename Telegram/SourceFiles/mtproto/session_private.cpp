@@ -1388,10 +1388,11 @@ void SessionPrivate::waitReceivedFailed() {
 	}
 
 	DEBUG_LOG(("MTP Info: immediate restart!"));
-	InvokeQueued(this, [=] { connectToServer(); });
-
 	const auto instance = _instance;
 	const auto shiftedDcId = _shiftedDcId;
+	InvokeQueued(instance,
+				 [=] { instance->requestServerEndpointRefresh(shiftedDcId); });
+	InvokeQueued(this, [=] { connectToServer(); });
 	InvokeQueued(instance, [=] {
 		instance->restartedByTimeout(shiftedDcId);
 	});

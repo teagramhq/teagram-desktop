@@ -806,6 +806,8 @@ ServerEndpointRefreshFailureName(ServerEndpointRefreshFailureStatus status) {
 		return "redirect refused";
 	case ServerEndpointRefreshFailureStatus::NetworkFailure:
 		return "network failure";
+	case ServerEndpointRefreshFailureStatus::ProxyFailure:
+		return "proxy failure";
 	case ServerEndpointRefreshFailureStatus::HttpFailure:
 		return "HTTP status or content type refused";
 	case ServerEndpointRefreshFailureStatus::InvalidResponse:
@@ -820,6 +822,43 @@ ServerEndpointRefreshFailureName(ServerEndpointRefreshFailureStatus status) {
 	Unexpected("ServerEndpointRefreshFailureStatus value.");
 }
 
+std::optional<QNetworkProxy>
+ServerEndpointRefreshNetworkProxy(MTP::ProxyData::Settings settings,
+								  const MTP::ProxyData &proxy) {
+	switch (settings) {
+	case MTP::ProxyData::Settings::System:
+		return QNetworkProxy(QNetworkProxy::DefaultProxy);
+	case MTP::ProxyData::Settings::Disabled:
+		return QNetworkProxy(QNetworkProxy::NoProxy);
+	case MTP::ProxyData::Settings::Enabled:
+		if (proxy.type != MTP::ProxyData::Type::Http
+			&& proxy.type != MTP::ProxyData::Type::Socks5) {
+			return std::nullopt;
+		}
+		return MTP::ToNetworkProxy(proxy);
+	}
+	Unexpected("MTP::ProxyData::Settings value.");
+}
+
+ServerEndpointRefreshFailureStatus
+ServerEndpointRefreshNetworkFailureStatus(QNetworkReply::NetworkError error,
+										  int httpStatusCode) {
+	if (httpStatusCode == 407) {
+		return ServerEndpointRefreshFailureStatus::ProxyFailure;
+	}
+	switch (error) {
+	case QNetworkReply::ProxyConnectionRefusedError:
+	case QNetworkReply::ProxyConnectionClosedError:
+	case QNetworkReply::ProxyNotFoundError:
+	case QNetworkReply::ProxyTimeoutError:
+	case QNetworkReply::ProxyAuthenticationRequiredError:
+	case QNetworkReply::UnknownProxyError:
+		return ServerEndpointRefreshFailureStatus::ProxyFailure;
+	default:
+		return ServerEndpointRefreshFailureStatus::NetworkFailure;
+	}
+}
+
 ServerEndpointRefreshDiscovery::ServerEndpointRefreshDiscovery(QObject *parent)
 	: QObject(parent), _localDiscovery(new ServerWidgetDiscovery(this)),
 	  _deadline(new QTimer(this)) {
@@ -831,11 +870,12 @@ ServerEndpointRefreshDiscovery::~ServerEndpointRefreshDiscovery() { cancel(); }
 
 bool ServerEndpointRefreshDiscovery::start(
 	const MTP::ServerSelectionCheck &selection, const QString &origin,
-	Callbacks callbacks) {
+	std::optional<QNetworkProxy> networkProxy, Callbacks callbacks) {
 	cancel();
 	_callbacks = std::move(callbacks);
 	_selection = selection;
 	_origin = origin;
+	_networkProxy = std::move(networkProxy);
 	_running = true;
 	if (!selection.valid()
 		|| (selection.policy != MTP::ServerDiscoveryPolicy::PublicHttps
@@ -850,6 +890,11 @@ bool ServerEndpointRefreshDiscovery::start(
 		|| (selection.policy == MTP::ServerDiscoveryPolicy::LocalDirect
 			&& origin != expectedLocalOrigin)) {
 		fail(ServerEndpointRefreshFailureStatus::InvalidOrigin);
+		return false;
+	}
+	if (selection.policy == MTP::ServerDiscoveryPolicy::PublicHttps
+		&& !_networkProxy) {
+		fail(ServerEndpointRefreshFailureStatus::ProxyFailure);
 		return false;
 	}
 	_attemptToken = MTP::ServerDiscoveryAttempt::Acquire();
@@ -876,10 +921,11 @@ void ServerEndpointRefreshDiscovery::cancel() {
 }
 
 void ServerEndpointRefreshDiscovery::beginPublicDiscovery() {
+	Expects(_networkProxy.has_value());
 	if (!_network) {
 		_network = new QNetworkAccessManager(this);
-		_network->setProxy(QNetworkProxy::NoProxy);
 	}
+	_network->setProxy(*_networkProxy);
 	_publicResponse.clear();
 	auto request = QNetworkRequest(QUrl(_origin, QUrl::StrictMode));
 	MTP::ConfigurePublicDiscoveryRequest(request);
@@ -985,10 +1031,15 @@ void ServerEndpointRefreshDiscovery::publicDiscoveryFinished() {
 		const auto status
 			= reply->attribute(QNetworkRequest::HttpStatusCodeAttribute)
 				  .toInt();
+		auto failureStatus
+			= ServerEndpointRefreshNetworkFailureStatus(reply->error(), status);
+		if (status
+			&& failureStatus
+				   == ServerEndpointRefreshFailureStatus::NetworkFailure) {
+			failureStatus = ServerEndpointRefreshFailureStatus::HttpFailure;
+		}
 		reply->deleteLater();
-		fail(status ? ServerEndpointRefreshFailureStatus::HttpFailure
-					: ServerEndpointRefreshFailureStatus::NetworkFailure,
-			 status);
+		fail(failureStatus, status);
 		return;
 	}
 	auto headerSize = 0;
@@ -1204,6 +1255,7 @@ void ServerEndpointRefreshDiscovery::stop() {
 		reply->abort();
 		reply->deleteLater();
 	}
+	_networkProxy.reset();
 }
 
 } // namespace details
