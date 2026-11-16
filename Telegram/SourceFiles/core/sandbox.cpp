@@ -409,8 +409,13 @@ int Sandbox::start() {
 		char hash[33] = {0};
 		hashMd5Hex(encoded.constData(), encoded.size(), hash);
 		const auto lockDirectory = QDir(cWorkingDir()).absolutePath();
-		const auto lockPath = lockDirectory + u"/Teagram-profile-"_q
-							  + QString::fromLatin1(hash) + u".lock"_q;
+		auto lockPath = lockDirectory + u"/Teagram-profile-"_q
+						+ QString::fromLatin1(hash) + u".lock"_q;
+#if defined(Q_OS_MAC) && defined(TDESKTOP_LIFECYCLE_REGRESSION)
+		if (qEnvironmentVariableIsSet("TDESKTOP_PROFILE_LOCK_REGRESSION")) {
+			lockPath = lockDirectory;
+		}
+#endif // Q_OS_MAC && TDESKTOP_LIFECYCLE_REGRESSION
 #ifdef Q_OS_MAC
 		if (lockDirectory.isEmpty()
 			|| !MacProtectedPath::CheckPath(MacProtectedPath::Operation::Stat,
@@ -1234,8 +1239,11 @@ void Sandbox::socketError(QLocalSocket::LocalSocketError e) {
 #endif // Q_OS_MAC && TDESKTOP_LIFECYCLE_REGRESSION
 		const auto result = _singleInstanceLock->tryAcquire();
 		if (result == SingleInstanceLock::Result::Error) {
-			LOG(("Could not lock the single instance profile."));
-			return Quit();
+			const auto diagnostic
+				= u"Could not lock the single instance profile: %1"_q.arg(
+					_singleInstanceLock->errorString());
+			LOG((diagnostic));
+			return showSingleInstanceError(diagnostic);
 		}
 		// Reconnect after acquiring the lock. Another process may have
 		// started its server after our previous connection attempt.
@@ -1370,15 +1378,27 @@ void Sandbox::retrySingleInstance() {
 	});
 }
 
-void Sandbox::showSingleInstanceError() {
+void Sandbox::showSingleInstanceError(QString diagnostic) {
 	if (_singleInstanceLock && _singleInstanceLock->isAcquired()) {
 		_singleInstanceLock->release();
 	}
 	if (cQuit()) {
 		return Quit();
 	}
-	[[maybe_unused]] const auto window = new NotStartedWindow();
+	[[maybe_unused]] const auto window = new NotStartedWindow(diagnostic);
 #if defined(Q_OS_MAC) && defined(TDESKTOP_LIFECYCLE_REGRESSION)
+	if (qEnvironmentVariableIsSet("TDESKTOP_PROFILE_LOCK_REGRESSION")) {
+		const auto reason = _singleInstanceLock->errorString();
+		const auto encoded = reason.toUtf8();
+		const auto text = window->findChild<QTextEdit *>();
+		fprintf(stderr,
+				"Profile lock regression: failure_window=%d "
+				"window_contains_error=%d reason=%s\n",
+				window->isVisible() ? 1 : 0,
+				(text && text->toPlainText().contains(reason)) ? 1 : 0,
+				encoded.constData());
+		QTimer::singleShot(0, this, [] { QCoreApplication::exit(0); });
+	}
 	if (qEnvironmentVariable("TDESKTOP_SOCKET_ERROR_REGRESSION")
 		== u"persistent"_q) {
 		fprintf(stderr, "Socket error regression: failure_window=%d\n",

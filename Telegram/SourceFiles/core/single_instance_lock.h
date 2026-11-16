@@ -22,13 +22,16 @@ class SingleInstanceLock final {
 
 	[[nodiscard]] Result tryAcquire();
 	[[nodiscard]] bool isAcquired() const;
+	[[nodiscard]] QString errorString() const;
 	void release();
 #ifdef TDESKTOP_UNIT_TESTS
 	static void SetAfterOpenForTests(void (*callback)());
 #endif // TDESKTOP_UNIT_TESTS
 
   private:
+	void setSystemError(const char *operation, int code);
 	const QString _path;
+	QString _error;
 #ifdef Q_OS_WIN
 	void *_handle = nullptr;
 #else  // Q_OS_WIN

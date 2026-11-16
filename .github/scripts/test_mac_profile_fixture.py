@@ -25,6 +25,14 @@ if [[ "$HOME" == *'Group Containers'* ]]; then
     fi
     exit 1
 fi
+if [[ -n "${TDESKTOP_PROFILE_LOCK_REGRESSION:-}" ]]; then
+    lock_window=1
+    lock_reason='open failed'
+    if [[ "${FONT_TEST_MODE:-}" == lock-error-no-window ]]; then lock_window=0; fi
+    if [[ "${FONT_TEST_MODE:-}" == lock-error-no-reason ]]; then lock_reason=''; fi
+    printf 'Profile lock regression: failure_window=%s window_contains_error=1 reason=%s\\n' "$lock_window" "$lock_reason"
+    exit 0
+fi
 if [[ -n "${TDESKTOP_SOCKET_ERROR_REGRESSION:-}" ]]; then
     printf 'Socket error regression: injected=1\\n'
     if [[ "$TDESKTOP_SOCKET_ERROR_REGRESSION" == persistent ]]; then
@@ -266,6 +274,14 @@ if [[ "${TDESKTOP_FONT_STARTUP_QUIT_REGRESSION:-}" == 1 ]]; then
     fi
     exit 0
 fi
+if [[ -n "${TDESKTOP_PROFILE_LOCK_REGRESSION:-}" ]]; then
+    lock_window=1
+    lock_reason='open failed'
+    if [[ "${FONT_TEST_MODE:-}" == lock-error-no-window ]]; then lock_window=0; fi
+    if [[ "${FONT_TEST_MODE:-}" == lock-error-no-reason ]]; then lock_reason=''; fi
+    printf 'Profile lock regression: failure_window=%s window_contains_error=1 reason=%s\\n' "$lock_window" "$lock_reason"
+    exit 0
+fi
 if [[ -n "${TDESKTOP_SOCKET_ERROR_REGRESSION:-}" ]]; then
     printf 'Socket error regression: injected=1\\n'
     if [[ "$TDESKTOP_SOCKET_ERROR_REGRESSION" == persistent ]]; then
@@ -489,6 +505,13 @@ assert 'Emoji cache shutdown relaunch=competing PASS' in font_startup_second_win
 assert 'Socket error recovery=PASS mode=transient' in font_startup_output
 assert 'Socket error recovery=PASS mode=unknown' in font_startup_output
 assert 'Socket error recovery=PASS mode=persistent' in font_startup_output
+assert 'Socket error recovery=PASS mode=lock-error' in font_startup_output
+font_startup_lock_no_window = run_font_startup_fixture(
+    50_000_000, 50_000_000, 1, mode='lock-error-no-window')
+assert 'socket error regression failed: mode=lock-error' in font_startup_lock_no_window
+font_startup_lock_no_reason = run_font_startup_fixture(
+    50_000_000, 50_000_000, 1, mode='lock-error-no-reason')
+assert 'socket error regression failed: mode=lock-error' in font_startup_lock_no_reason
 font_startup_socket_no_retry = run_font_startup_fixture(
     50_000_000, 50_000_000, 1, mode='socket-error-no-retry')
 assert 'socket error regression failed: mode=transient' in font_startup_socket_no_retry

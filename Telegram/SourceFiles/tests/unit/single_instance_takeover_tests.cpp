@@ -9,6 +9,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/single_instance_lock.h"
 
 #include <QtCore/QCoreApplication>
+#include <QtCore/QDir>
 #include <QtCore/QElapsedTimer>
 #include <QtCore/QFile>
 #include <QtCore/QProcess>
@@ -108,6 +109,16 @@ TEST_CASE(SingleInstanceDifferentProfilesDoNotBlock) {
 	CHECK(second.tryAcquire() == Core::SingleInstanceLock::Result::Acquired);
 	CHECK(duplicate.tryAcquire() == Core::SingleInstanceLock::Result::Busy);
 	CHECK(invalid.tryAcquire() == Core::SingleInstanceLock::Result::Error);
+	CHECK(!invalid.errorString().isEmpty());
+	CHECK(invalid.errorString().contains(u"open"_q));
+	CHECK(invalid.errorString().contains(u"missing/lock"_q));
+	CHECK(QDir().mkpath(directory.filePath(u"missing"_q)));
+	CHECK(invalid.tryAcquire() == Core::SingleInstanceLock::Result::Acquired);
+	CHECK(invalid.errorString().isEmpty());
+	auto directoryLock = Core::SingleInstanceLock(directory.path());
+	CHECK(directoryLock.tryAcquire()
+		  == Core::SingleInstanceLock::Result::Error);
+	CHECK(!directoryLock.errorString().isEmpty());
 }
 
 TEST_CASE(SingleInstanceCompetingTakeovers) {
