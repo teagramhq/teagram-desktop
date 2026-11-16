@@ -19,7 +19,7 @@ def wait_for_text(path, text, process, timeout=15, peer=None):
 
 
 def main():
-    executable, home_arg, temp_arg = sys.argv[1:]
+    executable, home_arg, temp_arg, mode = sys.argv[1:]
     home = Path(home_arg)
     home.mkdir(parents=True, exist_ok=True)
     release = home / 'release-emoji-worker'
@@ -51,15 +51,20 @@ def main():
             wait_for_text(primary_log, 'Emoji cache shutdown regression: peer_waiting=1', primary, peer=secondary)
             if secondary.poll() is not None:
                 raise RuntimeError('relaunch exited while the previous process was draining')
-            release.touch()
-            if primary.wait(timeout=30) != 0:
-                raise RuntimeError('draining process did not exit cleanly')
+            if mode == 'crash':
+                primary.kill()
+                primary.wait(timeout=30)
+                release.touch()  # Unblocks the test fixture; the real app ignores it.
+            else:
+                release.touch()
+                if primary.wait(timeout=30) != 0:
+                    raise RuntimeError('draining process did not exit cleanly')
             if secondary.wait(timeout=30) != 0:
                 raise RuntimeError('relaunch did not exit cleanly after startup')
         text = secondary_log.read_text(errors='replace')
         if 'Font database warmup regression: ready=1 custom-fonts=1' not in text:
             raise RuntimeError('relaunch did not start a new application')
-        print('Emoji cache shutdown relaunch=PASS waited=1 new_application=1')
+        print(f'Emoji cache shutdown relaunch={mode} PASS waited=1 new_application=1')
     except (OSError, RuntimeError, subprocess.TimeoutExpired) as error:
         print(f'emoji cache shutdown relaunch failed: {error}', file=sys.stderr)
         for path in (primary_log, secondary_log):

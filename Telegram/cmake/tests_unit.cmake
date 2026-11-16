@@ -96,6 +96,7 @@ target_precompile_headers(test_unit PRIVATE
 nice_target_sources(test_unit ${src_loc}
 PRIVATE
     core/shutdown_loop.cpp
+    core/single_instance_lock.h
     core/teagram_icon_choice.cpp
     core/url_scheme_policy.cpp
     core/teagram_update_verification.cpp
@@ -166,6 +167,7 @@ PRIVATE
     tests/unit/server_discovery_tests.cpp
     tests/unit/server_enrollment_tests.cpp
     tests/unit/session_private_tests.cpp
+    tests/unit/single_instance_takeover_tests.cpp
     tests/unit/settings_active_sessions_tests.cpp
     tests/unit/settings_invite_state_tests.cpp
     tests/unit/settings_privacy_policy_tests.cpp

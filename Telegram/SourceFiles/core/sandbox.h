@@ -33,6 +33,7 @@ extern const char kOptionDeadlockDetector[];
 class UpdateChecker;
 class Application;
 class UiStallWatchdog;
+class SingleInstanceLock;
 
 class Sandbox final
 	: public QApplication
@@ -148,6 +149,8 @@ private:
 	ShutdownLoop _shutdownLoop;
 
 	QString _localServerName, _localSocketReadData;
+	// Destroy the listener before releasing ownership of its profile.
+	std::unique_ptr<SingleInstanceLock> _singleInstanceLock;
 	QLocalServer _localServer;
 	QLocalSocket _localSocket;
 	LocalClients _localClients;

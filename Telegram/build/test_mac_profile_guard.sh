@@ -2216,7 +2216,9 @@ sys.exit(result.returncode if result.returncode >= 0 else 128 - result.returncod
 	fi
 	printf 'Emoji cache shutdown lifetime and GUI responsiveness=PASS\n'
 	python3 "$REPO_ROOT/.github/scripts/test_macos_shutdown_relaunch.py" \
-		"$APP" "$TEST_HOME/emoji-relaunch" "$TEST_TMP_BASE"
+		"$APP" "$TEST_HOME/emoji-relaunch" "$TEST_TMP_BASE" normal
+	python3 "$REPO_ROOT/.github/scripts/test_macos_shutdown_relaunch.py" \
+		"$APP" "$TEST_HOME/emoji-relaunch-crash" "$TEST_TMP_BASE" crash
 }
 
 run_start_in_tray_regression() {

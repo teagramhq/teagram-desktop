@@ -209,6 +209,10 @@ jobs:
 
           cmake --build ..\out --config Debug --parallel
 
+      - name: Test competing single-instance launches.
+        if: env.ONLY_CACHE == 'false'
+        run: '"%TBUILD%\%REPO_NAME%\out\Debug\test_unit.exe" --case SingleInstanceCompetingTakeovers'
+
       - name: Move artifact.
         if: (env.UPLOAD_ARTIFACT == 'true') || (github.ref == 'refs/heads/nightly')
         run: |

@@ -394,7 +394,8 @@ assert 'Font shutdown probe timeout diagnostics=PASS' in font_startup_output
 assert 'Font shutdown retry timeout ordering=PASS' in font_startup_output
 assert 'Font database warmup thread failure fallback=PASS' in font_startup_output
 assert 'Emoji cache shutdown lifetime and GUI responsiveness=PASS' in font_startup_output
-assert 'Emoji cache shutdown relaunch=PASS waited=1 new_application=1' in font_startup_output
+assert 'Emoji cache shutdown relaunch=normal PASS waited=1 new_application=1' in font_startup_output
+assert 'Emoji cache shutdown relaunch=crash PASS waited=1 new_application=1' in font_startup_output
 font_startup_early_relaunch = run_font_startup_fixture(
     50_000_000, 50_000_000, 1, mode='emoji-relaunch-early')
 assert 'emoji cache shutdown relaunch failed' in font_startup_early_relaunch

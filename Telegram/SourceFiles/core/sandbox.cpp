@@ -19,6 +19,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/application.h"
 #include "core/external_control.h"
 #include "core/launcher.h"
+#include "core/single_instance_lock.h"
 #include "core/local_url_handlers.h"
 #include "core/update_checker.h"
 #include "core/deadlock_detector.h"
@@ -48,9 +49,12 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <QtCore/QFileInfo>
 #include <QtCore/QMetaObject>
 #include <QtCore/QTimer>
-#include <QtNetwork/QAbstractSocket>
 #include <QtGui/QSessionManager>
 #include <QtGui/QScreen>
+#ifdef Q_OS_UNIX
+#include <cerrno>
+#include <sys/stat.h>
+#endif // Q_OS_UNIX
 #ifdef Q_OS_MAC
 #include <QtCore/QPoint>
 #include <QtCore/QRect>
@@ -98,6 +102,25 @@ base::options::toggle OptionDeadlockDetector({
 
 constexpr auto kCleanupIpcTimeout = 10 * crl::time(1000);
 constexpr auto kCleanupQuitTimeout = 30 * crl::time(1000);
+
+#ifndef Q_OS_WINRT
+[[nodiscard]] bool
+RemoveStaleLocalServer([[maybe_unused]] const QString &name) {
+#if defined(Q_OS_LINUX) && QT_VERSION >= QT_VERSION_CHECK(6, 2, 0)
+	// Linux uses an abstract-namespace socket, with no filesystem entry.
+	return true;
+#elif defined(Q_OS_UNIX)
+	const auto encoded = QFile::encodeName(name);
+	struct stat info = {};
+	if (::lstat(encoded.constData(), &info) != 0) {
+		return (errno == ENOENT);
+	}
+	return S_ISSOCK(info.st_mode) && QFile::remove(name);
+#else  // Q_OS_UNIX
+	return true;
+#endif // Q_OS_UNIX
+}
+#endif // Q_OS_WINRT
 #ifdef Q_OS_MAC
 constexpr auto kFontStartupSplashExposureTimeout = 1000;
 #endif // Q_OS_MAC
@@ -379,6 +402,26 @@ int Sandbox::start() {
 		psCleanup();
 		closeApplication();
 		return result;
+	}
+	{
+		const auto encoded = QFile::encodeName(_localServerName);
+		char hash[33] = {0};
+		hashMd5Hex(encoded.constData(), encoded.size(), hash);
+		const auto lockDirectory = QDir(cWorkingDir()).absolutePath();
+		const auto lockPath = lockDirectory + u"/Teagram-profile-"_q
+							  + QString::fromLatin1(hash) + u".lock"_q;
+#ifdef Q_OS_MAC
+		if (lockDirectory.isEmpty()
+			|| !MacProtectedPath::CheckPath(MacProtectedPath::Operation::Stat,
+											lockPath, Q_FUNC_INFO)
+			|| !MacProtectedPath::CheckPath(MacProtectedPath::Operation::Unlink,
+											lockPath, Q_FUNC_INFO)
+			|| !MacProtectedPath::CheckPath(MacProtectedPath::Operation::Lock,
+											lockPath, Q_FUNC_INFO)) {
+			return 1;
+		}
+#endif // Q_OS_MAC
+		_singleInstanceLock = std::make_unique<SingleInstanceLock>(lockPath);
 	}
 
 	if (!Core::UpdaterDisabled()) {
@@ -1056,6 +1099,9 @@ bool Sandbox::event(QEvent *e) {
 
 void Sandbox::socketConnected() {
 	LOG(("Socket connected, this is not the first application instance, sending show command..."));
+	if (_singleInstanceLock && _singleInstanceLock->isAcquired()) {
+		_singleInstanceLock->release();
+	}
 	_secondInstance = true;
 
 	QString commands;
@@ -1119,9 +1165,9 @@ void Sandbox::socketError(QLocalSocket::LocalSocketError e) {
 		LOG(("Could not write show command, error %1, quitting...").arg(e));
 		return Quit();
 	}
-	if (_retryingSingleInstance && e != QLocalSocket::ServerNotFoundError
+	if (e != QLocalSocket::ServerNotFoundError
 		&& e != QLocalSocket::ConnectionRefusedError) {
-		LOG(("Single instance retry failed: %1").arg(e));
+		LOG(("Single instance connection failed: %1").arg(e));
 		return Quit();
 	}
 
@@ -1131,6 +1177,19 @@ void Sandbox::socketError(QLocalSocket::LocalSocketError e) {
 		LOG(("Socket connect error %1, starting server and app...").arg(e));
 	}
 	_localSocket.close();
+#ifndef Q_OS_WINRT
+	if (!_singleInstanceLock->isAcquired()) {
+		const auto result = _singleInstanceLock->tryAcquire();
+		if (result == SingleInstanceLock::Result::Error) {
+			LOG(("Could not lock the single instance profile."));
+			return Quit();
+		}
+		// Reconnect after acquiring the lock. Another process may have
+		// started its server after our previous connection attempt.
+		_retryingSingleInstance = true;
+		return retrySingleInstance();
+	}
+#endif // !Q_OS_WINRT
 
 	// Local server does not work in WinRT build.
 #ifndef Q_OS_WINRT
@@ -1144,23 +1203,18 @@ void Sandbox::socketError(QLocalSocket::LocalSocketError e) {
 		return Quit();
 	}
 #endif // Q_OS_MAC
-	if (!_retryingSingleInstance) {
-		psCheckLocalSocket(_localServerName);
+	if (!RemoveStaleLocalServer(_localServerName)) {
+		LOG(("Could not remove stale local socket %1.").arg(_localServerName));
+		return Quit();
 	}
 
 	if (!_localServer.listen(_localServerName)) {
-		// Another waiting launch may have won the listener between connect
-		// and listen. Never unlink its socket while retrying.
-		if (_retryingSingleInstance
-			&& _localServer.serverError()
-				   == QAbstractSocket::AddressInUseError) {
-			return retrySingleInstance();
-		}
 		LOG(("Failed to start listening to %1 server: %2").arg(_localServerName, _localServer.errorString()));
 		return Quit();
 	}
-	if (_retryingSingleInstance && _lockFile && !_lockFile->isLocked()) {
-		_lockFile->tryLock();
+	if (_retryingSingleInstance && _lockFile && !_lockFile->isLocked()
+		&& !_lockFile->tryLock()) {
+		LOG(("Executable lock remains held by another profile."));
 	}
 	_retryingSingleInstance = false;
 #ifdef Q_OS_MAC
