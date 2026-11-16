@@ -2208,12 +2208,15 @@ sys.exit(result.returncode if result.returncode >= 0 else 128 - result.returncod
 		return 1
 	fi
 	if ! grep -Fq 'Emoji cache shutdown regression: worker_blocked=1' "$emoji_shutdown_log" \
+		|| ! grep -Fq 'Emoji cache shutdown regression: repeat_quit=1' "$emoji_shutdown_log" \
 		|| ! grep -Fq 'Emoji cache shutdown regression: gui_responsive=1 integration_alive=1 worker_returned=1 wait_timed_out=0' "$emoji_shutdown_log"; then
 		cat "$emoji_shutdown_log" >&2
 		echo 'emoji cache shutdown ordering was not observed' >&2
 		return 1
 	fi
 	printf 'Emoji cache shutdown lifetime and GUI responsiveness=PASS\n'
+	python3 "$REPO_ROOT/.github/scripts/test_macos_shutdown_relaunch.py" \
+		"$APP" "$TEST_HOME/emoji-relaunch" "$TEST_TMP_BASE"
 }
 
 run_start_in_tray_regression() {

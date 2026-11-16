@@ -23,8 +23,23 @@ if [[ "$HOME" == *'Group Containers'* ]]; then
     fi
     exit 1
 fi
+if [[ -n "${TDESKTOP_EMOJI_SHUTDOWN_RELEASE_FILE:-}" ]]; then
+    printf 'Emoji cache shutdown regression: drain_active=1\\n'
+    while [[ ! -e "$TDESKTOP_EMOJI_SHUTDOWN_RELEASE_FILE.peer" ]]; do sleep 0.02; done
+    printf 'Emoji cache shutdown regression: peer_waiting=1\\n'
+    while [[ ! -e "$TDESKTOP_EMOJI_SHUTDOWN_RELEASE_FILE" ]]; do sleep 0.02; done
+    exit 0
+fi
+if [[ "${TDESKTOP_EMOJI_RELAUNCH_SECONDARY_TEST:-}" == 1 ]]; then
+    touch "$TDESKTOP_EMOJI_RELAUNCH_TEST_FILE.peer"
+    if [[ "${FONT_TEST_MODE:-}" == emoji-relaunch-early ]]; then exit 0; fi
+    while [[ ! -e "$TDESKTOP_EMOJI_RELAUNCH_TEST_FILE" ]]; do sleep 0.02; done
+    printf 'Font database warmup regression: ready=1 custom-fonts=1\\n'
+    exit 0
+fi
 if [[ "${TDESKTOP_EMOJI_CACHE_SHUTDOWN_REGRESSION:-}" == 1 ]]; then
     printf 'Emoji cache shutdown regression: worker_blocked=1\\n'
+    printf 'Emoji cache shutdown regression: repeat_quit=1\\n'
     printf 'Emoji cache shutdown regression: gui_responsive=1 integration_alive=1 worker_returned=1 wait_timed_out=0\\n'
     exit 0
 fi
@@ -206,8 +221,25 @@ if [[ "${TDESKTOP_FONT_STARTUP_QUIT_REGRESSION:-}" == 1 ]]; then
     fi
     exit 0
 fi
+if [[ -n "${TDESKTOP_EMOJI_SHUTDOWN_RELEASE_FILE:-}" ]]; then
+    printf 'Emoji cache shutdown regression: drain_active=1\\n'
+    while [[ ! -e "$TDESKTOP_EMOJI_SHUTDOWN_RELEASE_FILE.peer" ]]; do sleep 0.02; done
+    printf 'Emoji cache shutdown regression: peer_waiting=1\\n'
+    while [[ ! -e "$TDESKTOP_EMOJI_SHUTDOWN_RELEASE_FILE" ]]; do sleep 0.02; done
+    exit 0
+fi
+if [[ "${TDESKTOP_EMOJI_RELAUNCH_SECONDARY_TEST:-}" == 1 ]]; then
+    touch "$TDESKTOP_EMOJI_RELAUNCH_TEST_FILE.peer"
+    if [[ "${FONT_TEST_MODE:-}" == emoji-relaunch-early ]]; then exit 0; fi
+    while [[ ! -e "$TDESKTOP_EMOJI_RELAUNCH_TEST_FILE" ]]; do sleep 0.02; done
+    printf 'Font database warmup regression: ready=1 custom-fonts=1\\n'
+    exit 0
+fi
 if [[ "${TDESKTOP_EMOJI_CACHE_SHUTDOWN_REGRESSION:-}" == 1 ]]; then
     printf 'Emoji cache shutdown regression: worker_blocked=1\\n'
+    if [[ "$mode" != emoji-shutdown-no-repeat ]]; then
+        printf 'Emoji cache shutdown regression: repeat_quit=1\\n'
+    fi
     if [[ "$mode" == emoji-shutdown-early ]]; then
         printf 'Emoji cache shutdown regression: gui_responsive=0 integration_alive=0 worker_returned=0 wait_timed_out=0\\n'
     else
@@ -362,6 +394,10 @@ assert 'Font shutdown probe timeout diagnostics=PASS' in font_startup_output
 assert 'Font shutdown retry timeout ordering=PASS' in font_startup_output
 assert 'Font database warmup thread failure fallback=PASS' in font_startup_output
 assert 'Emoji cache shutdown lifetime and GUI responsiveness=PASS' in font_startup_output
+assert 'Emoji cache shutdown relaunch=PASS waited=1 new_application=1' in font_startup_output
+font_startup_early_relaunch = run_font_startup_fixture(
+    50_000_000, 50_000_000, 1, mode='emoji-relaunch-early')
+assert 'emoji cache shutdown relaunch failed' in font_startup_early_relaunch
 font_startup_failure = run_font_startup_fixture(50_000_000, 100_000_000, 1)
 assert 'StartFonts warm exceeded the 100ms budget' in font_startup_failure
 font_startup_cold_failure = run_font_startup_fixture(100_000_000, 50_000_000, 1)
@@ -370,6 +406,10 @@ font_startup_emoji_shutdown = run_font_startup_fixture(
     50_000_000, 50_000_000, 1, mode='emoji-shutdown-invalid')
 assert 'emoji cache accessed an invalid profile during shutdown' \
     in font_startup_emoji_shutdown
+font_startup_emoji_missing_repeat = run_font_startup_fixture(
+    50_000_000, 50_000_000, 1, mode='emoji-shutdown-no-repeat')
+assert 'emoji cache shutdown ordering was not observed' \
+    in font_startup_emoji_missing_repeat
 font_startup_emoji_early_shutdown = run_font_startup_fixture(
     50_000_000, 50_000_000, 1, mode='emoji-shutdown-early')
 assert 'emoji cache shutdown ordering was not observed' \

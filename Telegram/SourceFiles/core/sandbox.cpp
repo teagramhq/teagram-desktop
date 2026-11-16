@@ -47,12 +47,13 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <QtCore/QLockFile>
 #include <QtCore/QFileInfo>
 #include <QtCore/QMetaObject>
+#include <QtCore/QTimer>
+#include <QtNetwork/QAbstractSocket>
 #include <QtGui/QSessionManager>
 #include <QtGui/QScreen>
 #ifdef Q_OS_MAC
 #include <QtCore/QPoint>
 #include <QtCore/QRect>
-#include <QtCore/QTimer>
 #include <QtGui/QBackingStore>
 #include <QtGui/QExposeEvent>
 #include <QtGui/QFont>
@@ -587,6 +588,9 @@ void Sandbox::NotifySystemShuttingDown() {
 }
 
 void Sandbox::QuitWhenStarted() {
+	if (CurrentLaunchState() == LaunchState::QuitProcessed) {
+		return;
+	}
 	if (!QApplication::instance() || !Instance()._started) {
 		QuitOnStartRequested = true;
 	} else {
@@ -1030,6 +1034,10 @@ Sandbox::~Sandbox() {
 
 bool Sandbox::event(QEvent *e) {
 	if (e->type() == QEvent::Quit) {
+		if (CurrentLaunchState() == LaunchState::QuitProcessed) {
+			e->accept();
+			return true;
+		}
 		if (Quitting()) {
 			return QCoreApplication::event(e);
 		}
@@ -1105,7 +1113,15 @@ void Sandbox::socketError(QLocalSocket::LocalSocketError e) {
 	if (Quitting()) return;
 
 	if (_secondInstance) {
+		if (e == QLocalSocket::PeerClosedError) {
+			return;
+		}
 		LOG(("Could not write show command, error %1, quitting...").arg(e));
+		return Quit();
+	}
+	if (_retryingSingleInstance && e != QLocalSocket::ServerNotFoundError
+		&& e != QLocalSocket::ConnectionRefusedError) {
+		LOG(("Single instance retry failed: %1").arg(e));
 		return Quit();
 	}
 
@@ -1128,12 +1144,25 @@ void Sandbox::socketError(QLocalSocket::LocalSocketError e) {
 		return Quit();
 	}
 #endif // Q_OS_MAC
-	psCheckLocalSocket(_localServerName);
+	if (!_retryingSingleInstance) {
+		psCheckLocalSocket(_localServerName);
+	}
 
 	if (!_localServer.listen(_localServerName)) {
+		// Another waiting launch may have won the listener between connect
+		// and listen. Never unlink its socket while retrying.
+		if (_retryingSingleInstance
+			&& _localServer.serverError()
+				   == QAbstractSocket::AddressInUseError) {
+			return retrySingleInstance();
+		}
 		LOG(("Failed to start listening to %1 server: %2").arg(_localServerName, _localServer.errorString()));
 		return Quit();
 	}
+	if (_retryingSingleInstance && _lockFile && !_lockFile->isLocked()) {
+		_lockFile->tryLock();
+	}
+	_retryingSingleInstance = false;
 #ifdef Q_OS_MAC
 	if (MacProtectedPath::IntegrationTestActive()) {
 		const auto fullServerName = _localServer.fullServerName().toUtf8();
@@ -1200,15 +1229,42 @@ void Sandbox::singleInstanceChecked() {
 }
 
 void Sandbox::socketDisconnected() {
-	if (_secondInstance) {
-		DEBUG_LOG(("Sandbox Error: socket disconnected before command response received, quitting..."));
+	if (_secondInstance && !Quitting()) {
+		if (cQuit()) {
+			return Quit();
+		}
+		_secondInstance = false;
+		_localSocketReadData.clear();
+		_retryingSingleInstance = true;
+		retrySingleInstance();
+	}
+}
+
+void Sandbox::retrySingleInstance() {
+	if (_singleInstanceRetryScheduled || Quitting()) {
+		return;
+	}
+	if (++_singleInstanceRetries > 600) {
+		LOG(("Single instance retry timed out."));
 		return Quit();
 	}
+	_singleInstanceRetryScheduled = true;
+	QTimer::singleShot(50, this, [=] {
+		_singleInstanceRetryScheduled = false;
+		if (!Quitting()) {
+			_localSocket.connectToServer(_localServerName);
+		}
+	});
 }
 
 void Sandbox::newInstanceConnected() {
 	DEBUG_LOG(("Sandbox Info: new local socket connected"));
 	for (auto client = _localServer.nextPendingConnection(); client; client = _localServer.nextPendingConnection()) {
+		if (CurrentLaunchState() == LaunchState::QuitProcessed
+			&& !_closingApplication) {
+			client->setParent(this);
+			continue;
+		}
 		_localClients.push_back(LocalClient(client, QByteArray()));
 		connect(
 			client,
@@ -1222,6 +1278,28 @@ void Sandbox::newInstanceConnected() {
 }
 
 void Sandbox::readClients() {
+	if (Quitting()) {
+		for (auto &client : _localClients) {
+			client.second.append(client.first->readAll());
+#if defined(Q_OS_MAC) && defined(TDESKTOP_LIFECYCLE_REGRESSION)
+			if (!client.second.isEmpty()
+				&& qEnvironmentVariableIsSet(
+					"TDESKTOP_EMOJI_SHUTDOWN_RELEASE_FILE")) {
+				fprintf(stderr,
+						"Emoji cache shutdown regression: peer_waiting=1\n");
+			}
+#endif // Q_OS_MAC && TDESKTOP_LIFECYCLE_REGRESSION
+			if (client.second == QByteArray("CMD:quit;")) {
+				client.first->write(
+					u"RES:%1_0;"_q.arg(QApplication::applicationPid())
+						.toLatin1());
+				client.second.clear();
+			} else if (client.second.size() > 9) {
+				client.second.clear();
+			}
+		}
+		return;
+	}
 	// This method can be called before Application is constructed.
 	QList<QUrl> startUrls;
 	for (LocalClients::iterator i = _localClients.begin(), e = _localClients.end(); i != e; ++i) {
@@ -1504,11 +1582,12 @@ void Sandbox::closeApplication() {
 void Sandbox::finishCloseApplication() {
 	_application = nullptr;
 
-	_localServer.close();
+	// Keep peers waiting until this Sandbox releases its instance lock and
+	// listener. QObject destroys these children after the Sandbox members.
 	for (const auto &localClient : base::take(_localClients)) {
-		localClient.first->close();
+		QObject::disconnect(localClient.first, nullptr, nullptr, nullptr);
+		localClient.first->setParent(this);
 	}
-	_localClients.clear();
 
 	_localSocket.close();
 

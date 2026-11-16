@@ -215,8 +215,23 @@ if [[ "${TDESKTOP_FONT_STARTUP_QUIT_REGRESSION:-}" == 1 ]]; then
 	printf 'Font shutdown regression: worker_joined=1 application_created=0 teardown=complete\n'
 	exit 0
 fi
+if [[ -n "${TDESKTOP_EMOJI_SHUTDOWN_RELEASE_FILE:-}" ]]; then
+    printf 'Emoji cache shutdown regression: drain_active=1\n'
+    while [[ ! -e "$TDESKTOP_EMOJI_SHUTDOWN_RELEASE_FILE.peer" ]]; do sleep 0.02; done
+    printf 'Emoji cache shutdown regression: peer_waiting=1\n'
+    while [[ ! -e "$TDESKTOP_EMOJI_SHUTDOWN_RELEASE_FILE" ]]; do sleep 0.02; done
+    exit 0
+fi
+if [[ "${TDESKTOP_EMOJI_RELAUNCH_SECONDARY_TEST:-}" == 1 ]]; then
+    touch "$TDESKTOP_EMOJI_RELAUNCH_TEST_FILE.peer"
+    if [[ "${FONT_TEST_MODE:-}" == emoji-relaunch-early ]]; then exit 0; fi
+    while [[ ! -e "$TDESKTOP_EMOJI_RELAUNCH_TEST_FILE" ]]; do sleep 0.02; done
+    printf 'Font database warmup regression: ready=1 custom-fonts=1\n'
+    exit 0
+fi
 if [[ "${TDESKTOP_EMOJI_CACHE_SHUTDOWN_REGRESSION:-}" == 1 ]]; then
 	printf 'Emoji cache shutdown regression: worker_blocked=1\n'
+	printf 'Emoji cache shutdown regression: repeat_quit=1\n'
 	printf 'Emoji cache shutdown regression: gui_responsive=1 integration_alive=1 worker_returned=1 wait_timed_out=0\n'
 	exit 0
 fi

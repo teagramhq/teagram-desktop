@@ -9,8 +9,10 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "base/debug_log.h"
 #ifdef Q_OS_MAC
+#include "core/sandbox.h"
 #include "ui/emoji_config.h"
 #include <QtCore/QCoreApplication>
+#include <QtCore/QFile>
 #include <QtCore/QThread>
 #include <QtCore/QTimer>
 #include <atomic>
@@ -100,7 +102,11 @@ void PauseEmojiCacheForShutdownRegression() {
 	state.blocked = true;
 	{
 		auto lock = std::unique_lock(state.mutex);
-		if (!state.wake.wait_for(lock, std::chrono::seconds(10),
+		const auto timeout
+			= qEnvironmentVariableIsSet("TDESKTOP_EMOJI_SHUTDOWN_RELEASE_FILE")
+				  ? 45
+				  : 10;
+		if (!state.wake.wait_for(lock, std::chrono::seconds(timeout),
 								 [&] { return state.release; })) {
 			state.timedOut = true;
 		}
@@ -130,14 +136,37 @@ void RunEmojiCacheShutdownRegression(std::function<void(bool)> done) {
 		std::fprintf(stderr,
 					 "Emoji cache shutdown regression: worker_blocked=1\n");
 		QTimer::singleShot(0, QCoreApplication::instance(), [] {
+			std::fprintf(stderr,
+						 "Emoji cache shutdown regression: repeat_quit=1\n");
+			Core::Sandbox::QuitWhenStarted();
 			auto &state = ShutdownState();
 			state.guiResponsive
 				= !state.destroying.load() && !state.workerReturned.load();
-			{
-				const auto lock = std::lock_guard(state.mutex);
-				state.release = true;
+			const auto release = [] {
+				auto &state = ShutdownState();
+				{
+					const auto lock = std::lock_guard(state.mutex);
+					state.release = true;
+				}
+				state.wake.notify_all();
+			};
+			const auto releaseFile
+				= qEnvironmentVariable("TDESKTOP_EMOJI_SHUTDOWN_RELEASE_FILE");
+			if (releaseFile.isEmpty()) {
+				release();
+				return;
 			}
-			state.wake.notify_all();
+			std::fprintf(stderr,
+						 "Emoji cache shutdown regression: drain_active=1\n");
+			const auto poll = new QTimer(QCoreApplication::instance());
+			QObject::connect(poll, &QTimer::timeout, [=] {
+				if (QFile::exists(releaseFile)) {
+					poll->stop();
+					poll->deleteLater();
+					release();
+				}
+			});
+			poll->start(10);
 		});
 		done(true);
 	});

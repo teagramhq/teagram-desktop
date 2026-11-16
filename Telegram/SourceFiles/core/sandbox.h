@@ -126,6 +126,7 @@ private:
 	void socketConnected();
 	void socketError(QLocalSocket::LocalSocketError e);
 	void socketDisconnected();
+	void retrySingleInstance();
 	void socketWritten(qint64 bytes);
 	void socketReading();
 	void newInstanceConnected();
@@ -152,6 +153,9 @@ private:
 	LocalClients _localClients;
 	std::unique_ptr<QLockFile> _lockFile;
 	bool _secondInstance = false;
+	bool _retryingSingleInstance = false;
+	bool _singleInstanceRetryScheduled = false;
+	int _singleInstanceRetries = 0;
 	bool _started = false;
 	static bool QuitOnStartRequested;
 	static bool SystemShuttingDown;
