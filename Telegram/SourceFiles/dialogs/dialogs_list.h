@@ -87,7 +87,6 @@ public:
 
 private:
 	void adjustByName(not_null<Row*> row);
-	[[nodiscard]] bool sortedByDate() const;
 	void rotate(
 		std::vector<not_null<Row*>>::iterator first,
 		std::vector<not_null<Row*>>::iterator middle,

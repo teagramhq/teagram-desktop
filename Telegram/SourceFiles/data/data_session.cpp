@@ -98,11 +98,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <cstdio>
 #endif
 
-#if defined(TDESKTOP_LIFECYCLE_REGRESSION)
-#include <QtCore/QElapsedTimer>
-#include <cstdio>
-#endif
-
 #include <QtCore/QMutexLocker>
 #include <rpl/flatten_latest.h>
 
@@ -3488,14 +3483,6 @@ void Session::processMessages(
 
 void Session::processMessagesInBatch(const QVector<MTPMessage> &data,
 									 NewMessageType type) {
-#if defined(TDESKTOP_LIFECYCLE_REGRESSION)
-	const auto profile
-		= qEnvironmentVariableIsSet("TDESKTOP_DESKTOP_SCALE_CHECK");
-	auto timer = QElapsedTimer();
-	if (profile) {
-		timer.start();
-	}
-#endif
 	auto frozen = std::vector<not_null<Dialogs::IndexedList *>>();
 	const auto freezeList = [&](not_null<Dialogs::MainList *> list) {
 		const auto indexed = list->indexed();
@@ -3518,29 +3505,10 @@ void Session::processMessagesInBatch(const QVector<MTPMessage> &data,
 			}
 		}
 	}
-#if defined(TDESKTOP_LIFECYCLE_REGRESSION)
-	const auto freezeNanos = profile ? timer.nsecsElapsed() : 0;
-#endif
 	const auto unfreeze = gsl::finally([&] {
-#if defined(TDESKTOP_LIFECYCLE_REGRESSION)
-		const auto beforeUnfreeze = profile ? timer.nsecsElapsed() : 0;
-#endif
 		for (const auto &list : frozen) {
 			list->unfreeze();
 		}
-#if defined(TDESKTOP_LIFECYCLE_REGRESSION)
-		if (profile) {
-			std::fprintf(
-				stderr,
-				"DIFFERENCE_PROFILE dialogs=%d messages=%lld freeze_ns=%lld "
-				"process_ns=%lld unfreeze_ns=%lld\n",
-				_chatsList.indexed()->size(),
-				static_cast<long long>(data.size()),
-				static_cast<long long>(freezeNanos),
-				static_cast<long long>(beforeUnfreeze - freezeNanos),
-				static_cast<long long>(timer.nsecsElapsed() - beforeUnfreeze));
-		}
-#endif
 	});
 	processMessages(data, type);
 }
