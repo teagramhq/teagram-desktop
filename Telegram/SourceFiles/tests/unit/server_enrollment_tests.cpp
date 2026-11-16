@@ -1573,6 +1573,30 @@ TEST_CASE(ServerReenrollmentMultiAccountStartupRestoresEncryptedAccountList) {
 	CHECK(QDir(activeDatabasePath).exists());
 }
 
+TEST_CASE(MultiAccountStartupRetainsSkippedSlotsForAsyncRecovery) {
+	QTemporaryDir directory;
+	CHECK(directory.isValid());
+	if (!directory.isValid()) {
+		return;
+	}
+	const auto previousWorkingDir = QDir::currentPath();
+	const auto changedDirectory = QDir::setCurrent(directory.path());
+	CHECK(changedDirectory);
+	if (!changedDirectory) {
+		return;
+	}
+	const auto restoreWorkingDir
+		= gsl::finally([&] { QDir::setCurrent(previousWorkingDir); });
+	const auto dataName = u"pending-logout"_q;
+	const auto key = MakeEnrollmentStorageKey();
+	CHECK(WriteEnrollmentAccountList(dataName, directory.path() + u"/tdata/"_q,
+									 key, {0, 1, 2}, 0));
+	auto restarted = Main::Domain(dataName);
+	CHECK(restarted.local().start(QByteArray())
+		  == Storage::StartResult::Success);
+	CHECK_EQ(int(restarted.accounts().size()), 3);
+}
+
 TEST_CASE(ServerReenrollmentTombstoneReplaysAfterInterruption) {
 	QTemporaryDir directory;
 	CHECK(directory.isValid());
@@ -2724,8 +2748,10 @@ TEST_CASE(LogoutJournalRemovalFailureBlocksRestartAndReenrollment) {
 	auto restarted = Storage::Account(path, localKey, config, true);
 	const auto refused = restarted.recoverEndpointRefreshConfig(
 		std::make_unique<MTP::Config>(*config), {proofKey}, false);
-	CHECK(!refused);
-	CHECK(restarted.customServerPinUnknown());
+	CHECK(refused && refused->dcOptions().unenrolled());
+	CHECK(restarted.endpointRefreshLogoutBlocked());
+	CHECK(restarted.endpointRefreshLogoutIntentVerified());
+	CHECK(!restarted.customServerPinUnknown());
 	const auto removed = std::make_shared<std::optional<bool>>();
 	restarted.clearEndpointRefreshRecords(
 		[removed](bool value) { *removed = value; });
@@ -2739,6 +2765,111 @@ TEST_CASE(LogoutJournalRemovalFailureBlocksRestartAndReenrollment) {
 	const auto recovered = afterCleanup.recoverEndpointRefreshConfig(
 		std::make_unique<MTP::Config>(*config), {proofKey}, false);
 	CHECK(recovered && SameCustomServerPin(first, recovered->customServer()));
+}
+
+TEST_CASE(CorruptLogoutIntentDoesNotStartDestructiveRecovery) {
+	QTemporaryDir directory;
+	CHECK(directory.isValid());
+	if (!directory.isValid()) {
+		return;
+	}
+	const auto previousDirectory = QDir::currentPath();
+	const auto changedDirectory = QDir::setCurrent(directory.path());
+	CHECK(changedDirectory);
+	if (!changedDirectory) {
+		return;
+	}
+	const auto restoreDirectory
+		= gsl::finally([&] { QDir::setCurrent(previousDirectory); });
+	const auto path = directory.path() + u"/account/"_q;
+	const auto key = MakeEnrollmentStorageKey();
+	auto config = std::make_shared<MTP::Config>(MTP::Environment::Production);
+	const auto pin = MakeEndpointRefreshPin("100.124.236.66");
+	CHECK(config->dcOptions().setCustomServer(pin));
+	CHECK(config->dcOptions().markAuthorized(pin.dcId));
+	const auto authorization = QByteArray("preserve authorization");
+	auto account = Storage::Account(path, key, config, true,
+									[authorization] { return authorization; });
+	const auto result = std::make_shared<std::optional<bool>>();
+	account.prepareEndpointRefreshLogout(
+		[result](bool value) { *result = value; });
+	auto timeout = QElapsedTimer();
+	timeout.start();
+	while (!result->has_value() && timeout.elapsed() < 5'000) {
+		QCoreApplication::processEvents();
+		QThread::msleep(1);
+	}
+	CHECK(result->value_or(false));
+	CHECK(account.writeMtpData(true));
+	const auto markerPath = path + u"mtp_endpoint_refresh_logouts"_q;
+	auto marker = QFile(markerPath);
+	CHECK(marker.open(QIODevice::WriteOnly | QIODevice::Truncate));
+	CHECK_EQ(marker.write("corrupt", 7), 7);
+	marker.close();
+	auto restoredAuthorization = QByteArray();
+	auto restarted = Storage::Account(
+		path, key, config, true, [] { return QByteArray(); },
+		[&](const QByteArray &value) { restoredAuthorization = value; });
+	const auto recovered = restarted.recoverEndpointRefreshConfig(
+		std::make_unique<MTP::Config>(*config), {}, false);
+	restarted.readMtpDataForTest();
+	CHECK(!recovered);
+	CHECK(restarted.customServerPinUnknown());
+	CHECK(restarted.endpointRefreshLogoutBlocked());
+	CHECK(!restarted.endpointRefreshLogoutIntentVerified());
+	CHECK(QFileInfo::exists(markerPath));
+	CHECK_EQ(restoredAuthorization, authorization);
+}
+
+TEST_CASE(DurableLogoutIntentHoldsPreviouslySavedAuthorization) {
+	QTemporaryDir directory;
+	CHECK(directory.isValid());
+	if (!directory.isValid()) {
+		return;
+	}
+	const auto previousDirectory = QDir::currentPath();
+	const auto changedDirectory = QDir::setCurrent(directory.path());
+	CHECK(changedDirectory);
+	if (!changedDirectory) {
+		return;
+	}
+	const auto restoreDirectory = gsl::finally([&] {
+		Storage::details::SetEndpointConfigWriteHookForRegressionTest(nullptr);
+		QDir::setCurrent(previousDirectory);
+	});
+	const auto path = directory.path() + u"/account/"_q;
+	const auto key = MakeEnrollmentStorageKey();
+	auto config = MakeEnrollmentConfig();
+	CHECK(config->dcOptions().markAuthorized(2));
+	const auto authorization = QByteArray("previous authorization");
+	auto account = Storage::Account(path, key, config, true,
+									[authorization] { return authorization; });
+	CHECK(account.writeMtpData(true));
+	const auto result = std::make_shared<std::optional<bool>>();
+	account.prepareEndpointRefreshLogout(
+		[result](bool value) { *result = value; },
+		[] {
+			Storage::details::SetEndpointConfigWriteHookForRegressionTest(
+				[] { return false; });
+		});
+	auto timeout = QElapsedTimer();
+	timeout.start();
+	while (!result->has_value() && timeout.elapsed() < 5'000) {
+		QCoreApplication::processEvents();
+		QThread::msleep(1);
+	}
+	CHECK(result->has_value() && !result->value_or(true));
+	auto readAuthorization = QByteArray();
+	auto restarted = Storage::Account(
+		path, key, config, true, [] { return QByteArray(); },
+		[&](const QByteArray &value) { readAuthorization = value; });
+	restarted.readMtpDataForTest();
+	CHECK_EQ(readAuthorization, authorization);
+	const auto recovered = restarted.recoverEndpointRefreshConfig(
+		std::make_unique<MTP::Config>(*config), {}, true);
+	CHECK(recovered && recovered->dcOptions().unenrolled());
+	CHECK(restarted.endpointRefreshLogoutBlocked());
+	CHECK(restarted.endpointRefreshLogoutIntentVerified());
 }
 
 TEST_CASE(EndpointRefreshRestartRejectsAChangedStoredKey) {

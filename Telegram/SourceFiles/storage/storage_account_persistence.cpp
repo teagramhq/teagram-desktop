@@ -624,6 +624,7 @@ bool Account::completeServerForget() {
 	details::Sync();
 	_serverForgetBlocked = false;
 	_endpointRefreshLogoutBlocked = false;
+	_endpointRefreshLogoutIntentVerified = false;
 	return true;
 }
 
@@ -1251,6 +1252,7 @@ struct EndpointRefreshRecovery {
 	std::unique_ptr<MTP::Config> original;
 	bool failed = false;
 	bool logoutPending = false;
+	bool logoutIntentVerified = false;
 };
 
 [[nodiscard]] EndpointRefreshRecovery RecoverEndpointRefreshConfig(
@@ -1273,9 +1275,31 @@ struct EndpointRefreshRecovery {
 		return {nullptr, nullptr, true, false};
 	};
 	const auto logoutPending = exists(kEndpointRefreshLogoutRecord);
-	if (!logoutPending || *logoutPending) {
+	if (!logoutPending) {
+		LOG(("MTP Error: could not inspect endpoint refresh logout intent."));
+		return {nullptr, nullptr, true, true, false};
+	}
+	if (*logoutPending) {
+		FileReadDescriptor marker;
+		if (!localKey
+			|| !ReadEncryptedFile(marker, kEndpointRefreshLogoutRecord,
+								  basePath, localKey)) {
+			LOG(("MTP Error: could not read endpoint refresh logout intent."));
+			return {nullptr, nullptr, true, true, false};
+		}
+		quint32 version = 0;
+		marker.stream >> version;
+		if (!CheckStreamStatus(marker.stream) || !marker.stream.atEnd()
+			|| version != 1) {
+			LOG(("MTP Error: invalid endpoint refresh logout intent."));
+			return {nullptr, nullptr, true, true, false};
+		}
 		LOG(("MTP Error: endpoint refresh logout cleanup is incomplete."));
-		return {nullptr, nullptr, true, true};
+		auto unenrolled = std::make_unique<MTP::Config>(
+			current && current->isTestMode() ? MTP::Environment::Test
+											 : MTP::Environment::Production);
+		unenrolled->dcOptions().constructUnenrolled();
+		return {std::move(unenrolled), nullptr, false, true, true};
 	}
 	if (current && current->blocked()) {
 		return {std::move(current), nullptr, false, false};
@@ -1377,6 +1401,7 @@ Account::recoverEndpointRefreshConfig(std::unique_ptr<MTP::Config> current,
 	auto result = RecoverEndpointRefreshConfig(
 		_basePath, _localKey, std::move(current), keys, restoredSession);
 	_endpointRefreshLogoutBlocked = result.logoutPending;
+	_endpointRefreshLogoutIntentVerified = result.logoutIntentVerified;
 	if (result.failed) {
 		_customServerPinUnknown = true;
 		return nullptr;
@@ -1420,6 +1445,8 @@ void Account::recoverEndpointRefreshConfigAsync(
 					_customServerPinUnknown = true;
 				}
 				_endpointRefreshLogoutBlocked = result->logoutPending;
+				_endpointRefreshLogoutIntentVerified
+					= result->logoutIntentVerified;
 				if (result->original) {
 					_endpointRefreshOriginalConfig
 						= std::move(result->original);
@@ -1446,6 +1473,8 @@ void Account::prepareEndpointRefreshLogout(Fn<void(bool)> done,
 			done(false);
 			return;
 		}
+		_endpointRefreshLogoutBlocked = true;
+		_endpointRefreshLogoutIntentVerified = true;
 		if (intentDurable) {
 			intentDurable();
 			if (alive.expired()) {
@@ -1514,6 +1543,7 @@ void Account::finishEndpointRefreshLogout(Fn<void(bool)> done) {
 				if (!alive.expired()) {
 					if (removed) {
 						_endpointRefreshLogoutBlocked = false;
+						_endpointRefreshLogoutIntentVerified = false;
 					}
 					done(removed);
 				}

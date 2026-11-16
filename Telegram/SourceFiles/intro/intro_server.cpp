@@ -245,6 +245,7 @@ void ServerWidget::setupSelection() {
 void ServerWidget::setupBound() {
 	const auto blocked = serverStepState().blocked;
 	const auto authorized = account().sessionExists();
+	const auto retryLogout = account().logoutCleanupFailed() && !authorized;
 	const auto custom = account().mtp().dcOptions().customServer();
 	const auto endpoint = custom.serverSelection.empty()
 		? (custom.empty() ? QString() : CustomServerEndpoint(custom))
@@ -311,12 +312,17 @@ void ServerWidget::setupBound() {
 		_savedStatus->setText(
 			account().logoutCleanupPending()
 				? tr::lng_intro_please_wait(tr::now)
+			: retryLogout
+				? tr::lng_teagram_logout_storage_failed(tr::now)
 				: tr::lng_intro_server_saved_settings_unreadable(tr::now));
 		_savedStatus->show();
-		_savedContinue->setDisabled(true);
+		_savedContinue->setDisabled(!retryLogout);
+		if (retryLogout) {
+			_savedContinue->setText(tr::lng_intro_server_try_again());
+		}
 		_savedAddressLabel->hide();
 		_savedAddress->hide();
-		_savedContinue->hide();
+		_savedContinue->setVisible(retryLogout);
 	} else if (authorized) {
 		_savedContinue->hide();
 	}
@@ -339,10 +345,15 @@ void ServerWidget::switchToBound() {
 	_status->hide();
 	_continue->hide();
 	const auto blocked = serverStepState().blocked;
+	const auto retryLogout
+		= account().logoutCleanupFailed() && !account().sessionExists();
 	_savedAddressLabel->setVisible(!blocked);
 	_savedAddress->setVisible(!blocked);
-	_savedContinue->setVisible(!blocked && !account().sessionExists());
-	_savedContinue->setDisabled(blocked);
+	_savedContinue->setText(retryLogout ? tr::lng_intro_server_try_again()
+										: tr::lng_intro_server_continue());
+	_savedContinue->setVisible(retryLogout
+							   || (!blocked && !account().sessionExists()));
+	_savedContinue->setDisabled(blocked && !retryLogout);
 	_addAccount->show();
 	const auto custom = account().mtp().dcOptions().customServer();
 	_savedAddress->setText(custom.serverSelection.empty()
@@ -352,6 +363,8 @@ void ServerWidget::switchToBound() {
 		_savedStatus->setText(
 			account().logoutCleanupPending()
 				? tr::lng_intro_please_wait(tr::now)
+			: retryLogout
+				? tr::lng_teagram_logout_storage_failed(tr::now)
 				: tr::lng_intro_server_saved_settings_unreadable(tr::now));
 		_savedStatus->show();
 	} else {
@@ -390,7 +403,8 @@ int ServerWidget::nextButtonTop() const {
 void ServerWidget::setInnerFocus() {
 	refreshMode();
 	if (_readOnly) {
-		if (serverStepState().blocked || account().sessionExists()) {
+		if ((serverStepState().blocked && !account().logoutCleanupFailed())
+			|| account().sessionExists()) {
 			_addAccount->setFocus(Qt::OtherFocusReason);
 		} else {
 			_savedContinue->setFocus(Qt::OtherFocusReason);
@@ -414,6 +428,10 @@ void ServerWidget::submit() {
 	}
 	if (!_readOnly) {
 		submitSelection();
+		return;
+	}
+	if (account().logoutCleanupFailed() && !account().sessionExists()) {
+		account().logOut();
 		return;
 	}
 	const auto blocked = serverStepState().blocked;
@@ -478,7 +496,10 @@ void ServerWidget::layoutContent() {
 }
 
 QWidget *ServerWidget::firstTabWidget() const {
-	if (_readOnly && serverStepState().blocked) {
+	if (_readOnly && serverStepState().blocked
+		&& account().logoutCleanupFailed() && !account().sessionExists()) {
+		return _savedContinue;
+	} else if (_readOnly && serverStepState().blocked) {
 		return _addAccount;
 	}
 	return _readOnly
@@ -495,6 +516,9 @@ QWidget *ServerWidget::lastTabWidget() const {
 QWidget *ServerWidget::nextButtonFocusWidget() const {
 	if (!_readOnly) {
 		return _continue;
+	} else if (serverStepState().blocked && account().logoutCleanupFailed()
+			   && !account().sessionExists()) {
+		return _savedContinue;
 	} else if (serverStepState().blocked || account().sessionExists()) {
 		return _addAccount;
 	} else {

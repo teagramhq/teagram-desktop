@@ -12,10 +12,15 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "mtproto/mtproto_server_enrollment.h"
 #include "mtproto/mtp_instance.h"
 #include "base/weak_ptr.h"
+#include "base/weak_qptr.h"
 
 #include <optional>
 
 class QTimer;
+
+namespace Ui {
+class GenericBox;
+} // namespace Ui
 
 namespace Storage {
 class Account;
@@ -70,7 +75,7 @@ public:
 		std::shared_ptr<MTP::AuthKey> localKey);
 	void prepareToStartAdded(
 		std::shared_ptr<MTP::AuthKey> localKey);
-	void start(std::unique_ptr<MTP::Config> config);
+	void start(std::unique_ptr<MTP::Config> config, bool recoveryOnly = false);
 	[[nodiscard]] bool startPending() const { return _startPending; }
 	[[nodiscard]] rpl::producer<> startFinished() const {
 		return _startFinished.events();
@@ -91,6 +96,9 @@ public:
 	[[nodiscard]] bool loggingOut() const;
 	[[nodiscard]] bool logoutCleanupPending() const {
 		return _logoutCleanupPending;
+	}
+	[[nodiscard]] bool logoutCleanupFailed() const {
+		return _logoutCleanupFailed;
 	}
 	[[nodiscard]] rpl::producer<> logoutCleanupChanges() const {
 		return _logoutCleanupChanges.events();
@@ -231,6 +239,7 @@ private:
 	void loggedOut();
 	void continueLogoutCleanup();
 	void finishLogoutCleanup(bool success);
+	void showLogoutCleanupFailure();
 	void destroySession(DestroyReason reason);
 
 	const not_null<Domain*> _domain;
@@ -249,6 +258,7 @@ private:
 	rpl::event_stream<> _serverCacheBindingMismatch;
 	rpl::event_stream<> _startFinished;
 	rpl::event_stream<> _logoutCleanupChanges;
+	base::weak_qptr<Ui::GenericBox> _logoutFailureBox;
 
 	Owned<AppConfig> _appConfig;
 
@@ -270,6 +280,7 @@ private:
 	bool _logoutCleanupPending = false;
 	bool _logoutCleanupFailed = false;
 	bool _startPending = false;
+	bool _startRecoveryOnly = false;
 	bool _preparingStartup = false;
 	bool _startupAuthorizationAttempted = false;
 	bool _startupSessionPrepared = false;

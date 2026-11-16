@@ -98,7 +98,9 @@ void Domain::waitForAccountsToStart() {
 
 void Domain::finish() {
 	_starting = false;
+	_removeRedundantAfterStarting = false;
 	_accountToActivate = -1;
+	_startupRecoveryOnly.clear();
 	_active.reset(nullptr);
 	base::take(_accounts);
 }
@@ -116,13 +118,18 @@ void Domain::suggestExportIfNeeded() {
 	}
 }
 
-void Domain::accountAddedInStorage(AccountWithIndex accountWithIndex) {
+void Domain::accountAddedInStorage(AccountWithIndex accountWithIndex,
+								   bool recoveryOnly) {
 	Expects(accountWithIndex.account != nullptr);
 
 	for (const auto &[index, _] : _accounts) {
 		if (index == accountWithIndex.index) {
 			Unexpected("Repeated account index.");
 		}
+	}
+	if (recoveryOnly) {
+		_startupRecoveryOnly.emplace(accountWithIndex.index);
+		_removeRedundantAfterStarting = true;
 	}
 	_accounts.push_back(std::move(accountWithIndex));
 }
@@ -150,17 +157,31 @@ void Domain::resetWithForgottenPasscode() {
 void Domain::activateAfterStarting() {
 	Expects(!_accounts.empty());
 
-	auto toActivate = _accounts.front().account.get();
+	auto toActivate = static_cast<Account *>(nullptr);
 	for (const auto &[index, account] : _accounts) {
-		if (index == _accountToActivate) {
+		if (!toActivate && !_startupRecoveryOnly.contains(index)) {
 			toActivate = account.get();
 		}
 		watchSession(account.get());
 	}
+	Assert(toActivate != nullptr);
+	for (const auto &[index, account] : _accounts) {
+		if (index == _accountToActivate
+			&& (!_startupRecoveryOnly.contains(index) || account->loggingOut()
+				|| account->mtp().dcOptions().blocked())) {
+			toActivate = account.get();
+			break;
+		}
+	}
 
 	activate(toActivate);
 	if (_removeRedundantAfterStarting) {
-		removeRedundantAccounts();
+		const auto activated = base::make_weak(toActivate);
+		crl::on_main(this, [=] {
+			if (started() && activated.get()) {
+				removeRedundantAccounts();
+			}
+		});
 	} else {
 		removePasscodeIfEmpty();
 	}
@@ -459,11 +480,15 @@ void Domain::removeRedundantAccounts() {
 		// headless regression, but dropping it invalidates _active.
 		if (i->account.get() == _active.current()
 			|| Core::App().separateWindowFor(not_null(i->account.get()))
-			|| i->account->sessionExists() || i->account->loggingOut()) {
+			|| i->account->sessionExists() || i->account->loggingOut()
+			|| (_startupRecoveryOnly.contains(i->index)
+				&& (i->account->startPending()
+					|| i->account->mtp().dcOptions().blocked()))) {
 			++i;
 			continue;
 		}
 		checkForLastProductionConfig(i->account.get());
+		_startupRecoveryOnly.remove(i->index);
 		i = _accounts.erase(i);
 	}
 

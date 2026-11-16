@@ -184,6 +184,10 @@ Account::Account(not_null<Domain *> domain, const QString &dataName, int index)
 }
 
 Account::~Account() {
+	if (const auto box = _logoutFailureBox.get()) {
+		_logoutFailureBox.reset();
+		box->closeBox();
+	}
 	cancelServerEndpointRefresh();
 	// Auth keys are normally persisted from a postponed write request. During
 	// shutdown the event loop can finish before that callback runs, so take a
@@ -234,7 +238,8 @@ std::unique_ptr<MTP::Config> Account::prepareToStart(
 	return _local->start(std::move(localKey));
 }
 
-void Account::start(std::unique_ptr<MTP::Config> config) {
+void Account::start(std::unique_ptr<MTP::Config> config, bool recoveryOnly) {
+	_startRecoveryOnly = recoveryOnly;
 	if (!details::ShouldRestoreStoredSession(
 			bool(_sessionUserId), !_sessionUserSerialized.isEmpty())) {
 		_sessionUserId = 0;
@@ -275,6 +280,17 @@ void Account::start(std::unique_ptr<MTP::Config> config) {
 
 bool Account::startWithRecoveredConfig(std::unique_ptr<MTP::Config> config) {
 	_appConfig = std::make_unique<AppConfig>(this);
+	const auto resumingLogout = _local->endpointRefreshLogoutIntentVerified();
+	const auto storedUserId = _sessionUserId;
+	if (resumingLogout || _startRecoveryOnly) {
+		_loggingOut = resumingLogout;
+		_sessionUserId = 0;
+		_sessionUserSerialized = {};
+		_sessionUserStreamVersion = 0;
+		_storedSessionSettings.reset();
+		_mtpFields.keys.clear();
+		discardStaleAuthorizationState();
+	}
 
 	// An account pinned to a user-entered endpoint and RSA key must
 	// never fall through to Telegram's built-in table and keys, which
@@ -287,14 +303,15 @@ bool Account::startWithRecoveredConfig(std::unique_ptr<MTP::Config> config) {
 		: MTP::CustomServer();
 	const auto forgetBinding = Storage::ServerCacheBinding{
 		.fingerprintKnown = bool(originalPin.key),
-		.fingerprint = originalPin.key
-			? originalPin.key->fingerprint()
-			: uint64(0),
-		.userIdKnown = bool(_sessionUserId),
-		.userId = _sessionUserId.bare,
+		.fingerprint
+		= originalPin.key ? originalPin.key->fingerprint() : uint64(0),
+		.userIdKnown = bool(storedUserId),
+		.userId = storedUserId.bare,
 	};
 	auto failure = [&] {
-		if (_local->serverForgetBlocked()) {
+		if (resumingLogout) {
+			return PinFailure::None;
+		} else if (_local->serverForgetBlocked()) {
 			return PinFailure::ForgetTransitionFailed;
 		} else if (_local->mtpAuthorizationWriteFailed()) {
 			return PinFailure::AuthorizationWriteFailed;
@@ -303,8 +320,8 @@ bool Account::startWithRecoveredConfig(std::unique_ptr<MTP::Config> config) {
 		} else if (_local->customServerPinUnknown()) {
 			return PinFailure::MarkerUnreadable;
 		} else if (details::ShouldBlockRestoredSessionWithoutServerPin(
-				bool(_sessionUserId),
-				config && config->hasCustomServer())) {
+					   bool(_sessionUserId),
+					   config && config->hasCustomServer())) {
 			return PinFailure::PinMissing;
 		} else if (!_local->hasStoredCustomServer()) {
 			return PinFailure::None;
@@ -413,9 +430,11 @@ bool Account::startWithRecoveredConfig(std::unique_ptr<MTP::Config> config) {
 			_mtpKeysToDestroyPin = customServer;
 		}
 	}
-	const auto startPaused = !_sessionUserId
-		&& (!customServer.key
-			|| !config->dcOptions().isAuthorized(customServer.dcId));
+	const auto startPaused
+		= _startRecoveryOnly
+		  || (!_sessionUserId
+			  && (!customServer.key
+				  || !config->dcOptions().isAuthorized(customServer.dcId)));
 	if (!startMtp(std::move(config), startPaused)) {
 		return false;
 	}
@@ -453,7 +472,7 @@ void Account::finishRestoredStartup(bool persisted) {
 			}));
 		return;
 	}
-	if (!persisted && _mtp) {
+	if (!persisted && _mtp && !_local->endpointRefreshLogoutIntentVerified()) {
 		_mtp->dcOptions().constructBlocked();
 	}
 	if (persisted && _startupSessionPrepared) {
@@ -470,6 +489,9 @@ void Account::finishRestoredStartup(bool persisted) {
 		_appConfig->start();
 		watchProxyChanges();
 		watchSessionChanges();
+	}
+	if (_local->endpointRefreshLogoutIntentVerified() && _mtp) {
+		loggedOut();
 	}
 	finishPendingStartup();
 }
@@ -1144,6 +1166,11 @@ void Account::loggedOut() {
 	if (_logoutCleanupPending) {
 		return;
 	}
+	if (const auto box = _logoutFailureBox.get()) {
+		_logoutFailureBox.reset();
+		box->closeBox();
+	}
+	const auto hadSession = sessionExists();
 	_loggingOut = true;
 	_logoutCleanupPending = true;
 	_logoutCleanupFailed = false;
@@ -1152,6 +1179,7 @@ void Account::loggedOut() {
 	if (_mtp) {
 		_mtp->holdForServerEnrollment();
 	}
+	_logoutCleanupChanges.fire({});
 	discardStaleAuthorizationState();
 	local().forgetTelegramStickerBotTokenForLogout();
 	local().prepareEndpointRefreshLogout(
@@ -1171,7 +1199,11 @@ void Account::loggedOut() {
 						   }));
 				   }),
 		crl::guard(this, [=] { destroySession(DestroyReason::LoggedOut); }));
-	Media::Player::mixer()->stopAndClear();
+	if (hadSession) {
+		if (const auto mixer = Media::Player::mixer()) {
+			mixer->stopAndClear();
+		}
+	}
 }
 
 void Account::continueLogoutCleanup() {
@@ -1226,23 +1258,10 @@ void Account::finishLogoutCleanup(bool success) {
 		_logoutCleanupFailed = true;
 		LOG(("MTP Error: logout storage cleanup failed; keeping enrollment "
 			 "blocked."));
-		if (sessionExists()) {
-			const auto retry = crl::guard(this, [=] { logOut(); });
-			auto message = Box([=](not_null<Ui::GenericBox *> box) {
-				box->addRow(object_ptr<Ui::FlatLabel>(
-								box.get(),
-								tr::lng_teagram_logout_storage_failed(tr::now),
-								st::boxLabel),
-							st::boxPadding);
-				box->addButton(tr::lng_intro_server_try_again(), [=] {
-					box->closeBox();
-					retry();
-				});
-				box->addButton(tr::lng_cancel(), [=] { box->closeBox(); });
-			});
-			if (const auto window = Core::App().windowFor(not_null{this})) {
-				window->show(std::move(message));
-			}
+		showLogoutCleanupFailure();
+		if (!sessionExists() && _domain->starting()) {
+			_domain->startFinished() | rpl::take(1)
+				| rpl::on_next([=] { showLogoutCleanupFailure(); }, _lifetime);
 		}
 		_logoutCleanupChanges.fire({});
 		return;
@@ -1254,10 +1273,47 @@ void Account::finishLogoutCleanup(bool success) {
 	const auto domain = _domain;
 	_logoutCleanupChanges.fire({});
 	crl::on_main(domain, [=] {
-		if (domain->started()) {
+		if (domain->started() || domain->starting()) {
 			domain->removeRedundantAccounts();
 		}
 	});
+}
+
+void Account::showLogoutCleanupFailure() {
+	if (!_logoutCleanupFailed || _logoutFailureBox) {
+		return;
+	}
+	if (!sessionExists()) {
+		if (!_domain->started() || &_domain->active() == this
+			|| !ranges::any_of(_domain->accounts(), [=](const auto &entry) {
+				   return entry.account.get() == this;
+			   })) {
+			return;
+		}
+	}
+	const auto window = Core::App().windowFor(not_null{this});
+	if (!window) {
+		return;
+	}
+	const auto retry = crl::guard(this, [=] {
+		_logoutFailureBox.reset();
+		if (_logoutCleanupFailed) {
+			logOut();
+		}
+	});
+	auto message = Box([=](not_null<Ui::GenericBox *> box) {
+		box->addRow(object_ptr<Ui::FlatLabel>(
+						box.get(),
+						tr::lng_teagram_logout_storage_failed(tr::now),
+						st::boxLabel),
+					st::boxPadding);
+		box->addButton(tr::lng_intro_server_try_again(), [=] {
+			box->closeBox();
+			retry();
+		});
+		box->addButton(tr::lng_cancel(), [=] { box->closeBox(); });
+	});
+	_logoutFailureBox = window->show(std::move(message));
 }
 
 void Account::discardStaleAuthorizationState() {

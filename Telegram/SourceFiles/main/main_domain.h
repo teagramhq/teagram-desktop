@@ -7,6 +7,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #pragma once
 
+#include "base/flat_set.h"
 #include "base/timer.h"
 #include "base/weak_ptr.h"
 
@@ -86,7 +87,8 @@ public:
 	void removeRedundantAccounts();
 
 	// Interface for Storage::Domain.
-	void accountAddedInStorage(AccountWithIndex accountWithIndex);
+	void accountAddedInStorage(AccountWithIndex accountWithIndex,
+							   bool recoveryOnly = false);
 	void activateFromStorage(int index);
 	[[nodiscard]] int activeForStorage() const;
 
@@ -106,6 +108,7 @@ private:
 	const std::unique_ptr<Storage::Domain> _local;
 
 	std::vector<AccountWithIndex> _accounts;
+	base::flat_set<int> _startupRecoveryOnly;
 	rpl::event_stream<> _accountsChanges;
 	rpl::variable<Account*> _active = nullptr;
 	rpl::event_stream<> _activations;

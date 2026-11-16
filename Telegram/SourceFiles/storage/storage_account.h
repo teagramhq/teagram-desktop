@@ -138,6 +138,9 @@ public:
 	[[nodiscard]] bool endpointRefreshLogoutBlocked() const {
 		return _endpointRefreshLogoutBlocked;
 	}
+	[[nodiscard]] bool endpointRefreshLogoutIntentVerified() const {
+		return _endpointRefreshLogoutIntentVerified;
+	}
 	// Persist the reason an account had to be blocked, so the block
 	// survives a restart on its own: the blocked config is never
 	// written back, and the prefs that failed to read are deleted.
@@ -456,6 +459,7 @@ private:
 	bool _mtpAuthorizationWriteFailed = false;
 	bool _serverForgetBlocked = false;
 	bool _endpointRefreshLogoutBlocked = false;
+	bool _endpointRefreshLogoutIntentVerified = false;
 	std::unique_ptr<MTP::Config> _endpointRefreshOriginalConfig;
 	std::shared_ptr<char> _endpointRecoveryLifetime = std::make_shared<char>();
 
