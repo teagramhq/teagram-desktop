@@ -20104,14 +20104,20 @@ RunDesktopScaleSearchAndUpdates(Main::Domain &domain, int dialogCount,
 							batchFirstId, kBatchDialogCount,
 							int(base::unixtime::now()) + kBatchUpdateCount + 10,
 							kBatchUpdateCount);
-						data.processMessagesInBatch(messages, NewMessageType::Unread);
-						baselineStateMatches = DesktopScaleUpdateBurstStateMatches(
-							beforeBatch, *data.chatsList(), batchFirstId,
-							kBatchDialogCount, kBatchUpdateCount, false);
+						data.processMessagesInBatch(messages,
+													NewMessageType::Unread);
+						baselineStateMatches
+							= DesktopScaleUpdateBurstStateMatches(
+								beforeBatch, *data.chatsList(), batchFirstId,
+								kBatchDialogCount, kBatchUpdateCount, false);
 						for (auto i = 0; i != kBatchUpdateCount; ++i) {
-							baselineStateMatches = baselineStateMatches
-								&& data.message(peerFromUser(UserId(batchFirstId.bare + i)),
-									MsgId(kDesktopScaleUpdateMessageBase + i));
+							baselineStateMatches
+								= baselineStateMatches
+								  && data.message(
+									  peerFromUser(
+										  UserId(batchFirstId.bare + i)),
+									  MsgId(kDesktopScaleUpdateMessageBase
+											+ i));
 						}
 					}
 				}
