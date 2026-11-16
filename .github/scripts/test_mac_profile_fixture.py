@@ -30,7 +30,14 @@ if [[ -n "${TDESKTOP_PROFILE_LOCK_REFUSAL_REGRESSION:-}" ]]; then
     refusal_path="$HOME/Library/Group Containers/6N38VWS5BX.ru.keepcoder.Telegram/refused-profile.lock"
     if [[ "${TDESKTOP_FONT_TEST_MODE:-${FONT_TEST_MODE:-}}" == lock-refusal-no-window ]]; then refusal_window=0; fi
     if [[ "${TDESKTOP_FONT_TEST_MODE:-${FONT_TEST_MODE:-}}" == lock-refusal-no-path ]]; then refusal_path='missing'; fi
-    printf 'Profile lock refusal regression: failure_window=%s window_contains_error=1 operation=stat path=%s\\n' "$refusal_window" "$refusal_path"
+    policy_operation=stat
+    reported_operation=stat
+    window_contains_error=1
+    if [[ "${TDESKTOP_FONT_TEST_MODE:-${FONT_TEST_MODE:-}}" == lock-refusal-wrong-policy ]]; then policy_operation=write; fi
+    if [[ "${TDESKTOP_FONT_TEST_MODE:-${FONT_TEST_MODE:-}}" == lock-refusal-wrong-reported ]]; then reported_operation=write; fi
+    if [[ "${TDESKTOP_FONT_TEST_MODE:-${FONT_TEST_MODE:-}}" == lock-refusal-wrong-window ]]; then window_contains_error=0; fi
+    printf 'Mac protected path refusal: operation=%s class=group-container callsite=int Core::Sandbox::start()\\n' "$policy_operation"
+    printf 'Profile lock refusal regression: failure_window=%s window_contains_error=%s operation=%s path=%s\\n' "$refusal_window" "$window_contains_error" "$reported_operation" "$refusal_path"
     exit 1
 fi
 if [[ -n "${TDESKTOP_PROFILE_LOCK_REGRESSION:-}" ]]; then
@@ -287,7 +294,14 @@ if [[ -n "${TDESKTOP_PROFILE_LOCK_REFUSAL_REGRESSION:-}" ]]; then
     refusal_path="$HOME/Library/Group Containers/6N38VWS5BX.ru.keepcoder.Telegram/refused-profile.lock"
     if [[ "${TDESKTOP_FONT_TEST_MODE:-${FONT_TEST_MODE:-}}" == lock-refusal-no-window ]]; then refusal_window=0; fi
     if [[ "${TDESKTOP_FONT_TEST_MODE:-${FONT_TEST_MODE:-}}" == lock-refusal-no-path ]]; then refusal_path='missing'; fi
-    printf 'Profile lock refusal regression: failure_window=%s window_contains_error=1 operation=stat path=%s\\n' "$refusal_window" "$refusal_path"
+    policy_operation=stat
+    reported_operation=stat
+    window_contains_error=1
+    if [[ "${TDESKTOP_FONT_TEST_MODE:-${FONT_TEST_MODE:-}}" == lock-refusal-wrong-policy ]]; then policy_operation=write; fi
+    if [[ "${TDESKTOP_FONT_TEST_MODE:-${FONT_TEST_MODE:-}}" == lock-refusal-wrong-reported ]]; then reported_operation=write; fi
+    if [[ "${TDESKTOP_FONT_TEST_MODE:-${FONT_TEST_MODE:-}}" == lock-refusal-wrong-window ]]; then window_contains_error=0; fi
+    printf 'Mac protected path refusal: operation=%s class=group-container callsite=int Core::Sandbox::start()\\n' "$policy_operation"
+    printf 'Profile lock refusal regression: failure_window=%s window_contains_error=%s operation=%s path=%s\\n' "$refusal_window" "$window_contains_error" "$reported_operation" "$refusal_path"
     exit 1
 fi
 if [[ -n "${TDESKTOP_PROFILE_LOCK_REGRESSION:-}" ]]; then
@@ -529,6 +543,12 @@ assert 'socket error regression failed: mode=lock-refused' in font_startup_refus
 font_startup_refusal_no_path = run_font_startup_fixture(
     50_000_000, 50_000_000, 1, mode='lock-refusal-no-path')
 assert 'socket error regression failed: mode=lock-refused' in font_startup_refusal_no_path
+font_startup_refusal_wrong_policy = run_font_startup_fixture(
+    50_000_000, 50_000_000, 1, mode='lock-refusal-wrong-policy')
+assert 'socket error regression failed: mode=lock-refused' in font_startup_refusal_wrong_policy
+for mode in ('lock-refusal-wrong-reported', 'lock-refusal-wrong-window'):
+    output = run_font_startup_fixture(50_000_000, 50_000_000, 1, mode=mode)
+    assert 'socket error regression failed: mode=lock-refused' in output
 font_startup_lock_no_window = run_font_startup_fixture(
     50_000_000, 50_000_000, 1, mode='lock-error-no-window')
 assert 'socket error regression failed: mode=lock-error' in font_startup_lock_no_window

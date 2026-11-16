@@ -453,8 +453,8 @@ int Sandbox::start() {
 				closeApplication();
 				return 1;
 			}
-			QTimer::singleShot(0, this, [this, diagnostic] {
-				showSingleInstanceError(diagnostic);
+			QTimer::singleShot(0, this, [this, diagnostic, refusedOperation] {
+				showSingleInstanceError(diagnostic, refusedOperation);
 			});
 			_started = true;
 			exec();
@@ -1411,7 +1411,8 @@ void Sandbox::retrySingleInstance() {
 	});
 }
 
-void Sandbox::showSingleInstanceError(QString diagnostic) {
+void Sandbox::showSingleInstanceError(
+	QString diagnostic, [[maybe_unused]] QString refusedOperation) {
 	if (_singleInstanceLock && _singleInstanceLock->isAcquired()) {
 		_singleInstanceLock->release();
 	}
@@ -1428,14 +1429,19 @@ void Sandbox::showSingleInstanceError(QString diagnostic) {
 		const auto path
 			= qEnvironmentVariable("TDESKTOP_MAC_PROFILE_TEST_HOME")
 			  + u"/Library/Group Containers/6N38VWS5BX.ru.keepcoder.Telegram/refused-profile.lock"_q;
-		const auto visible = text && text->toPlainText().contains(path)
-							 && text->toPlainText().contains(u"stat"_q);
+		const auto expected
+			= u"Protected profile lock path refused (%1): %2"_q.arg(
+				refusedOperation, path);
+		const auto visible
+			= !refusedOperation.isEmpty() && text
+			  && text->toPlainText().startsWith(expected + u"\n\n"_q);
 		const auto encoded = path.toUtf8();
+		const auto operation = refusedOperation.toUtf8();
 		fprintf(stderr,
 				"Profile lock refusal regression: failure_window=%d "
-				"window_contains_error=%d operation=stat path=%s\n",
+				"window_contains_error=%d operation=%s path=%s\n",
 				window->isVisible() ? 1 : 0, visible ? 1 : 0,
-				encoded.constData());
+				operation.constData(), encoded.constData());
 		QTimer::singleShot(0, this, [] { QCoreApplication::exit(1); });
 	}
 	if (qEnvironmentVariableIsSet("TDESKTOP_PROFILE_LOCK_REGRESSION")) {

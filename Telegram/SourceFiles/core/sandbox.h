@@ -128,7 +128,8 @@ private:
 	void socketError(QLocalSocket::LocalSocketError e);
 	void socketDisconnected();
 	void retrySingleInstance();
-	void showSingleInstanceError(QString diagnostic = QString());
+	void showSingleInstanceError(QString diagnostic = QString(),
+								 QString refusedOperation = QString());
 	void socketWritten(qint64 bytes);
 	void socketReading();
 	void newInstanceConnected();

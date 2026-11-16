@@ -42,9 +42,16 @@ def main():
                                r'window_contains_error=1 reason=.+', output)
         elif mode == 'lock-refused':
             protected = home / 'Library/Group Containers/6N38VWS5BX.ru.keepcoder.Telegram/refused-profile.lock'
-            passed = ('Profile lock refusal regression: failure_window=1 '
-                      'window_contains_error=1 operation=stat '
-                      f'path={protected}' in output and not protected.exists())
+            policy = re.search(
+                r'Mac protected path refusal: operation=(\w+) '
+                r'class=group-container callsite=[^\n]*Sandbox::start', output)
+            window = re.search(
+                r'Profile lock refusal regression: failure_window=1 '
+                r'window_contains_error=1 operation=(\w+) path=([^\n]+)', output)
+            passed = (policy and window and policy.group(1) == 'stat'
+                      and window.group(1) == policy.group(1)
+                      and window.group(2) == str(protected)
+                      and not protected.exists())
         else:
             passed = ('Socket error regression: injected=1' in output
                       and expected in output)
