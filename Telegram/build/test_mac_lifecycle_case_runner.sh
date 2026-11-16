@@ -256,7 +256,9 @@ if [[ "${TDESKTOP_EMOJI_RELAUNCH_SECONDARY_TEST:-}" == 1 ]]; then
     if [[ "${FONT_TEST_MODE:-}" == emoji-relaunch-early ]]; then exit 0; fi
     while [[ ! -e "$TDESKTOP_EMOJI_RELAUNCH_TEST_FILE" ]]; do sleep 0.02; done
     if [[ -n "${TDESKTOP_EMOJI_RELAUNCH_HOLD_FILE:-}" ]]; then
-        if [[ "${FONT_TEST_MODE:-}" == emoji-relaunch-double-start ]] || mkdir "$TDESKTOP_EMOJI_RELAUNCH_TEST_FILE.winner" 2>/dev/null; then
+        if [[ "${FONT_TEST_MODE:-}" == emoji-relaunch-double-start ]] \
+            || [[ "${FONT_TEST_MODE:-}" == emoji-relaunch-second-wins && "$TDESKTOP_EMOJI_RELAUNCH_INDEX" == 2 ]] \
+            || [[ "${FONT_TEST_MODE:-}" != emoji-relaunch-second-wins && "$TDESKTOP_EMOJI_RELAUNCH_INDEX" == 1 ]]; then
             printf 'Emoji cache relaunch: application_started=1\n'
             while [[ ! -e "$TDESKTOP_EMOJI_RELAUNCH_HOLD_FILE" ]]; do sleep 0.02; done
         else
@@ -304,7 +306,8 @@ EOF
 chmod +x "$FAKE_BIN/uname" "$FAKE_BIN/md5" "$FAKE_BIN/sw_vers" "$FAKE_APP"
 mkdir -p "$TEMP_ROOT/profile-harness"
 
-if TDESKTOP_MAC_PROFILE_TEST_TMP_BASE="$TEMP_ROOT/profile-harness" \
+if FONT_TEST_MODE=pass \
+	TDESKTOP_MAC_PROFILE_TEST_TMP_BASE="$TEMP_ROOT/profile-harness" \
 	PATH="$FAKE_BIN:$PATH" bash "$PROFILE_GUARD" "$FAKE_APP" \
 	> "$TEMP_ROOT/profile-entrypoint-output.txt" 2>&1; then
 	echo "profile guard should report failures from the fake app cases." >&2

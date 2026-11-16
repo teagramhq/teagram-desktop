@@ -7,7 +7,9 @@ import subprocess
 import tempfile
 
 
-for preexisting_lock, create_lock in ((False, False), (False, True), (True, False)):
+for preexisting_lock, create_lock, inherited_mode in (
+        (False, False, ''), (False, True, ''), (True, False, ''),
+        (False, False, 'emoji-relaunch-double-start')):
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
         executable = root / 'Teagram.app/Contents/MacOS/Teagram'
@@ -64,7 +66,9 @@ if [[ "${TDESKTOP_EMOJI_RELAUNCH_SECONDARY_TEST:-}" == 1 ]]; then
     if [[ "${FONT_TEST_MODE:-}" == emoji-relaunch-early ]]; then exit 0; fi
     while [[ ! -e "$TDESKTOP_EMOJI_RELAUNCH_TEST_FILE" ]]; do sleep 0.02; done
     if [[ -n "${TDESKTOP_EMOJI_RELAUNCH_HOLD_FILE:-}" ]]; then
-        if [[ "${FONT_TEST_MODE:-}" == emoji-relaunch-double-start ]] || mkdir "$TDESKTOP_EMOJI_RELAUNCH_TEST_FILE.winner" 2>/dev/null; then
+        if [[ "${FONT_TEST_MODE:-}" == emoji-relaunch-double-start ]] \\
+            || [[ "${FONT_TEST_MODE:-}" == emoji-relaunch-second-wins && "$TDESKTOP_EMOJI_RELAUNCH_INDEX" == 2 ]] \\
+            || [[ "${FONT_TEST_MODE:-}" != emoji-relaunch-second-wins && "$TDESKTOP_EMOJI_RELAUNCH_INDEX" == 1 ]]; then
             printf 'Emoji cache relaunch: application_started=1\\n'
             while [[ ! -e "$TDESKTOP_EMOJI_RELAUNCH_HOLD_FILE" ]]; do sleep 0.02; done
         else
@@ -160,6 +164,9 @@ printf '%s\n' "$directory"
                            CREATE_REFUSAL_LOCK=str(int(create_lock)), TEST_LOCK_NAME=lock_name,
                            PREEXISTING_LOCK=str(int(preexisting_lock)),
                            PATH=str(binaries) + ':' + os.environ['PATH'])
+        if inherited_mode:
+            environment['FONT_TEST_MODE'] = inherited_mode
+        environment.pop('FONT_TEST_MODE', None)
         try:
             result = subprocess.run(['bash', 'Telegram/build/test_mac_profile_guard.sh', str(executable)],
                                     env=environment, capture_output=True, text=True, timeout=15)
@@ -300,7 +307,9 @@ if [[ "${TDESKTOP_EMOJI_RELAUNCH_SECONDARY_TEST:-}" == 1 ]]; then
     if [[ "${FONT_TEST_MODE:-}" == emoji-relaunch-early ]]; then exit 0; fi
     while [[ ! -e "$TDESKTOP_EMOJI_RELAUNCH_TEST_FILE" ]]; do sleep 0.02; done
     if [[ -n "${TDESKTOP_EMOJI_RELAUNCH_HOLD_FILE:-}" ]]; then
-        if [[ "${FONT_TEST_MODE:-}" == emoji-relaunch-double-start ]] || mkdir "$TDESKTOP_EMOJI_RELAUNCH_TEST_FILE.winner" 2>/dev/null; then
+        if [[ "${FONT_TEST_MODE:-}" == emoji-relaunch-double-start ]] \\
+            || [[ "${FONT_TEST_MODE:-}" == emoji-relaunch-second-wins && "$TDESKTOP_EMOJI_RELAUNCH_INDEX" == 2 ]] \\
+            || [[ "${FONT_TEST_MODE:-}" != emoji-relaunch-second-wins && "$TDESKTOP_EMOJI_RELAUNCH_INDEX" == 1 ]]; then
             printf 'Emoji cache relaunch: application_started=1\\n'
             while [[ ! -e "$TDESKTOP_EMOJI_RELAUNCH_HOLD_FILE" ]]; do sleep 0.02; done
         else
@@ -474,6 +483,9 @@ assert 'Emoji cache shutdown relaunch=normal PASS waited=1 new_application=1' in
 assert 'Emoji cache shutdown relaunch=crash PASS waited=1 new_application=1' in font_startup_output
 assert 'Emoji cache shutdown relaunch=competing PASS waited=1 new_application=1' in font_startup_output
 assert 'Single instance server recheck=PASS forwarded=1' in font_startup_output
+font_startup_second_wins = run_font_startup_fixture(
+    50_000_000, 50_000_000, 0, mode='emoji-relaunch-second-wins')
+assert 'Emoji cache shutdown relaunch=competing PASS' in font_startup_second_wins
 assert 'Socket error recovery=PASS mode=transient' in font_startup_output
 assert 'Socket error recovery=PASS mode=unknown' in font_startup_output
 assert 'Socket error recovery=PASS mode=persistent' in font_startup_output
