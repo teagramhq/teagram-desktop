@@ -20084,6 +20084,37 @@ RunDesktopScaleSearchAndUpdates(Main::Domain &domain, int dialogCount,
 						beforeBaseline, *data.chatsList(), baselineFirstId,
 						kBaselineDialogCount, kBaselineUpdateCount, false);
 				}
+				if (baselineStateMatches) {
+					existingRows.clear();
+					for (const auto &row : data.chatsList()->indexed()->all()) {
+						existingRows.push_back(row->key());
+					}
+					for (const auto &key : existingRows) {
+						data.removeChatListEntry(key);
+					}
+					constexpr auto kBatchDialogCount = 128;
+					constexpr auto kBatchUpdateCount = 96;
+					const auto batchFirstId = UserId(firstId.bare + 200'000);
+					baselineStateMatches = SeedDesktopScaleDialogs(
+						data, batchFirstId, kBatchDialogCount);
+					if (baselineStateMatches) {
+						const auto beforeBatch
+							= DesktopScaleChatListSnapshot(*data.chatsList());
+						const auto messages = DesktopScaleUpdateBurstMessages(
+							batchFirstId, kBatchDialogCount,
+							int(base::unixtime::now()) + kBatchUpdateCount + 10,
+							kBatchUpdateCount);
+						data.processMessagesInBatch(messages, NewMessageType::Unread);
+						baselineStateMatches = DesktopScaleUpdateBurstStateMatches(
+							beforeBatch, *data.chatsList(), batchFirstId,
+							kBatchDialogCount, kBatchUpdateCount, false);
+						for (auto i = 0; i != kBatchUpdateCount; ++i) {
+							baselineStateMatches = baselineStateMatches
+								&& data.message(peerFromUser(UserId(batchFirstId.bare + i)),
+									MsgId(kDesktopScaleUpdateMessageBase + i));
+						}
+					}
+				}
 				if (!baselineStateMatches) {
 					std::fprintf(
 						stderr,

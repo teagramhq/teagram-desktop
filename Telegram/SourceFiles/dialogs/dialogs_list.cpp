@@ -155,7 +155,13 @@ std::vector<List::MovedRow> List::unfreeze() {
 		rows.reserve(_rows.size());
 		auto nextAdjusted = adjusted.begin();
 		auto nextPending = pendingByIndex.begin();
-		for (const auto &row : _rows) {
+		auto rowIt = _rows.begin();
+		for (; rowIt != _rows.end(); ++rowIt) {
+			if ((nextPending == pendingByIndex.end())
+				&& (nextAdjusted == adjusted.end())) {
+				break;
+			}
+			const auto row = *rowIt;
 			if ((nextPending != pendingByIndex.end())
 				&& (row == *nextPending)) {
 				++nextPending;
@@ -171,9 +177,11 @@ std::vector<List::MovedRow> List::unfreeze() {
 			rows.push_back(row);
 		}
 		rows.insert(rows.end(), nextAdjusted, adjusted.end());
+		const auto changedEnd = int(rows.size());
+		rows.insert(rows.end(), rowIt, _rows.end());
 		_rows = std::move(rows);
 		auto top = 0;
-		for (auto i = 0, count = int(_rows.size()); i != count; ++i) {
+		for (auto i = 0; i != changedEnd; ++i) {
 			const auto row = _rows[i];
 			row->_index = i;
 			row->_top = top;
