@@ -21630,6 +21630,59 @@ std::optional<qint64> ProcessCpuTimeNanosecondsForRegressionTest() {
 }
 #endif
 
+int RunDialogBatchStateRegression() {
+	constexpr auto kDialogs = 128;
+	constexpr auto kMessages = 96;
+	const auto firstId = UserId(8'000'000);
+	const auto passed = WithDesktopScaleAccount(
+		Core::App().domain(), UserId(firstId.bare - 1), [&](auto account) {
+			auto &session = account->session();
+			auto &data = session.data();
+			if (!SeedDesktopScaleDialogs(data, firstId, kDialogs)) {
+				return false;
+			}
+			const auto before = DesktopScaleChatListSnapshot(*data.chatsList());
+			auto capture = ChannelSaveRequestCapture{
+				.instance = &account->mtp(),
+				.desktopScaleDataQueriesOnly = true,
+			};
+			const auto restore
+				= gsl::finally([previous = std::exchange(
+									gChannelSaveRequestCapture, &capture)] {
+					  gChannelSaveRequestCapture = previous;
+				  });
+			session.updates().completeInitialStateForRegressionTest(1);
+			session.updates().getDifference();
+			const auto date = int(base::unixtime::now()) + kMessages + 10;
+			const auto messages = DesktopScaleUpdateBurstMessages(
+				firstId, kDialogs, date, kMessages);
+			const auto difference = MTP_updates_difference(
+				MTP_vector<MTPMessage>(messages),
+				MTP_vector<MTPEncryptedMessage>(0), MTP_vector<MTPUpdate>(0),
+				MTP_vector<MTPChat>(0), MTP_vector<MTPUser>(0),
+				MTP_updates_state(MTP_int(1 + kMessages), MTP_int(0),
+								  MTP_int(date + kMessages), MTP_int(0),
+								  MTP_int(0)));
+			if (!ReplyToCapturedRequestForRegressionTest<
+					MTPupdates_GetDifference>(
+					capture, 0, mtpc_updates_getDifference, difference)) {
+				return false;
+			}
+			for (auto i = 0; i != kMessages; ++i) {
+				if (!data.message(peerFromUser(UserId(firstId.bare + i)),
+								  MsgId(kDesktopScaleUpdateMessageBase + i))) {
+					return false;
+				}
+			}
+			return DesktopScaleUpdateBurstStateMatches(
+				before, *data.chatsList(), firstId, kDialogs, kMessages, false);
+		});
+	if (passed) {
+		std::fprintf(stderr, "DIALOG_BATCH_STATE_PASS\n");
+	}
+	return passed ? 0 : 1;
+}
+
 int RunDesktopScaleCheck() {
 #if defined(Q_OS_LINUX)
 	auto &app = Core::App();

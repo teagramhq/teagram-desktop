@@ -9,6 +9,16 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "dialogs/dialogs_list_order.h"
 
+#ifdef Q_OS_LINUX
+#include <QtCore/QCoreApplication>
+#include <QtCore/QDir>
+#include <QtCore/QProcess>
+#include <QtCore/QProcessEnvironment>
+#include <QtCore/QTemporaryDir>
+
+#include <cstdio>
+#endif // Q_OS_LINUX
+
 namespace {
 
 struct DialogState {
@@ -75,3 +85,44 @@ TEST_CASE(DialogOrderKeepsEqualDatesStable) {
 		  == std::vector<DialogState *>(
 			  {rows[3], rows[4], rows[0], rows[1], rows[2], rows[5]}));
 }
+
+#ifdef Q_OS_LINUX
+TEST_CASE(DifferenceBatchUpdatesActualDialogState) {
+	auto root = QTemporaryDir();
+	CHECK(root.isValid());
+	if (!root.isValid()) {
+		return;
+	}
+	const auto work = root.filePath(u"work"_q);
+	CHECK(QDir().mkpath(work));
+	auto environment = QProcessEnvironment::systemEnvironment();
+	environment.insert(u"HOME"_q, root.path());
+	environment.insert(u"XDG_CONFIG_HOME"_q, root.filePath(u"config"_q));
+	environment.insert(u"XDG_DATA_HOME"_q, root.filePath(u"data"_q));
+	environment.insert(u"XDG_CACHE_HOME"_q, root.filePath(u"cache"_q));
+	environment.insert(u"QT_QPA_PLATFORM"_q, u"offscreen"_q);
+	environment.insert(u"ALSOFT_DRIVERS"_q, u"null"_q);
+	environment.insert(u"TDESKTOP_DIALOG_BATCH_STATE_REGRESSION"_q, u"1"_q);
+	auto process = QProcess();
+	process.setProcessEnvironment(environment);
+	process.setProcessChannelMode(QProcess::MergedChannels);
+	process.start(QCoreApplication::applicationDirPath() + u"/Teagram"_q,
+				  {u"-noupdate"_q, u"-debug"_q, u"-workdir"_q, work + u"/"_q});
+	const auto finished = process.waitForFinished(30000);
+	if (!finished && process.state() != QProcess::NotRunning) {
+		process.kill();
+		process.waitForFinished();
+	}
+	const auto output = process.readAll();
+	if (!finished || process.exitStatus() != QProcess::NormalExit
+		|| process.exitCode() != 0
+		|| !output.contains("DIALOG_BATCH_STATE_PASS")) {
+		std::fprintf(stderr, "Dialog batch regression output:\n%s\n",
+					 output.constData());
+	}
+	CHECK(finished);
+	CHECK(process.exitStatus() == QProcess::NormalExit);
+	CHECK_EQ(process.exitCode(), 0);
+	CHECK(output.contains("DIALOG_BATCH_STATE_PASS"));
+}
+#endif // Q_OS_LINUX

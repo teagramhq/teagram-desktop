@@ -299,13 +299,15 @@ void Application::run() {
 		= qEnvironmentVariableIsSet("TDESKTOP_DESKTOP_SCALE_CHECK");
 	const auto fontStartupRegression
 		= qEnvironmentVariableIsSet("TDESKTOP_FONT_STARTUP_REGRESSION");
+	const auto dialogBatchStateRegression
+		= qEnvironmentVariableIsSet("TDESKTOP_DIALOG_BATCH_STATE_REGRESSION");
 	const auto headlessRegression
 		= qEnvironmentVariableIsSet("TDESKTOP_SIGNUP_UI_REGRESSION")
 		  || authLifecycleRegression || customEmojiUiSmoke || desktopScaleCheck
-		  || fontStartupRegression;
-	const auto windowedApplication = !headlessRegression
-									 || authLifecycleRegression
-									 || customEmojiUiSmoke || desktopScaleCheck;
+		  || fontStartupRegression || dialogBatchStateRegression;
+	const auto windowedApplication
+		= !headlessRegression || authLifecycleRegression || customEmojiUiSmoke
+		  || desktopScaleCheck || dialogBatchStateRegression;
 	if (headlessRegression) {
 		// The regression exercises QWidget paths only. Keep unrelated GPU
 		// probing out of the headless process before its first RpWindow.
@@ -508,6 +510,12 @@ void Application::run() {
 		QCoreApplication::exit(regressionResult);
 		return;
 	}
+#if defined(TDESKTOP_LIFECYCLE_REGRESSION)
+	if (dialogBatchStateRegression) {
+		QCoreApplication::exit(Tests::RunDialogBatchStateRegression());
+		return;
+	}
+#endif // TDESKTOP_LIFECYCLE_REGRESSION
 	if (qEnvironmentVariableIsSet("TDESKTOP_DESKTOP_SCALE_CHECK")) {
 #if defined(TDESKTOP_LIFECYCLE_REGRESSION)
 		QCoreApplication::exit(Tests::RunDesktopScaleCheck());
