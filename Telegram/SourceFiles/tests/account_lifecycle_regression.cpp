@@ -20051,7 +20051,48 @@ RunDesktopScaleSearchAndUpdates(Main::Domain &domain, int dialogCount,
 				samples.updateBurst.passed
 					= samples.updateBurst.passed && refetchCompleted.passed;
 			}
-			return samples.search.passed && samples.updateBurst.passed;
+			auto baselineStateMatches = true;
+			if (dialogCount == 50) {
+				constexpr auto kBaselineDialogCount = 3;
+				constexpr auto kBaselineUpdateCount = 32;
+				const auto baselineFirstId = UserId(firstId.bare + 100'000);
+				auto existingRows = std::vector<Dialogs::Key>();
+				for (const auto &row : data.chatsList()->indexed()->all()) {
+					existingRows.push_back(row->key());
+				}
+				for (const auto &key : existingRows) {
+					data.removeChatListEntry(key);
+				}
+				if (!SeedDesktopScaleDialogs(data, baselineFirstId,
+											 kBaselineDialogCount)) {
+					baselineStateMatches = false;
+				} else {
+					const auto beforeBaseline
+						= DesktopScaleChatListSnapshot(*data.chatsList());
+					const auto baselineDate = int(base::unixtime::now())
+											  + kBaselineUpdateCount + 10;
+					const auto baselineMessages
+						= DesktopScaleUpdateBurstMessages(
+							baselineFirstId, kBaselineDialogCount, baselineDate,
+							kBaselineUpdateCount);
+					// The pre-batching difference path passed this ascending
+					// wire vector directly to processMessages. Check that the
+					// state model used above reproduces that baseline behavior.
+					data.processMessages(baselineMessages,
+										 NewMessageType::Unread);
+					baselineStateMatches = DesktopScaleUpdateBurstStateMatches(
+						beforeBaseline, *data.chatsList(), baselineFirstId,
+						kBaselineDialogCount, kBaselineUpdateCount, false);
+				}
+				if (!baselineStateMatches) {
+					std::fprintf(
+						stderr,
+						"Desktop scale check failed: the expected-state model "
+						"did not match base processMessages behavior.\n");
+				}
+			}
+			return samples.search.passed && samples.updateBurst.passed
+				   && baselineStateMatches;
 		},
 		reuseAccount);
 	if (!created) {
