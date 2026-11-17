@@ -1579,11 +1579,11 @@ if ! grep -E -q \
 fi
 local initial_history_selection
 initial_history_selection="$(grep -E \
-	'^Initial history selection: peer_id=[0-9]+ wall_ns=[0-9]+ main_thread_work_ns=[0-9]+ blocked_estimate_ns=(-1|[0-9]+) estimated_work_ns=[0-9]+ budget_ns=50000000 trace=([[:alpha:]?]+|none) scheduler_preemption_proven=[01]\.$' \
+	'^First measured history selection: peer_id=[0-9]+ wall_ns=[0-9]+ main_thread_work_ns=[0-9]+ blocked_estimate_ns=(-1|[0-9]+) estimated_work_ns=[0-9]+ budget_ns=50000000 trace=([[:alpha:]?]+|none) scheduler_preemption_proven=[01]\.$' \
 	"$AUTH_LOG" || true)"
 if [[ -z "$initial_history_selection" ]]; then
 	cat "$AUTH_LOG" >&2
-	echo "initial history selection evidence missing." >&2
+	echo "first measured history selection evidence missing." >&2
 	exit 1
 fi
 local initial_history_selection_work_ns
@@ -1602,7 +1602,7 @@ fi
 if ! work_value_within_budget \
 	"$initial_history_selection_work_ns" 50000000; then
 	cat "$AUTH_LOG" >&2
-	echo "initial history selection estimated work exceeded its 50 ms budget." >&2
+	echo "first measured history selection estimated work exceeded its 50 ms budget." >&2
 	exit 1
 fi
 local chat_switch_evidence

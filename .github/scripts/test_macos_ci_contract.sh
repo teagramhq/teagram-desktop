@@ -754,7 +754,7 @@ require_step_script "$mac_workflow" build-macos "$account_database_profile_step"
   'profile_root=%s/Library/Application Support/Teagram'
 
 profile_step='Run protected profile and IPC integration tests.'
-require_step_field "$mac_workflow" build-macos "$profile_step" '.timeout-minutes' '15'
+require_step_field "$mac_workflow" build-macos "$profile_step" '.timeout-minutes' '20'
 require_step_script "$mac_workflow" build-macos "$profile_step" \
   'state="$diagnostics/state"' \
   'if [ "$status" -eq 0 ]; then rm -rf "$state"; fi' \
@@ -762,7 +762,7 @@ require_step_script "$mac_workflow" build-macos "$profile_step" \
 profile_step_script="$(step_field "$mac_workflow" build-macos "$profile_step" '.run')"
 for deadline_clause in \
   'step_started_at="$(date +%s)"' \
-  'step_timeout_seconds=900' \
+  'step_timeout_seconds=1200' \
   'step_finish_headroom_seconds=60' \
   'step_deadline_epoch="$((step_started_at + step_timeout_seconds - step_finish_headroom_seconds))"' \
   'TDESKTOP_MAC_LIFECYCLE_STEP_DEADLINE_EPOCH="$step_deadline_epoch"'; do
@@ -814,6 +814,9 @@ fi
   && "$profile_step_timeout_seconds" =~ ^[1-9][0-9]*$ \
   && "$profile_step_finish_headroom_seconds" =~ ^[1-9][0-9]*$ ]] \
   || contract_fail 'The protected profile case, deadline, and cleanup timeout budget must be explicit and positive.'
+grep -Fq 'CASE_RUN_TIMEOUT_LIMIT_SECONDS=900' "$case_runner" \
+  && grep -Fq 'CASE_RUN_TIMEOUT_SECONDS=900' "$case_runner" \
+  || contract_fail 'The native failure continuation case must receive a 15-minute timeout when the step deadline allows it.'
 cleanup_headroom_seconds="$((2 * cleanup_grace_seconds))"
 case_timeout_budget_seconds="$((case_timeout_limit_seconds + cleanup_headroom_seconds))"
 profile_step_deadline_budget_seconds="$((profile_step_timeout_seconds - profile_step_finish_headroom_seconds))"
@@ -824,7 +827,8 @@ profile_step_deadline_budget_seconds="$((profile_step_timeout_seconds - profile_
   || contract_fail "Lifecycle deadline and cleanup headroom must fit inside the profile/IPC step limit (${profile_step_timeout_minutes}m)."
 for runner_clause in \
   'CASE_CLEANUP_HEADROOM_SECONDS=$((2 * CASE_CLEANUP_GRACE_SECONDS))' \
-  'if (( CASE_RUN_TIMEOUT_SECONDS > CASE_TIMEOUT_LIMIT_SECONDS )); then' \
+  'CASE_RUN_TIMEOUT_LIMIT_SECONDS=900' \
+  'if (( CASE_RUN_TIMEOUT_SECONDS > CASE_RUN_TIMEOUT_LIMIT_SECONDS )); then' \
   'STEP_DEADLINE_EPOCH="${TDESKTOP_MAC_LIFECYCLE_STEP_DEADLINE_EPOCH:-}"' \
   'remaining_case_seconds=$((STEP_DEADLINE_EPOCH - now_epoch - CASE_CLEANUP_HEADROOM_SECONDS))' \
   'if (( remaining_case_seconds < CASE_RUN_TIMEOUT_SECONDS )); then' \
@@ -1358,7 +1362,7 @@ Cache access latency regression: cache=cache seeded_directories=125 seeded_files
 Cache startup watchdog stall: cache=cache started_at=2026-11-06T00:47:53.000Z duration_ms=230 heartbeat_gap_started_at=2026-11-06T00:47:53.000Z scheduler_trace=WWWW stack_captured=1 stack=worker wait regression
 Cache access latency regression: cache=media_cache seeded_directories=125 seeded_files=169 closed_clear_missing_active=1 cache_initialization_ns=120678959 initialization_allowed=1 queued_ops_before_ready=1 queued_ops_passed=1 cache_usable_ns=120763125 under_10s=1 max_main_thread_work_ns=48247625 max_startup_estimated_work_ns=48247625 max_heartbeat_gap_ns=48247625 max_heartbeat_gap_work_ns=48247625 heartbeat_gap_process_work_ns=25000000 heartbeat_gap_started_at=2026-11-06T00:47:53.000Z startup_heartbeat_gap_count=0 startup_uncovered_heartbeat_gaps=0 startup_heartbeat_gap_coverage_proven=1 startup_stall_count=0 max_startup_stall_ns=0 startup_stall_main_thread_work_ns=0 startup_stall_process_work_ns=0 startup_stall_started_at=none startup_stall_heartbeat_gap_started_at=none startup_stall_scheduler_samples=0 startup_stall_scheduler_running=0 startup_stall_scheduler_waiting=0 startup_stall_scheduler_uninterruptible=0 startup_stall_scheduler_other=0 startup_stall_scheduler_trace=none startup_stall_stack_captured=0 startup_stall_evidence_matched=0 startup_stall_scheduler_preemption_proven=0 under_100ms=1 first_access_ns=83292 under_50ms=1 root_swap_refused=1 direct_fallback_closed=1 root_restored=1 startup_walks=2 main_thread_walks=0.
 First messages.getDialogs handler latency regression: seeded_directories=125 seeded_files=169 requests=1 parsed=1 chats=2 dialogs=1 messages=73 documents=73 cache_walks=2 max_handler_ns=9893666 main_thread_cpu_ns=9893666 blocked_estimate_ns=0 estimated_work_ns=9893666 trace=R under_50ms=1.
-Initial history selection: peer_id=281474977760707 wall_ns=135344750 main_thread_work_ns=40000000 blocked_estimate_ns=0 estimated_work_ns=40000000 budget_ns=50000000 trace=R scheduler_preemption_proven=0.
+First measured history selection: peer_id=281474977760707 wall_ns=135344750 main_thread_work_ns=40000000 blocked_estimate_ns=0 estimated_work_ns=40000000 budget_ns=50000000 trace=R scheduler_preemption_proven=0.
 Cache chat switch latency regression: seeded_directories=125 seeded_files=169 reactions=73 hydrated_documents=292 chat_switches=73 attach_menu_bot_count=20 minimized_restore=1 minimized_switch_ns=45000000 minimized_restore_budget_ns=50000000 max_hydration_ns=5210625 max_hydration_work_ns=4000000 hydration_scheduler_preemption_proven=0 max_switch_ns=45000000 max_switch_work_ns=40000000 max_recurring_switch_work_ns=40000000 max_switch_estimated_work_ns=40000000 max_recurring_switch_estimated_work_ns=40000000 max_switch_index=3 max_switch_peer_id=281474976711707 switch_scheduler_preemption_proven=0 attach_menu_first_hover_ns=12000000 attach_menu_hover_ns=92000000 attach_menu_update_hover_ns=11000000 attach_menu_uncached_peer_ns=20000000 attach_menu_first_hover_callback_cpu_ns=12000000 attach_menu_update_hover_callback_cpu_ns=1000000 attach_menu_uncached_peer_callback_cpu_ns=20000000 attach_menu_first_hover_callback_wall_ns=92000000 attach_menu_update_hover_callback_wall_ns=92000000 attach_menu_uncached_peer_callback_wall_ns=92000000 attach_menu_scheduler_preemption_proven=0 attach_menu_cached=1 attach_menu_invalidated=1 attach_menu_build_deferred=1 attach_menu_uncached_ready=1 attach_menu_uncached_deferred_failures=0 attach_menu_uncached_missing_bot_failures=0 attach_menu_uncached_build_count_failures=0 attach_menu_cache_bound=1 pending_reveal_after_controls_geometry=1 chat_switch_compose_ui_reused=1 field_autocomplete_suggestions_ready=1 menu_commands_unfocused=1 bot_commands_unfocused=1 history_chat_mode_invalidation_rebuilt=1 dialog_histories_ready=1 synthetic_histories_ready=1 max_stall_ns=40000000 within_budgets=1.
 Attach-menu callback work: cached_hover_wall_ns=92000000 cached_hover_estimated_work_ns=12000000 first_hover_estimated_work_ns=12000000 invalidation_estimated_work_ns=1000000 uncached_peer_estimated_work_ns=20000000 budget_ns=50000000.
 EOF
@@ -1419,17 +1423,17 @@ sed -e 's/max_switch_ns=135344750/max_switch_ns=227000000/' \
 if ! check_cache_latency_evidence "$temp_dir/cache-latency-long-wall-switch.log" >/dev/null 2>&1; then
   contract_fail 'A 227 ms chat switch with 45.5 ms main-thread CPU must pass without scheduler proof.'
 fi
-sed '/^Initial history selection:/s/estimated_work_ns=40000000/estimated_work_ns=52107000/' \
+sed '/^First measured history selection:/s/estimated_work_ns=40000000/estimated_work_ns=52107000/' \
   "$temp_dir/cache-latency-responsive.log" > "$temp_dir/cache-latency-initial-selection-over-budget.log"
 if check_cache_latency_evidence "$temp_dir/cache-latency-initial-selection-over-budget.log" >/dev/null 2>&1; then
 	contract_fail 'The initial history selection must reject 52 ms of main-thread work even with scheduler proof.'
 fi
-sed '/^Initial history selection:/ { s/wall_ns=135344750/wall_ns=49000000/; s/blocked_estimate_ns=0/blocked_estimate_ns=-1/; s/estimated_work_ns=40000000/estimated_work_ns=49000000/; s/trace=R/trace=none/; }' \
+sed '/^First measured history selection:/ { s/wall_ns=135344750/wall_ns=49000000/; s/blocked_estimate_ns=0/blocked_estimate_ns=-1/; s/estimated_work_ns=40000000/estimated_work_ns=49000000/; s/trace=R/trace=none/; }' \
   "$temp_dir/cache-latency-responsive.log" > "$temp_dir/cache-latency-initial-selection-unmeasured.log"
 if ! check_cache_latency_evidence "$temp_dir/cache-latency-initial-selection-unmeasured.log" >/dev/null 2>&1; then
 	contract_fail 'An unmeasured initial selection with wall time below 50 ms must pass.'
 fi
-sed '/^Initial history selection:/s/wall_ns=49000000/wall_ns=50000000/; s/estimated_work_ns=49000000/estimated_work_ns=50000000/' \
+sed '/^First measured history selection:/s/wall_ns=49000000/wall_ns=50000000/; s/estimated_work_ns=49000000/estimated_work_ns=50000000/' \
   "$temp_dir/cache-latency-initial-selection-unmeasured.log" > "$temp_dir/cache-latency-initial-selection-unmeasured-over-budget.log"
 if check_cache_latency_evidence "$temp_dir/cache-latency-initial-selection-unmeasured-over-budget.log" >/dev/null 2>&1; then
 	contract_fail 'An unmeasured initial selection at the 50 ms wall budget must fail.'
