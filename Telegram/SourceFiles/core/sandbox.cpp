@@ -813,8 +813,8 @@ void Sandbox::launchApplication() {
 			if ((workMode == WorkMode::TrayOnly
 				 || workMode == WorkMode::WindowAndTray)
 				&& _application->activePrimaryWindow()) {
-				// This delayed startup can get its first activation after the app
-				// exists; macOS reopens hidden windows on activation.
+				// Delayed startup can activate the app after we hide it.
+				// macOS reopens hidden windows on activation.
 				Platform::IgnoreApplicationActivationRightNow();
 				_application->activePrimaryWindow()->widget()->hide();
 			}
