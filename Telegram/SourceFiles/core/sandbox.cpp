@@ -849,6 +849,7 @@ void Sandbox::startFontDatabaseWarmup() {
 		return;
 	}
 	_fontDatabaseWarmupStarted = true;
+	style::internal::PrepareFontSubstitutions();
 	const auto quitRegression
 		= qEnvironmentVariableIsSet("TDESKTOP_FONT_STARTUP_QUIT_REGRESSION");
 	const auto testFailure = MacProtectedPath::IntegrationTestActive()
@@ -965,8 +966,15 @@ void Sandbox::startFontDatabaseWarmup() {
 				const auto metrics = QFontMetricsF(font);
 				static_cast<void>(metrics.ascent());
 				static_cast<void>(metrics.height());
-				static_cast<void>(metrics.tightBoundingRect(
-					u"bdfghijklpqtyBDFGHIJKLPQTY1234567890[]{}()"_q));
+				const auto sample
+					= u"bdfghijklpqtyBDFGHIJKLPQTY1234567890[]{}()"_q;
+				static_cast<void>(metrics.tightBoundingRect(sample));
+				auto image
+					= QImage(512, 32, QImage::Format_ARGB32_Premultiplied);
+				image.fill(Qt::transparent);
+				auto painter = QPainter(&image);
+				painter.setFont(font);
+				painter.drawText(QPoint(0, 24), sample);
 			};
 			prewarmFontMetrics(QFont().family());
 			prewarmFontMetrics(u"Open Sans"_q);

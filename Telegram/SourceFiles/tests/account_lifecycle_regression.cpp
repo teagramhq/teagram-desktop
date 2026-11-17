@@ -12423,7 +12423,7 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		}
 		const auto label
 			= (index == 0)
-				  ? u"first measured history selection index=%1 peer_id=%2"_q
+				  ? u"initial history selection index=%1 peer_id=%2"_q
 						.arg(index)
 						.arg(peerId)
 				  : u"chat switch index=%1 peer_id=%2"_q.arg(index).arg(peerId);
@@ -12439,20 +12439,16 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		return wallDurationNanoseconds;
 	};
 	// A separate test window has just been created. Let its initial layout and
-	// queued UI updates settle, then warm the synthetic histories before timing
-	// chat switches. Their first paint can initialize platform font and layout
-	// caches that are unrelated to recurring switch work.
+	// queued UI updates settle before timing its first history selection.
 	settleHistoryUnfocused();
-	controller->showPeerHistory(emptyFirstHistory);
+	showPeerHistoryMeasured(emptyFirstHistory);
 	settleHistoryUnfocused();
 	constexpr auto kWarmupChatSwitches = 8;
 	for (auto i = 0; i != kWarmupChatSwitches; ++i) {
 		const auto target = (i % 2) ? firstHistory : secondHistory;
-		controller->showPeerHistory(target);
+		showPeerHistoryMeasured(target);
 		settleHistoryUnfocused();
 	}
-	showPeerHistoryMeasured(secondHistory);
-	settleHistoryUnfocused();
 	for (const auto &target : {emptyFirstHistory, emptySecondHistory}) {
 		showPeerHistoryMeasured(target);
 		settleHistoryUnfocused();
@@ -14634,7 +14630,7 @@ void RunAuthenticatedCacheSymlinkCases(
 								.toLatin1();
 				std::fprintf(
 					stderr,
-					"First measured history selection: peer_id=%lld "
+					"Initial history selection: peer_id=%lld "
 					"wall_ns=%lld main_thread_work_ns=%lld "
 					"blocked_estimate_ns=%lld "
 					"estimated_work_ns=%lld "
