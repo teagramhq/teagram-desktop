@@ -813,11 +813,14 @@ void Sandbox::launchApplication() {
 			if ((workMode == WorkMode::TrayOnly
 				 || workMode == WorkMode::WindowAndTray)
 				&& _application->activePrimaryWindow()) {
+				// This delayed startup can get its first activation after the app
+				// exists; macOS reopens hidden windows on activation.
+				Platform::IgnoreApplicationActivationRightNow();
 				_application->activePrimaryWindow()->widget()->hide();
 			}
 		}
 		if (trayRegression) {
-			QTimer::singleShot(500, this, [=] {
+			QTimer::singleShot(1000, this, [=] {
 				const auto window = _application
 										? _application->activePrimaryWindow()
 										: nullptr;
