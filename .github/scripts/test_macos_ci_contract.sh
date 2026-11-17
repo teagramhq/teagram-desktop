@@ -1045,7 +1045,11 @@ expect_equal 'DWARF probe skips the compile-unit low_pc' \
   "$dwarf_probe_address" '0x0000000100002100'
 require_step_field "$mac_workflow" build-macos "$regression_step" '.if' \
   "\${{ !cancelled() && steps.build.outcome == 'success' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.label.name == 'macos-build')) }}"
-require_step_field "$mac_workflow" build-macos "$regression_step" '.timeout-minutes' '20'
+regression_timeout_minutes="$(step_field "$mac_workflow" build-macos \
+  "$regression_step" '.timeout-minutes')"
+[[ "$regression_timeout_minutes" =~ ^[0-9]+$ ]] \
+  && (( regression_timeout_minutes >= 25 )) \
+  || contract_fail 'Full chat info session regression needs 25 minutes for dSYM generation, LLDB startup, and its bounded replay.'
 require_step_script "$mac_workflow" build-macos "$regression_step" \
   'exec > >(tee "$diagnostics/harness.log") 2>&1' \
   'build_dir="$repo/out"' \

@@ -807,6 +807,15 @@ void Sandbox::launchApplication() {
 		const auto splashVisible = trayRegression && _fontStartupWindow
 								   && _fontStartupWindow->isVisible();
 		_fontStartupWindow.reset();
+		if (cStartInTray()) {
+			using WorkMode = Core::Settings::WorkMode;
+			const auto workMode = _application->settings().workMode();
+			if ((workMode == WorkMode::TrayOnly
+				 || workMode == WorkMode::WindowAndTray)
+				&& _application->activePrimaryWindow()) {
+				_application->activePrimaryWindow()->widget()->hide();
+			}
+		}
 		if (trayRegression) {
 			QTimer::singleShot(500, this, [=] {
 				const auto window = _application

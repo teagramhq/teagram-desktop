@@ -12438,6 +12438,9 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		chatSwitchWindows.push_back(interval);
 		return wallDurationNanoseconds;
 	};
+	// A separate test window has just been created. Let its initial layout and
+	// queued UI updates settle before timing the first history selection.
+	settleHistoryUnfocused();
 	showPeerHistoryMeasured(emptyFirstHistory);
 	settleHistoryUnfocused();
 	constexpr auto kWarmupChatSwitches = 8;
