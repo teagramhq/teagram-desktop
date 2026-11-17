@@ -362,6 +362,21 @@ Sandbox::Sandbox(int &argc, char **argv)
 }
 
 int Sandbox::start() {
+	const auto drainShutdown = [this] {
+		const auto pending = [this] {
+			return _closingApplication
+#ifdef Q_OS_MAC
+				   || (_fontDatabaseWarmupThread.joinable()
+					   && !_fontDatabaseWarmupDone)
+#endif // Q_OS_MAC
+				;
+		};
+		if (pending()) {
+			// Keep the GUI event loop available while shutdown integrations
+			// drain.
+			_shutdownLoop.run(pending);
+		}
+	};
 	{
 		const auto d = QFile::encodeName(QDir(cWorkingDir()).absolutePath());
 		char h[33] = { 0 };
@@ -601,6 +616,7 @@ int Sandbox::start() {
 
 	if (QuitOnStartRequested) {
 		closeApplication();
+		drainShutdown();
 		return 0;
 	}
 	_started = true;
@@ -608,10 +624,7 @@ int Sandbox::start() {
 	if (_application && CurrentLaunchState() != LaunchState::QuitProcessed) {
 		closeApplication();
 	}
-	if (_closingApplication) {
-		// Retain the application while the workers drain without blocking Qt.
-		_shutdownLoop.run([this] { return _closingApplication; });
-	}
+	drainShutdown();
 #ifdef Q_OS_MAC
 	// closeApplication() has run from aboutToQuit by now. Wait for the font
 	// warmup worker so it never outlives the Qt and style state it touches.
@@ -861,6 +874,16 @@ void Sandbox::startFontDatabaseWarmup() {
 						 : nullptr;
 	const auto workerFinished
 		= quitRegression ? std::make_shared<std::atomic_bool>(false) : nullptr;
+	const auto shutdownRemovalPending
+		= (quitRegression && testFailure == "shutdown-remove-pending")
+			  ? std::make_shared<std::atomic_bool>(false)
+			  : nullptr;
+	const auto shutdownRemovalPendingAtQuit
+		= shutdownRemovalPending ? std::make_shared<std::atomic_bool>(false)
+								 : nullptr;
+	const auto shutdownRemovalCompleted
+		= shutdownRemovalPending ? std::make_shared<std::atomic_bool>(false)
+								 : nullptr;
 	const auto retryCheckpoint
 		= (quitRegression && testFailure == "probe-timeout-retry")
 			  ? std::make_shared<std::atomic_bool>(false)
@@ -877,6 +900,11 @@ void Sandbox::startFontDatabaseWarmup() {
 		}
 		connect(this, &QCoreApplication::aboutToQuit, [=] {
 			_fontStartupQuitObserved = true;
+			if (shutdownRemovalPendingAtQuit) {
+				shutdownRemovalPendingAtQuit->store(
+					shutdownRemovalPending->load(std::memory_order_acquire),
+					std::memory_order_release);
+			}
 			ProbeFinalRelease.store(true, std::memory_order_release);
 		});
 	}
@@ -890,6 +918,9 @@ void Sandbox::startFontDatabaseWarmup() {
 												 testFailure,
 												 ignoreFirstEnumeration,
 												 workerFinished,
+												 shutdownRemovalPending,
+												 shutdownRemovalPendingAtQuit,
+												 shutdownRemovalCompleted,
 												 retryCheckpoint] {
 			const auto finished = gsl::finally([=] {
 				if (retryCheckpoint) {
@@ -899,6 +930,13 @@ void Sandbox::startFontDatabaseWarmup() {
 				if (workerFinished) {
 					workerFinished->store(true, std::memory_order_release);
 				}
+				QMetaObject::invokeMethod(
+					this,
+					[this] {
+						_fontDatabaseWarmupDone = true;
+						_shutdownLoop.quit();
+					},
+					Qt::QueuedConnection);
 			});
 			if (quitRegression && testFailure == "probe-timeout") {
 				// Keep the test worker outside enumeration until sampled.
@@ -949,6 +987,13 @@ void Sandbox::startFontDatabaseWarmup() {
 						return;
 					}
 				}
+				if (fontId >= 0 && shutdownRemovalPending) {
+					shutdownRemovalPending->store(true,
+												  std::memory_order_release);
+					while (!ProbeFinalRelease.load(std::memory_order_acquire)) {
+						std::this_thread::yield();
+					}
+				}
 				if (fontId < 0
 					|| !QFontDatabase::removeApplicationFont(fontId)) {
 					fprintf(stderr, "Font shutdown regression: "
@@ -958,32 +1003,65 @@ void Sandbox::startFontDatabaseWarmup() {
 						Qt::QueuedConnection);
 					return;
 				}
+				if (shutdownRemovalCompleted) {
+					shutdownRemovalCompleted->store(true,
+													std::memory_order_release);
+				}
 				populateFontDatabase();
 			}
 			const auto prewarmFontMetrics = [](QString family) {
 				auto font = QFont(std::move(family));
-				font.setPixelSize(16);
-				const auto metrics = QFontMetricsF(font);
-				static_cast<void>(metrics.ascent());
-				static_cast<void>(metrics.height());
 				const auto sample
-					= u"bdfghijklpqtyBDFGHIJKLPQTY1234567890[]{}()"_q;
-				static_cast<void>(metrics.tightBoundingRect(sample));
+					= u"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+					  u"0123456789 !\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~"_q;
+				static constexpr auto pixelSizes = std::array{
+					12, 13, 14, 16, 18, 20,
+				};
+				static constexpr auto weights
+					= std::array{QFont::Normal, QFont::DemiBold};
 				auto image
-					= QImage(512, 32, QImage::Format_ARGB32_Premultiplied);
+					= QImage(2048, 384, QImage::Format_ARGB32_Premultiplied);
 				image.fill(Qt::transparent);
 				auto painter = QPainter(&image);
-				painter.setFont(font);
-				painter.drawText(QPoint(0, 24), sample);
+				auto row = 0;
+				for (const auto pixelSize : pixelSizes) {
+					for (const auto weight : weights) {
+						font.setPixelSize(pixelSize);
+						font.setWeight(weight);
+						const auto metrics = QFontMetricsF(font);
+						static_cast<void>(metrics.ascent());
+						static_cast<void>(metrics.height());
+						static_cast<void>(metrics.tightBoundingRect(sample));
+						painter.setFont(font);
+						painter.drawText(QPoint(0, 24 + row * 32), sample);
+						++row;
+					}
+				}
 			};
 			prewarmFontMetrics(QFont().family());
 			prewarmFontMetrics(u"Open Sans"_q);
 			if (quitRegression) {
-				fprintf(stderr,
-						"Font shutdown regression: quit_observed=%d "
-						"font_work=active enumeration_overlapped=%d\n",
-						_fontStartupQuitObserved ? 1 : 0,
-						_fontEnumerationOverlapped ? 1 : 0);
+				if (shutdownRemovalPending) {
+					fprintf(stderr,
+							"Font shutdown regression: quit_observed=%d "
+							"font_work=active "
+							"remove_pending_at_quit=%d removal_completed=%d\n",
+							_fontStartupQuitObserved ? 1 : 0,
+							shutdownRemovalPendingAtQuit->load(
+								std::memory_order_acquire)
+								? 1
+								: 0,
+							shutdownRemovalCompleted->load(
+								std::memory_order_acquire)
+								? 1
+								: 0);
+				} else {
+					fprintf(stderr,
+							"Font shutdown regression: quit_observed=%d "
+							"font_work=active enumeration_overlapped=%d\n",
+							_fontStartupQuitObserved ? 1 : 0,
+							_fontEnumerationOverlapped ? 1 : 0);
+				}
 			}
 			if (qEnvironmentVariableIsSet("TDESKTOP_FONT_STARTUP_REGRESSION")) {
 				fprintf(stderr,
@@ -1005,6 +1083,7 @@ void Sandbox::startFontDatabaseWarmup() {
 						_launchAfterFontDatabaseWarmup = false;
 						launchApplication();
 					}
+					_shutdownLoop.quit();
 				},
 				Qt::QueuedConnection);
 		});
@@ -1045,6 +1124,19 @@ void Sandbox::startFontDatabaseWarmup() {
 						fprintf(stderr,
 								"Font shutdown regression: "
 								"probe_error=retry_checkpoint_timeout\n");
+						stopWorker(ProbeExit::Failure);
+					}
+					return;
+				}
+				if (shutdownRemovalPending) {
+					if (shutdownRemovalPending->load(
+							std::memory_order_acquire)) {
+						_launchAfterFontDatabaseWarmup = false;
+						timer->stop();
+						Core::Quit();
+					} else if (started->elapsed() >= 10000) {
+						fprintf(stderr, "Font shutdown regression: "
+										"remove_checkpoint_timeout=1\n");
 						stopWorker(ProbeExit::Failure);
 					}
 					return;

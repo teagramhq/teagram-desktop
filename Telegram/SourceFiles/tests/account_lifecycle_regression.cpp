@@ -10810,6 +10810,37 @@ struct SchedulerTraceWindow final {
 	return result;
 }
 
+[[nodiscard]] SchedulerTraceWindow SchedulerTraceForInterval(
+	const MainThreadWorkInterval &interval,
+	const Core::UiStallWatchdog::StallEvidence &evidence) {
+	if ((evidence.postedAtSteadyNanoseconds <= 0)
+		|| (evidence.durationNanoseconds <= 0)
+		|| evidence.schedulerTrace.isEmpty()
+		|| (evidence.schedulerTrace == u"none"_q)
+		|| (evidence.schedulerTrace.size()
+			!= qsizetype(evidence.schedulerSampleOffsetsNanoseconds.size()))) {
+		return {};
+	}
+	auto samples
+		= std::vector<Core::UiStallWatchdog::SchedulerSampleEvidence>();
+	samples.reserve(evidence.schedulerSampleOffsetsNanoseconds.size());
+	for (auto i = std::size_t(0);
+		 i != evidence.schedulerSampleOffsetsNanoseconds.size(); ++i) {
+		const auto offset = evidence.schedulerSampleOffsetsNanoseconds[i];
+		if ((offset < 0) || (offset > evidence.durationNanoseconds)
+			|| (offset > std::numeric_limits<qint64>::max()
+							 - evidence.postedAtSteadyNanoseconds)) {
+			return {};
+		}
+		samples.push_back({
+			.sampledAtSteadyNanoseconds
+			= evidence.postedAtSteadyNanoseconds + offset,
+			.state = evidence.schedulerTrace[qsizetype(i)].toLatin1(),
+		});
+	}
+	return SchedulerTraceForInterval(interval, samples);
+}
+
 [[nodiscard]] bool AllMainThreadWorkIntervalsHaveSchedulerProof(
 	const std::vector<MainThreadWorkInterval> &intervals,
 	const std::vector<std::optional<Core::UiStallWatchdog::StallEvidence>>
@@ -11294,6 +11325,48 @@ struct MainThreadWorkEstimate final {
 							  mainThreadCpuNanoseconds + blockedNanoseconds))};
 }
 
+struct StartupWorkEstimate final {
+	SchedulerTraceWindow schedulerSamples;
+	MainThreadWorkEstimate estimate;
+};
+
+[[nodiscard]] StartupWorkEstimate EstimateStartupWork(
+	const MainThreadWorkInterval &interval,
+	const std::vector<Core::UiStallWatchdog::PingAcknowledgementEvidence>
+		&acknowledgements,
+	const std::vector<Core::UiStallWatchdog::StallEvidence> &stallEvidence) {
+	auto schedulerSamples
+		= SchedulerTraceForInterval(interval, acknowledgements);
+	const auto trace
+		= schedulerSamples.capturePending ? QString() : schedulerSamples.trace;
+	const auto sampleOffsets = schedulerSamples.capturePending
+								   ? std::vector<qint64>()
+								   : schedulerSamples.sampleOffsetsNanoseconds;
+	auto estimate = EstimateMainThreadWork(
+		interval.mainThreadWorkNanoseconds, interval.durationNanoseconds, trace,
+		sampleOffsets, schedulerSamples.before, schedulerSamples.after);
+	if (schedulerSamples.capturePending || (estimate.blockedNanoseconds < 0)) {
+		const auto matchingStall = FindMatchingMainThreadWorkEvidence(
+			interval, stallEvidence, kStartupHeartbeatGapThresholdNanoseconds);
+		if (matchingStall) {
+			auto stallSamples
+				= SchedulerTraceForInterval(interval, *matchingStall);
+			if (!stallSamples.capturePending) {
+				const auto stallEstimate = EstimateMainThreadWork(
+					interval.mainThreadWorkNanoseconds,
+					interval.durationNanoseconds, stallSamples.trace,
+					stallSamples.sampleOffsetsNanoseconds, stallSamples.before,
+					stallSamples.after);
+				if (stallEstimate.blockedNanoseconds >= 0) {
+					schedulerSamples = std::move(stallSamples);
+					estimate = stallEstimate;
+				}
+			}
+		}
+	}
+	return {std::move(schedulerSamples), estimate};
+}
+
 [[nodiscard]] bool MainThreadWorkEstimateWithinBudget(
 	qint64 mainThreadCpuNanoseconds, qint64 wallNanoseconds,
 	const QString &schedulerTrace,
@@ -11528,6 +11601,46 @@ void AccumulateMainThreadWorkEstimate(qint64 &aggregateNanoseconds,
 	const auto capturedWindowEstimate = EstimateMainThreadWork(
 		18'000'000, acknowledgementWindow.durationNanoseconds,
 		capturedWindow.trace, capturedWindow.sampleOffsetsNanoseconds);
+	const auto corroboratedStartupGap = MainThreadWorkInterval{
+		.startedAt = QDateTime::fromString(u"2026-01-01T00:00:00.157Z"_q,
+										   Qt::ISODateWithMs),
+		.durationNanoseconds = 106'000'000,
+		.mainThreadWorkNanoseconds = 23'495'000,
+		.startedAtSteadyNanoseconds = 100'000'000,
+	};
+	const auto corroboratingStall = Core::UiStallWatchdog::StallEvidence{
+		.startedAt = u"2026-01-01T00:00:00.155Z"_q,
+		.postedAtSteadyNanoseconds = 98'000'000,
+		.durationMilliseconds = 108,
+		.durationNanoseconds = 108'000'000,
+		.schedulerTrace = u"RRRRWWRRWWRRR"_q,
+		.schedulerSampleOffsetsNanoseconds
+		= {0, 9'000'000, 18'000'000, 27'000'000, 36'000'000, 45'000'000,
+		   54'000'000, 63'000'000, 72'000'000, 81'000'000, 90'000'000,
+		   99'000'000, 108'000'000},
+	};
+	const auto corroboratedStartupWork
+		= EstimateStartupWork(corroboratedStartupGap, {},
+							  std::vector<Core::UiStallWatchdog::StallEvidence>{
+								  corroboratingStall,
+							  });
+	auto incompleteCorroboratingStall = corroboratingStall;
+	incompleteCorroboratingStall.durationMilliseconds = 96;
+	incompleteCorroboratingStall.durationNanoseconds = 96'000'000;
+	incompleteCorroboratingStall.schedulerTrace.truncate(9);
+	incompleteCorroboratingStall.schedulerSampleOffsetsNanoseconds.resize(9);
+	const auto incompleteCorroboratedStartupWork
+		= EstimateStartupWork(corroboratedStartupGap, {},
+							  std::vector<Core::UiStallWatchdog::StallEvidence>{
+								  incompleteCorroboratingStall,
+							  });
+	auto overBudgetCorroboratingStall = corroboratingStall;
+	overBudgetCorroboratingStall.schedulerTrace = QString(13, QChar(u'W'));
+	const auto overBudgetCorroboratedStartupWork
+		= EstimateStartupWork(corroboratedStartupGap, {},
+							  std::vector<Core::UiStallWatchdog::StallEvidence>{
+								  overBudgetCorroboratingStall,
+							  });
 	const auto sparseStartupWindow = MainThreadWorkInterval{
 		.durationNanoseconds = 225'000'000,
 		.startedAtSteadyNanoseconds = 10'000'000,
@@ -11760,6 +11873,20 @@ void AccumulateMainThreadWorkEstimate(qint64 &aggregateNanoseconds,
 			   capturedWindow.trace, capturedWindow.sampleOffsetsNanoseconds,
 			   acknowledgementWindow.durationNanoseconds)
 		   && (capturedWindowEstimate.estimatedWorkNanoseconds == 18'000'000)
+		   && !corroboratedStartupWork.schedulerSamples.capturePending
+		   && (corroboratedStartupWork.estimate.estimatedWorkNanoseconds
+			   == 77'495'000)
+		   && incompleteCorroboratedStartupWork.schedulerSamples.capturePending
+		   && (incompleteCorroboratedStartupWork.estimate
+				   .estimatedWorkNanoseconds
+			   == corroboratedStartupGap.durationNanoseconds)
+		   && (overBudgetCorroboratedStartupWork.estimate
+				   .estimatedWorkNanoseconds
+			   == corroboratedStartupGap.durationNanoseconds)
+		   && !MainThreadEstimatedWorkWithinBudget(
+			   overBudgetCorroboratedStartupWork.estimate
+				   .estimatedWorkNanoseconds,
+			   100'000'000)
 		   && !sparseStartupCapture.capturePending
 		   && (sparseStartupCapture.trace == sparseStartupTrace)
 		   && (sparseStartupCaptureEstimate.blockedNanoseconds == 50'000'000)
@@ -14438,9 +14565,10 @@ void RunAuthenticatedCacheSymlinkCases(
 					"Startup scheduler trace capture did not complete "
 					"within 1000 ms; over-budget windows use wall time.\n");
 			}
+			const auto startupStallEvidence
+				= Core::UiStallWatchdog::RecentStallEvidenceForTesting();
 			corroboratedStartupStalls = BuildCorroboratedStartupStalls(
-				startupHeartbeatGaps,
-				Core::UiStallWatchdog::RecentStallEvidenceForTesting());
+				startupHeartbeatGaps, startupStallEvidence);
 			const auto startupPingAcknowledgements
 				= Core::UiStallWatchdog::RecentPingAcknowledgementsForTesting();
 			uncoveredStartupHeartbeatGaps = CountUncoveredStartupHeartbeatGaps(
@@ -14502,18 +14630,11 @@ void RunAuthenticatedCacheSymlinkCases(
 				= maxMainThreadWorkNanoseconds;
 			auto startupWorkWithinBound = true;
 			for (const auto &gap : startupHeartbeatGaps) {
-				const auto schedulerSamples = SchedulerTraceForInterval(
-					gap, startupPingAcknowledgements);
-				const auto trace = schedulerSamples.capturePending
-									   ? QString()
-									   : schedulerSamples.trace;
-				const auto sampleOffsets
-					= schedulerSamples.capturePending
-						  ? std::vector<qint64>()
-						  : schedulerSamples.sampleOffsetsNanoseconds;
-				const auto estimate = EstimateMainThreadWork(
-					gap.mainThreadWorkNanoseconds, gap.durationNanoseconds,
-					trace, sampleOffsets);
+				const auto startupWork = EstimateStartupWork(
+					gap, startupPingAcknowledgements, startupStallEvidence);
+				const auto &schedulerSamples = startupWork.schedulerSamples;
+				const auto &trace = schedulerSamples.trace;
+				const auto &estimate = startupWork.estimate;
 				maxStartupEstimatedWorkNanoseconds
 					= std::max(maxStartupEstimatedWorkNanoseconds,
 							   estimate.estimatedWorkNanoseconds);

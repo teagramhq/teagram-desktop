@@ -1763,7 +1763,8 @@ run_font_shutdown_regression() {
 	: > "$font_profile_log"
 	local launch_status=0
 	local -a shutdown_command=("$APP" -noupdate -debug)
-	if [[ "$forced_failure" == probe-timeout-retry ]]; then
+	if [[ "$forced_failure" == probe-timeout-retry \
+		|| "$forced_failure" == shutdown-remove-pending ]]; then
 		shutdown_command=(python3 -c '
 import subprocess
 import sys
@@ -1771,7 +1772,7 @@ import sys
 try:
     result = subprocess.run(sys.argv[1:], timeout=30)
 except subprocess.TimeoutExpired:
-    print("font shutdown retry timeout process hung", file=sys.stderr)
+    print("font shutdown worker drain timed out", file=sys.stderr)
     sys.exit(124)
 sys.exit(result.returncode if result.returncode >= 0 else 128 - result.returncode)
 ' "$APP" -noupdate -debug)
@@ -1804,10 +1805,19 @@ sys.exit(result.returncode if result.returncode >= 0 else 128 - result.returncod
 			"$launch_status" >&2
 		return 1
 	fi
-	if ! grep -F -q 'Font shutdown regression: quit_observed=1 font_work=active enumeration_overlapped=1' \
-		"$shutdown_log"; then
+	local expected_shutdown_line
+	if [[ "$forced_failure" == shutdown-remove-pending ]]; then
+		expected_shutdown_line='Font shutdown regression: quit_observed=1 font_work=active remove_pending_at_quit=1 removal_completed=1'
+	else
+		expected_shutdown_line='Font shutdown regression: quit_observed=1 font_work=active enumeration_overlapped=1'
+	fi
+	if ! grep -F -q "$expected_shutdown_line" "$shutdown_log"; then
 		cat "$shutdown_log" >&2
-		echo "font shutdown regression did not quit during an active system font enumeration" >&2
+		if [[ "$forced_failure" == shutdown-remove-pending ]]; then
+			echo 'font shutdown did not complete the pending removal after quit' >&2
+		else
+			echo "font shutdown regression did not quit during an active system font enumeration" >&2
+		fi
 		return 1
 	fi
 	local in_flight_position
@@ -2132,7 +2142,10 @@ run_font_startup_regression() {
 		"$exposure_timeout_wall_ns"
 	printf 'StartFonts startup regression: cold_wall_ns=%s warm_wall_ns=%s fallback=PASS font_stall_gate=PASS\n' \
 		"$cold_wall_ns" "$warm_wall_ns"
-	run_font_shutdown_regression
+	if ! run_font_shutdown_regression shutdown-remove-pending; then
+		return 1
+	fi
+	printf 'Font shutdown removal pending across quit=PASS\n'
 	local retry_log="$TEST_HOME/font-probe-missed-first.log"
 	if ! run_font_shutdown_regression probe-missed-first >"$retry_log" 2>&1; then
 		cat "$retry_log" >&2

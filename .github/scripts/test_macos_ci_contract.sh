@@ -1578,15 +1578,41 @@ if ! awk '
 ' Telegram/SourceFiles/core/sandbox.cpp; then
   contract_fail 'System and bundled font metrics must be prewarmed before application startup.'
 fi
+grep -Fq 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz' \
+  Telegram/SourceFiles/core/sandbox.cpp \
+  || contract_fail 'Font glyph warmup must cover upper and lower case letters used by first paint.'
+grep -Fq '0123456789 !' \
+  Telegram/SourceFiles/core/sandbox.cpp \
+  || contract_fail 'Font glyph warmup must cover digits and punctuation used by first paint.'
+grep -Fq '12, 13, 14, 16, 18, 20,' \
+  Telegram/SourceFiles/core/sandbox.cpp \
+  || contract_fail 'Font glyph warmup must cover the UI text sizes used by first paint.'
+grep -Fq 'std::array{QFont::Normal, QFont::DemiBold}' \
+  Telegram/SourceFiles/core/sandbox.cpp \
+  || contract_fail 'Font glyph warmup must cover regular and emphasized UI text.'
 if ! awk '
   /^int Sandbox::start\(\)/ { in_start = 1 }
+  in_start && /const auto drainShutdown = \[this\]/ { helper = NR }
+  in_start && /_shutdownLoop\.run\(pending\)/ { shutdown_loop = NR }
   in_start && /const auto result = exec\(\);/ { exec_line = NR }
+  in_start && !joinable_line && /_fontDatabaseWarmupThread\.joinable\(\)/ { joinable_line = NR }
+  in_start && /!_fontDatabaseWarmupDone/ { done_line = NR }
+  in_start && /drainShutdown\(\);/ { drain_line = NR }
   in_start && /_fontDatabaseWarmupThread\.join\(\)/ { join_line = NR }
   in_start && /^int Sandbox::stopRunningInstance/ { in_start = 0 }
-  END { exit !(exec_line && join_line && exec_line < join_line) }
+  END { exit !(helper && shutdown_loop && joinable_line && done_line && exec_line && drain_line && join_line && helper < shutdown_loop && joinable_line < done_line && exec_line < drain_line && drain_line < join_line) }
 ' Telegram/SourceFiles/core/sandbox.cpp; then
-  contract_fail 'The font warmup worker must be joined after the event loop exits.'
+  contract_fail 'The GUI shutdown loop must drain font warmup work before joining its worker.'
 fi
+grep -Fq 'run_font_shutdown_regression shutdown-remove-pending' \
+  Telegram/build/test_mac_profile_guard.sh \
+  || contract_fail 'The macOS font shutdown regression must force a pending removal across application quit.'
+grep -Fq 'remove_pending_at_quit=1 removal_completed=1' \
+  Telegram/build/test_mac_profile_guard.sh \
+  || contract_fail 'The macOS font shutdown regression must assert that the pending removal completed.'
+grep -Fq 'const auto startupWork = EstimateStartupWork(' \
+  Telegram/SourceFiles/tests/account_lifecycle_regression.cpp \
+  || contract_fail 'Startup work estimates must use complete matched stall samples when ping captures are pending.'
 if grep -Eq 'QEventLoop' Telegram/SourceFiles/core/sandbox.cpp \
   || grep -Eq 'ResolveDeferredShapedMetrics|SetShapedMetricsDeferred' \
     Telegram/SourceFiles/core/application.cpp; then
@@ -1739,7 +1765,7 @@ awk '
 ' Telegram/SourceFiles/core/sandbox.cpp > "$temp_dir/font-database-warmup.cpp"
 grep -Fq 'style::internal::PrepareFontSubstitutions();' "$temp_dir/font-database-warmup.cpp" \
 	|| contract_fail 'Font substitutions must be installed before the worker prewarms the font database.'
-grep -Fq 'painter.drawText(QPoint(0, 24), sample);' Telegram/SourceFiles/core/sandbox.cpp \
+grep -Fq 'painter.drawText(QPoint(0, 24 + row * 32), sample);' Telegram/SourceFiles/core/sandbox.cpp \
 	|| contract_fail 'The font worker must warm glyph rasterization before the first history paint.'
 grep -Fq '&& (mediaCache || chatSwitch.passed)' "$native_harness" \
   || contract_fail 'The chat switch completion and restore checks must remain a gate.'

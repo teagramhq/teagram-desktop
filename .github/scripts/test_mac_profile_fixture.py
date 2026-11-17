@@ -152,6 +152,11 @@ if [[ "${TDESKTOP_FONT_STARTUP_QUIT_REGRESSION:-}" == 1 ]]; then
         printf 'Font shutdown regression: worker_joined=1 application_created=0 teardown=complete\\n'
         exit 0
     fi
+    if [[ "${TDESKTOP_FONT_STARTUP_TEST_FAILURE:-}" == shutdown-remove-pending ]]; then
+        printf 'Font shutdown regression: quit_observed=1 font_work=active remove_pending_at_quit=1 removal_completed=1\\n'
+        printf 'Font shutdown regression: worker_joined=1 application_created=0 teardown=complete\\n'
+        exit 0
+    fi
     if [[ "${TDESKTOP_FONT_STARTUP_TEST_FAILURE:-}" == probe-missed-first ]]; then
         printf 'Font shutdown regression: enumeration_retry=1\\n'
     fi
@@ -261,23 +266,32 @@ if [[ "${TDESKTOP_FONT_STARTUP_QUIT_REGRESSION:-}" == 1 ]]; then
         fi
         printf 'Font shutdown regression: worker_joined=1 application_created=0 teardown=complete\\n'
         exit 0
+    elif [[ "${TDESKTOP_FONT_STARTUP_TEST_FAILURE:-}" == shutdown-remove-pending \
+        && "$FONT_SHUTDOWN_TEST_MODE" != shutdown-not-in-flight \
+        && "$FONT_SHUTDOWN_TEST_MODE" != shutdown-no-overlap \
+        && "$FONT_SHUTDOWN_TEST_MODE" != shutdown-order \
+        && "$FONT_SHUTDOWN_TEST_MODE" != shutdown-application-created \
+        && "$FONT_SHUTDOWN_TEST_MODE" != shutdown-missing-teardown \
+        && "$FONT_SHUTDOWN_TEST_MODE" != shutdown-crash ]]; then
+        printf 'Font shutdown regression: quit_observed=1 font_work=active remove_pending_at_quit=1 removal_completed=1\\n'
+        printf 'Font shutdown regression: worker_joined=1 application_created=0 teardown=complete\\n'
     elif [[ "$FONT_SHUTDOWN_TEST_MODE" == shutdown-not-in-flight ]]; then
-        printf 'Font shutdown regression: quit_observed=0 font_work=active enumeration_overlapped=0\\n'
+        printf 'Font shutdown regression: quit_observed=0 font_work=active remove_pending_at_quit=0 removal_completed=1\\n'
         printf 'Font shutdown regression: worker_joined=1 application_created=0 teardown=complete\\n'
     elif [[ "$FONT_SHUTDOWN_TEST_MODE" == shutdown-no-overlap ]]; then
         printf 'Font shutdown regression: last_other_work_frames=frame0 <- frame1 <- frame2 <- frame3 <- frame4 <- frame5 <- frame6 <- frame7\\n'
-        printf 'Font shutdown regression: quit_observed=1 font_work=active enumeration_overlapped=0\\n'
+        printf 'Font shutdown regression: quit_observed=1 font_work=active remove_pending_at_quit=0 removal_completed=1\\n'
         printf 'Font shutdown regression: worker_joined=1 application_created=0 teardown=complete\\n'
     elif [[ "$FONT_SHUTDOWN_TEST_MODE" == shutdown-order ]]; then
         printf 'Font shutdown regression: worker_joined=1 application_created=0 teardown=complete\\n'
-        printf 'Font shutdown regression: quit_observed=1 font_work=active enumeration_overlapped=1\\n'
+        printf 'Font shutdown regression: quit_observed=1 font_work=active remove_pending_at_quit=1 removal_completed=1\\n'
     elif [[ "$FONT_SHUTDOWN_TEST_MODE" == shutdown-application-created ]]; then
-        printf 'Font shutdown regression: quit_observed=1 font_work=active enumeration_overlapped=1\\n'
+        printf 'Font shutdown regression: quit_observed=1 font_work=active remove_pending_at_quit=1 removal_completed=1\\n'
         printf 'Font shutdown regression: worker_joined=1 application_created=1 teardown=complete\\n'
     elif [[ "$FONT_SHUTDOWN_TEST_MODE" == shutdown-missing-teardown ]]; then
-        printf 'Font shutdown regression: quit_observed=1 font_work=active enumeration_overlapped=1\\n'
+        printf 'Font shutdown regression: quit_observed=1 font_work=active remove_pending_at_quit=1 removal_completed=1\\n'
     elif [[ "$FONT_SHUTDOWN_TEST_MODE" == shutdown-crash ]]; then
-        printf 'Font shutdown regression: quit_observed=1 font_work=active enumeration_overlapped=1\\n'
+        printf 'Font shutdown regression: quit_observed=1 font_work=active remove_pending_at_quit=1 removal_completed=1\\n'
         exit 139
     else
         if [[ "${TDESKTOP_FONT_STARTUP_TEST_FAILURE:-}" == probe-missed-first \\
@@ -677,11 +691,11 @@ assert 'bundled fonts were not preloaded before app initialization' \
     in font_startup_missing_custom_fonts
 font_startup_shutdown_not_in_flight = run_font_startup_fixture(
     50_000_000, 50_000_000, 1, mode='shutdown-not-in-flight')
-assert 'font shutdown regression did not quit during an active system font enumeration' \
+assert 'font shutdown did not complete the pending removal after quit' \
     in font_startup_shutdown_not_in_flight
 font_startup_shutdown_no_overlap = run_font_startup_fixture(
     50_000_000, 50_000_000, 1, mode='shutdown-no-overlap')
-assert 'font shutdown regression did not quit during an active system font enumeration' \
+assert 'font shutdown did not complete the pending removal after quit' \
     in font_startup_shutdown_no_overlap
 assert 'last_other_work_frames=frame0 <- frame1 <- frame2 <- frame3 <- frame4 <- frame5 <- frame6 <- frame7' \
     in font_startup_shutdown_no_overlap
