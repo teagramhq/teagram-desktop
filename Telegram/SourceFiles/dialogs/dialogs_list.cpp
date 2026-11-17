@@ -100,7 +100,7 @@ void List::adjustByDate(not_null<Row*> row) {
 			&& (row->entry()->fixedOnTopIndex()
 				|| row->entry()->isPinnedDialog(_filterId));
 		if (!canAdjustWhileFrozen) {
-			_pendingAdjust.emplace(row);
+			_pendingAdjust.emplace(row.get());
 			if (!_addedWhileFrozen.contains(row)) {
 				_pendingMoveFrom.try_emplace(row.get(), row->top());
 			}
@@ -142,14 +142,20 @@ std::vector<List::MovedRow> List::unfreeze() {
 	_frozen = false;
 	auto pending = base::take(_pendingAdjust);
 	if (pending.size() == 1) {
-		adjustByDate(*pending.begin());
+		adjustByDate(not_null<Row *>(*pending.begin()));
 	} else if (pending.size() > 1) {
+		auto pendingRows = std::vector<not_null<Row *>>();
+		pendingRows.reserve(pending.size());
+		for (const auto row : pending) {
+			pendingRows.emplace_back(row);
+		}
 		auto [rows, changedEnd] = details::ReorderChangedRows(
-			_rows, std::vector<not_null<Row *>>(pending.begin(), pending.end()),
+			_rows, std::move(pendingRows),
 			[&](Row *row) { return row->sortKey(_filterId); },
 			[](Row *row) { return row->index(); });
 		if (!rows.empty()) {
-			_rows = std::move(rows);
+			Expects(int(rows.size()) == changedEnd);
+			std::copy(rows.begin(), rows.end(), _rows.begin());
 			auto top = 0;
 			for (auto i = 0; i != changedEnd; ++i) {
 				const auto row = _rows[i];
@@ -246,7 +252,7 @@ bool List::remove(Key key, Row *replacedBy) {
 	}
 
 	const auto row = i->second.get();
-	_pendingAdjust.remove(row);
+	_pendingAdjust.erase(row);
 	_addedWhileFrozen.remove(row);
 	_pendingMoveFrom.erase(row);
 	row->entry()->owner().dialogsRowReplaced({ row, replacedBy });

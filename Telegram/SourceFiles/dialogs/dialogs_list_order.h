@@ -8,11 +8,13 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #pragma once
 
 #include <algorithm>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
 namespace Dialogs::details {
 
+// The returned rows are the reordered prefix; the original tail is unchanged.
 template <typename Row, typename Key, typename Index>
 [[nodiscard]] auto ReorderChangedRows(const std::vector<Row> &original,
 									  std::vector<Row> pending, Key key,
@@ -21,9 +23,10 @@ template <typename Row, typename Key, typename Index>
 	const auto needsMove
 		= std::any_of(pending.begin(), pending.end(), [&](const auto &row) {
 			  const auto i = index(row);
-			  return (i > 0 && key(original[i - 1]) < key(row))
+			  const auto rowKey = key(row);
+			  return (i > 0 && key(original[i - 1]) < rowKey)
 					 || (i + 1 < int(original.size())
-						 && key(row) < key(original[i + 1]));
+						 && rowKey < key(original[i + 1]));
 		  });
 	if (!needsMove) {
 		return {};
@@ -31,10 +34,21 @@ template <typename Row, typename Key, typename Index>
 	std::sort(
 		pending.begin(), pending.end(),
 		[&](const auto &a, const auto &b) { return index(a) < index(b); });
-	auto adjusted = pending;
-	std::stable_sort(
-		adjusted.begin(), adjusted.end(),
-		[&](const auto &a, const auto &b) { return key(a) > key(b); });
+	using SortKey = std::decay_t<decltype(key(std::declval<Row>()))>;
+	struct AdjustedRow {
+		Row row;
+		SortKey key;
+		int index;
+	};
+	auto adjusted = std::vector<AdjustedRow>();
+	adjusted.reserve(pending.size());
+	for (const auto &row : pending) {
+		adjusted.push_back({row, key(row), index(row)});
+	}
+	std::sort(
+		adjusted.begin(), adjusted.end(), [](const auto &a, const auto &b) {
+			return (a.key == b.key) ? (a.index < b.index) : (a.key > b.key);
+		});
 	auto rows = std::vector<Row>();
 	rows.reserve(original.size());
 	auto nextAdjusted = adjusted.begin();
@@ -56,16 +70,18 @@ template <typename Row, typename Key, typename Index>
 		}
 		const auto rowKey = key(row);
 		while (nextAdjusted != adjusted.end()
-			   && (key(*nextAdjusted) > rowKey
-				   || (key(*nextAdjusted) == rowKey
-					   && index(*nextAdjusted) < index(row)))) {
-			rows.push_back(*nextAdjusted++);
+			   && (nextAdjusted->key > rowKey
+				   || (nextAdjusted->key == rowKey
+					   && nextAdjusted->index < index(row)))) {
+			rows.push_back(nextAdjusted->row);
+			++nextAdjusted;
 		}
 		rows.push_back(row);
 	}
-	rows.insert(rows.end(), nextAdjusted, adjusted.end());
+	for (; nextAdjusted != adjusted.end(); ++nextAdjusted) {
+		rows.push_back(nextAdjusted->row);
+	}
 	const auto changedEnd = int(rows.size());
-	rows.insert(rows.end(), rowIt, original.end());
 	return {std::move(rows), changedEnd};
 }
 

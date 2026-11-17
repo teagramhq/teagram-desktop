@@ -9,6 +9,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "dialogs/dialogs_row.h"
 
+#include <unordered_set>
 #include <utility>
 
 class PeerData;
@@ -99,7 +100,7 @@ private:
 	bool _frozen = false;
 	std::vector<not_null<Row*>> _rows;
 	std::map<Key, std::unique_ptr<Row>> _rowByKey;
-	base::flat_set<not_null<Row*>> _pendingAdjust;
+	std::unordered_set<Row *> _pendingAdjust;
 	base::flat_set<not_null<Row *>> _addedWhileFrozen;
 	std::map<Row *, int> _pendingMoveFrom;
 };

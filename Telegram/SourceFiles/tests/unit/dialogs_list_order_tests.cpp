@@ -39,21 +39,30 @@ TEST_CASE(DialogOrderAfterBatchTouchesManyDialogs) {
 		dialogs[i].unread = 1;
 		changed.push_back(&dialogs[i]);
 	}
+	auto sortKeyReads = 0;
 	const auto [ordered, changedEnd] = Dialogs::details::ReorderChangedRows(
-		rows, changed, [](const auto *row) { return row->date; },
+		rows, changed,
+		[&](const auto *row) {
+			++sortKeyReads;
+			return row->date;
+		},
 		[](const auto *row) { return row->index; });
-	CHECK(ordered.size() == rows.size());
+	CHECK_EQ(int(ordered.size()), changedEnd);
 	CHECK_EQ(changedEnd, 146);
-	if (ordered.size() != rows.size()) {
+	CHECK(sortKeyReads <= kCount + 4 * int(changed.size()));
+	if ((int(ordered.size()) != changedEnd)
+		|| (changedEnd > int(rows.size()))) {
 		return;
 	}
+	auto actual = ordered;
+	actual.insert(actual.end(), rows.begin() + changedEnd, rows.end());
+	CHECK_EQ(int(actual.size()), int(rows.size()));
 	for (auto i = 0; i != kCount; ++i) {
 		const auto expected = (i < 96) ? (145 - i) : (i < 146) ? (i - 96) : i;
-		CHECK_EQ(ordered[i]->id, expected);
-		CHECK_EQ(ordered[i]->lastMessage,
+		CHECK_EQ(actual[i]->id, expected);
+		CHECK_EQ(actual[i]->lastMessage,
 				 (expected >= 50 && expected < 146) ? 2000 + expected : 1);
-		CHECK_EQ(ordered[i]->unread,
-				 (expected >= 50 && expected < 146) ? 1 : 0);
+		CHECK_EQ(actual[i]->unread, (expected >= 50 && expected < 146) ? 1 : 0);
 	}
 }
 
@@ -71,7 +80,13 @@ TEST_CASE(DialogOrderKeepsEqualDatesStable) {
 		[](const auto *row) { return row->date; },
 		[](const auto *row) { return row->index; });
 	CHECK_EQ(changedEnd, 5);
-	CHECK(ordered
+	CHECK_EQ(int(ordered.size()), changedEnd);
+	if (int(ordered.size()) != changedEnd) {
+		return;
+	}
+	auto actual = ordered;
+	actual.insert(actual.end(), rows.begin() + changedEnd, rows.end());
+	CHECK(actual
 		  == std::vector<DialogState *>(
 			  {rows[3], rows[4], rows[0], rows[1], rows[2], rows[5]}));
 }
