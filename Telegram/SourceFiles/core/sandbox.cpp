@@ -79,7 +79,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <cxxabi.h>
 #include <dlfcn.h>
 #include <execinfo.h>
-#include <CoreText/CTFontManager.h>
 #include <pthread.h>
 #include <sched.h>
 #include <signal.h>
@@ -131,7 +130,6 @@ constexpr auto kFontStartupSplashExposureTimeout = 1000;
 
 #ifdef Q_OS_MAC
 constexpr auto kProbeMaxFrames = 64;
-constexpr auto kProbeFontEnumerationRepeats = 64;
 void *ProbeFrames[kProbeMaxFrames];
 std::atomic_int ProbeDepth = -1;
 
@@ -178,19 +176,27 @@ void ProbeSignal(int) {
 }
 
 [[nodiscard]] bool FramesInSystemEnumeration(void *const *frames, int depth) {
+	auto coreTextEnumeration = false;
+	auto qtFontDatabasePopulation = false;
 	for (auto i = 0; i != depth; ++i) {
 		auto info = Dl_info();
 		if (!dladdr(frames[i], &info) || !info.dli_sname) {
 			continue;
 		}
 		const auto name = QByteArray(info.dli_sname);
-		// Only the system family enumeration: registering an application
-		// font also runs populateFromDescriptor, which is not it.
 		if (name.contains("CTFontManagerCopyAvailableFontFamilyNames")) {
+			coreTextEnumeration = true;
+		}
+		if (name.contains("QFontDatabase") && name.contains("families")) {
+			qtFontDatabasePopulation = true;
+		}
+		if (coreTextEnumeration && qtFontDatabasePopulation) {
 			return true;
 		}
 	}
-	return false;
+	// Require the native frame while Qt is populating its database, so the
+	// probe holds the Qt font-database mutex through application shutdown.
+	return coreTextEnumeration && qtFontDatabasePopulation;
 }
 
 enum class StackSample {
@@ -948,27 +954,13 @@ void Sandbox::startFontDatabaseWarmup() {
 				return;
 			}
 			const auto openSansLoaded = style::internal::PreloadCustomFonts();
-			const auto populateFontDatabase = [quitRegression] {
+			const auto populateFontDatabase = [] {
 #if QT_VERSION < QT_VERSION_CHECK(6, 0, 0)
 				const auto families = QFontDatabase().families();
 #else  // Qt < 6.0.0
 				const auto families = QFontDatabase::families();
 #endif // Qt < 6.0.0
 				Q_UNUSED(families);
-				if (quitRegression) {
-					// CoreText can return the system family list from its
-					// process cache after the first startup probe. Repeat the
-					// native query in this test-only worker so the quit check
-					// still observes the real system enumeration frame on a
-					// warm CI runner.
-					for (auto i = 0; i != kProbeFontEnumerationRepeats; ++i) {
-						const auto systemFamilies
-							= CTFontManagerCopyAvailableFontFamilyNames();
-						if (systemFamilies) {
-							CFRelease(systemFamilies);
-						}
-					}
-				}
 			};
 			populateFontDatabase();
 			if (ignoreFirstEnumeration) {
@@ -1023,6 +1015,8 @@ void Sandbox::startFontDatabaseWarmup() {
 					shutdownRemovalCompleted->store(true,
 													std::memory_order_release);
 				}
+				// Removing the application font invalidates Qt's database; this
+				// query retries the native population while Qt holds its mutex.
 				populateFontDatabase();
 			}
 			const auto prewarmFontMetrics = [](QString family) {

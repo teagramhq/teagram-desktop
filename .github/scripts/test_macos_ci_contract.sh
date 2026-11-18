@@ -1604,6 +1604,20 @@ fi
 grep -Fq 'run_font_shutdown_regression shutdown-remove-pending' \
   Telegram/build/test_mac_profile_guard.sh \
   || contract_fail 'The macOS font shutdown regression must force a pending removal across application quit.'
+if grep -Fq 'CTFontManagerCopyAvailableFontFamilyNames();' \
+  Telegram/SourceFiles/core/sandbox.cpp; then
+  contract_fail 'The shutdown probe must not bypass Qt font-database population with a direct CoreText query.'
+fi
+if ! awk '
+  /bool FramesInSystemEnumeration\(/ { in_probe = 1 }
+  in_probe && /name\.contains\("CTFontManagerCopyAvailableFontFamilyNames"\)/ { core_text = 1 }
+  in_probe && /name\.contains\("QFontDatabase"\)/ { qt_database = 1 }
+  in_probe && /name\.contains\("families"\)/ { qt_families = 1 }
+  in_probe && /return .*&&/ { paired = 1 }
+  in_probe && /^}/ { exit !(core_text && qt_database && qt_families && paired) }
+' Telegram/SourceFiles/core/sandbox.cpp; then
+  contract_fail 'The shutdown probe must require CoreText enumeration inside Qt font-database population.'
+fi
 if ! awk '
   /^run_font_startup_regression\(\) \{$/ { in_startup = 1; next }
   in_startup && /^}$/ { in_startup = 0 }
