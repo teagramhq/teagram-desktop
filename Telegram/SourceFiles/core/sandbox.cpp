@@ -9,6 +9,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "base/platform/base_platform_info.h"
 #include "platform/platform_specific.h"
+#if !defined Q_OS_WIN && !defined Q_OS_MAC
+#include "platform/linux/local_socket_path.h"
+#endif // !Q_OS_WIN && !Q_OS_MAC
 #include "mainwidget.h"
 #include "mainwindow.h"
 #include "storage/localstorage.h"
@@ -335,12 +338,12 @@ int Sandbox::start() {
 		_localServerName = Platform::SingleInstanceLocalServerName(h);
 	}
 
-#ifdef Q_OS_LINUX
+#if !defined Q_OS_WIN && !defined Q_OS_MAC
 	if (_localServerName.isEmpty()) {
-		LOG(("XDG_RUNTIME_DIR must be a user-owned 0700 directory."));
+		LOG(("Could not determine a private local socket path."));
 		return 1;
 	}
-#endif // Q_OS_LINUX
+#endif // !Q_OS_WIN && !Q_OS_MAC
 
 #ifdef Q_OS_MAC
 	if (_localServerName.isEmpty()) {
@@ -1015,12 +1018,27 @@ void Sandbox::socketError(QLocalSocket::LocalSocketError e) {
 		return Quit();
 	}
 #endif // Q_OS_MAC
+#if !defined Q_OS_WIN && !defined Q_OS_MAC
+	const auto result = Platform::Linux::StartSingleInstanceServer(
+		_localServer, _localServerName,
+		[](const QString &serverName) { psCheckLocalSocket(serverName); });
+	if (result == Platform::Linux::SingleInstanceServerResult::Secondary) {
+		_localSocket.connectToServer(_localServerName);
+		return;
+	} else if (result == Platform::Linux::SingleInstanceServerResult::Failed) {
+		LOG(("Failed to start listening to %1 server: %2")
+				.arg(_localServerName, _localServer.errorString()));
+		return Quit();
+	}
+#else
 	psCheckLocalSocket(_localServerName);
 
 	if (!_localServer.listen(_localServerName)) {
-		LOG(("Failed to start listening to %1 server: %2").arg(_localServerName, _localServer.errorString()));
+		LOG(("Failed to start listening to %1 server: %2")
+				.arg(_localServerName, _localServer.errorString()));
 		return Quit();
 	}
+#endif // !Q_OS_WIN && !Q_OS_MAC
 #ifdef Q_OS_MAC
 	if (MacProtectedPath::IntegrationTestActive()) {
 		const auto fullServerName = _localServer.fullServerName().toUtf8();
