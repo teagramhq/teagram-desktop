@@ -124,9 +124,10 @@ TEST_CASE(LinuxSingleInstanceSocketFallsBackFromAnUntrustedRuntimeDirectory) {
 	if (!temporaryDirectory.isValid()) {
 		return;
 	}
-	const auto sharedPermissions = QFileDevice::ReadOwner
-		| QFileDevice::WriteOwner | QFileDevice::ExeOwner
-		| QFileDevice::ReadOther | QFileDevice::ExeOther;
+	const auto sharedPermissions
+		= QFileDevice::ReadOwner | QFileDevice::WriteOwner
+		  | QFileDevice::ExeOwner | QFileDevice::ReadOther
+		  | QFileDevice::ExeOther;
 	const auto permissionsSet
 		= QFile::setPermissions(runtimeDirectory.path(), sharedPermissions);
 	CHECK(permissionsSet);
