@@ -471,7 +471,7 @@ TEST_CASE(LinuxSingleInstanceProbeTimeoutReleasesElectionLock) {
 	QTimer::singleShot(1'000, &loop, &QEventLoop::quit);
 	loop.exec();
 	CHECK(result == Platform::Linux::SingleInstanceServerResult::Failed);
-	CHECK(error.contains(u"probe"_q));
+	CHECK(error.contains(u"probing"_q));
 	auto lock = QLockFile(socketPath + u".lock"_q);
 	CHECK(lock.tryLock(0));
 	for (const auto client : clients) {
