@@ -102,6 +102,15 @@ base::options::toggle OptionDeadlockDetector({
 
 constexpr auto kCleanupIpcTimeout = 10 * crl::time(1000);
 constexpr auto kCleanupQuitTimeout = 30 * crl::time(1000);
+#if !defined Q_OS_WIN && !defined Q_OS_MAC
+void ShowSingleInstanceStartupError(const QString &error) {
+	const auto message
+		= error.isEmpty()
+			  ? u"Could not start the single-instance IPC service."_q
+			  : error;
+	QMessageBox::critical(nullptr, QApplication::applicationName(), message);
+}
+#endif // !Q_OS_WIN && !Q_OS_MAC
 #ifdef Q_OS_MAC
 constexpr auto kFontStartupSplashExposureTimeout = 1000;
 #endif // Q_OS_MAC
@@ -350,8 +359,7 @@ int Sandbox::start() {
 				  ? u"Could not determine a private local socket path."_q
 				  : localServerNameError;
 		LOG(("%1").arg(message));
-		QMessageBox::critical(nullptr, QApplication::applicationName(),
-							  message);
+		ShowSingleInstanceStartupError(message);
 		return 1;
 	}
 #endif // !Q_OS_WIN && !Q_OS_MAC
@@ -1047,6 +1055,7 @@ void Sandbox::socketError(QLocalSocket::LocalSocketError e) {
 					   == Platform::Linux::SingleInstanceServerResult::Failed) {
 				LOG(("Failed to start listening to %1 server: %2")
 						.arg(_localServerName, error));
+				ShowSingleInstanceStartupError(error);
 				return Quit();
 			}
 			afterSingleInstanceStarted();
