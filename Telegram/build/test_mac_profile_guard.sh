@@ -2142,6 +2142,10 @@ run_font_startup_regression() {
 		"$exposure_timeout_wall_ns"
 	printf 'StartFonts startup regression: cold_wall_ns=%s warm_wall_ns=%s fallback=PASS font_stall_gate=PASS\n' \
 		"$cold_wall_ns" "$warm_wall_ns"
+	if ! run_font_shutdown_regression; then
+		return 1
+	fi
+	printf 'Font shutdown during active enumeration=PASS\n'
 	if ! run_font_shutdown_regression shutdown-remove-pending; then
 		return 1
 	fi

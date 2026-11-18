@@ -1604,6 +1604,15 @@ fi
 grep -Fq 'run_font_shutdown_regression shutdown-remove-pending' \
   Telegram/build/test_mac_profile_guard.sh \
   || contract_fail 'The macOS font shutdown regression must force a pending removal across application quit.'
+if ! awk '
+  /^run_font_startup_regression\(\) \{$/ { in_startup = 1; next }
+  in_startup && /^}$/ { in_startup = 0 }
+  in_startup && /run_font_shutdown_regression;/ { enumeration = NR }
+  in_startup && /run_font_shutdown_regression shutdown-remove-pending/ { removal = NR }
+  END { exit !(enumeration && removal && enumeration < removal) }
+' Telegram/build/test_mac_profile_guard.sh; then
+  contract_fail 'The startup regression must retain the baseline quit-during-enumeration case before the pending-removal case.'
+fi
 grep -Fq 'remove_pending_at_quit=1 removal_completed=1' \
   Telegram/build/test_mac_profile_guard.sh \
   || contract_fail 'The macOS font shutdown regression must assert that the pending removal completed.'
