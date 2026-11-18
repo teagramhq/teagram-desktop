@@ -196,7 +196,11 @@ TEST_CASE(LinuxSingleInstanceSocketFallsBackWhenRuntimeSocketPathIs107Bytes) {
 	sockaddr_un socketAddress = {};
 	const auto limit = sizeof(socketAddress.sun_path) - 2;
 	const auto encodedServerName = QFile::encodeName(serverName);
-	const auto runtimePathLength = limit + 1 - encodedServerName.size() - 1;
+	const auto runtimeDirectoryPathLength
+		= limit + 1 - encodedServerName.size() - 1;
+	const auto encodedHomeDirectory = QFile::encodeName(homeDirectory.path());
+	const auto runtimePathLength
+		= runtimeDirectoryPathLength - encodedHomeDirectory.size() - 1;
 	const auto runtimeDirectory
 		= homeDirectory.filePath(QString(int(runtimePathLength), QChar('x')));
 	CHECK(QDir().mkdir(runtimeDirectory));
@@ -228,7 +232,11 @@ TEST_CASE(LinuxSingleInstanceSocketAcceptsRuntimeSocketPathAt106Bytes) {
 	sockaddr_un socketAddress = {};
 	const auto limit = sizeof(socketAddress.sun_path) - 2;
 	const auto encodedServerName = QFile::encodeName(serverName);
-	const auto runtimePathLength = limit - encodedServerName.size() - 1;
+	const auto runtimeDirectoryPathLength
+		= limit - encodedServerName.size() - 1;
+	const auto encodedHomeDirectory = QFile::encodeName(homeDirectory.path());
+	const auto runtimePathLength
+		= runtimeDirectoryPathLength - encodedHomeDirectory.size() - 1;
 	const auto runtimeDirectory
 		= homeDirectory.filePath(QString(int(runtimePathLength), QChar('x')));
 	CHECK(QDir().mkdir(runtimeDirectory));
