@@ -267,6 +267,18 @@ class DesktopScaleCheckTests(unittest.TestCase):
             "desktop_scale_check.py must implement recorded-run evaluation",
         )
 
+    def test_scale_container_provides_a_private_xdg_runtime_directory(self):
+        runner = (
+            Path(__file__).parents[2]
+            / ".github/scripts/run_desktop_scale_check.sh"
+        )
+        script = runner.read_text()
+
+        self.assertIn('runtime_dir="$scale_home/runtime"', script)
+        self.assertIn('mkdir -m 700 "$runtime_dir"', script)
+        self.assertIn('chmod 700 "$runtime_dir"', script)
+        self.assertIn('export XDG_RUNTIME_DIR="$runtime_dir"', script)
+
     def test_parses_per_scenario_timings_and_absolute_stalls(self):
         self.require_implementation()
         sample = scale_check.parse_report(REPORT)
