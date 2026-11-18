@@ -204,7 +204,8 @@ TEST_CASE(LinuxSingleInstanceSocketFallsBackWhenRuntimeSocketPathIs107Bytes) {
 
 	const auto oversizedSocketPath
 		= QDir(runtimeDirectory).filePath(serverName);
-	CHECK_EQ(size_t(QFile::encodeName(oversizedSocketPath).size()), limit + 1);
+	CHECK_EQ(quint64(QFile::encodeName(oversizedSocketPath).size()),
+			 quint64(limit + 1));
 	CHECK(Platform::Linux::SingleInstanceSocketPathInDirectory(
 			  runtimeDirectory, serverName, geteuid())
 			  .isEmpty());
@@ -234,7 +235,7 @@ TEST_CASE(LinuxSingleInstanceSocketAcceptsRuntimeSocketPathAt106Bytes) {
 	CHECK(SetPrivatePermissions(runtimeDirectory));
 
 	const auto socketPath = QDir(runtimeDirectory).filePath(serverName);
-	CHECK_EQ(size_t(QFile::encodeName(socketPath).size()), limit);
+	CHECK_EQ(quint64(QFile::encodeName(socketPath).size()), quint64(limit));
 	CHECK_EQ(Platform::Linux::SingleInstanceSocketPathInDirectory(
 				 runtimeDirectory, serverName, geteuid()),
 			 socketPath);
