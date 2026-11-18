@@ -50,6 +50,12 @@ if [[ -n "${TDESKTOP_PROFILE_LOCK_REGRESSION:-}" ]]; then
 fi
 if [[ -n "${TDESKTOP_SOCKET_ERROR_REGRESSION:-}" ]]; then
     printf 'Socket error regression: injected=1\\n'
+    if [[ "$TDESKTOP_SOCKET_ERROR_REGRESSION" == ipc-collision ]]; then
+        collision_path="$HOME/fixture-ipc"
+        printf 'Teagram IPC collision fixture' > "$collision_path"
+        printf 'Socket error regression: collision_window=1 path_visible=1 entry_preserved=1 path=%s\\n' "$collision_path"
+        exit 0
+    fi
     if [[ "$TDESKTOP_SOCKET_ERROR_REGRESSION" == persistent ]]; then
         if [[ "${TDESKTOP_FONT_TEST_MODE:-${FONT_TEST_MODE:-}}" != socket-error-no-window ]]; then
             printf 'Socket error regression: failure_window=1\\n'
@@ -351,6 +357,12 @@ if [[ -n "${TDESKTOP_PROFILE_LOCK_REGRESSION:-}" ]]; then
 fi
 if [[ -n "${TDESKTOP_SOCKET_ERROR_REGRESSION:-}" ]]; then
     printf 'Socket error regression: injected=1\\n'
+    if [[ "$TDESKTOP_SOCKET_ERROR_REGRESSION" == ipc-collision ]]; then
+        collision_path="$HOME/fixture-ipc"
+        printf 'Teagram IPC collision fixture' > "$collision_path"
+        printf 'Socket error regression: collision_window=1 path_visible=1 entry_preserved=1 path=%s\\n' "$collision_path"
+        exit 0
+    fi
     if [[ "$TDESKTOP_SOCKET_ERROR_REGRESSION" == persistent ]]; then
         if [[ "${TDESKTOP_FONT_TEST_MODE:-${FONT_TEST_MODE:-}}" != socket-error-no-window ]]; then
             printf 'Socket error regression: failure_window=1\\n'

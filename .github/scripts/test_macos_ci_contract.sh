@@ -1636,6 +1636,22 @@ grep -Fq 'kIgnoreNextActivationTimeoutMs = 1500' \
   Telegram/SourceFiles/platform/mac/specific_mac_p.mm \
   || contract_fail 'The initial activation suppression must expire after startup.'
 if ! awk '
+  /if \(!RemoveStaleLocalServer\(_localServerName\)\)/ { in_remove_failure = 1 }
+  in_remove_failure && /return showSingleInstanceError\(diagnostic\);/ { error_window = 1 }
+  in_remove_failure && /^[[:space:]]*}/ { in_remove_failure = 0 }
+  END { exit !error_window }
+' Telegram/SourceFiles/core/sandbox.cpp; then
+  contract_fail 'A conflicting single-instance path must be reported in the failure window.'
+fi
+grep -Fq 'Could not use the single-instance IPC path' Telegram/SourceFiles/core/sandbox.cpp \
+  || contract_fail 'The IPC collision diagnostic must identify the path in use.'
+grep -Fq "'ipc-collision'" .github/scripts/test_macos_socket_error.py \
+  || contract_fail 'The macOS socket regression must cover a non-socket IPC path.'
+grep -Fq 'entry_preserved' .github/scripts/test_macos_socket_error.py \
+  || contract_fail 'The IPC collision regression must verify that the non-socket entry remains intact.'
+grep -Fq "r'([^\\n]+)'" .github/scripts/test_macos_shutdown_relaunch.py \
+  || contract_fail 'The relaunch recheck fixture must capture the socket path up to its newline.'
+if ! awk '
   /const auto stopWorker = \[=\]\(ProbeExit exitMode\)/ { in_stop_worker = 1 }
   in_stop_worker && /ReleaseFontShutdownProbe/ { release = 1 }
   in_stop_worker && /^\t\t\t};/ { exit !release }

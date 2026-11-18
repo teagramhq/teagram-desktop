@@ -108,6 +108,10 @@ base::options::toggle OptionDeadlockDetector({
 constexpr auto kCleanupIpcTimeout = 10 * crl::time(1000);
 constexpr auto kCleanupQuitTimeout = 30 * crl::time(1000);
 constexpr auto kUnexpectedSingleInstanceErrorLimit = 3;
+#if defined(Q_OS_MAC) && defined(TDESKTOP_LIFECYCLE_REGRESSION)
+constexpr auto kSocketCollisionFixtureContents
+	= "Teagram IPC collision fixture";
+#endif
 
 #ifndef Q_OS_WINRT
 [[nodiscard]] bool
@@ -614,10 +618,25 @@ int Sandbox::start() {
 			fprintf(stderr, "Socket error regression: injected=1\n");
 			const auto mode
 				= qEnvironmentVariable("TDESKTOP_SOCKET_ERROR_REGRESSION");
+			if (mode == u"ipc-collision"_q) {
+				auto entry = QFile(_localServerName);
+				const auto contents
+					= QByteArray(kSocketCollisionFixtureContents);
+				if (!entry.open(QIODevice::WriteOnly | QIODevice::NewOnly)
+					|| entry.write(contents) != contents.size()) {
+					fprintf(
+						stderr,
+						"Socket error regression: collision_setup=failed\n");
+					QCoreApplication::exit(1);
+					return;
+				}
+			}
 			socketError(
 				(mode == u"unknown"_q)		? QLocalSocket::UnknownSocketError
 				: (mode == u"persistent"_q) ? QLocalSocket::SocketAccessError
-											: QLocalSocket::SocketTimeoutError);
+				: (mode == u"ipc-collision"_q)
+					? QLocalSocket::ServerNotFoundError
+					: QLocalSocket::SocketTimeoutError);
 		});
 	} else
 #endif // Q_OS_MAC && TDESKTOP_LIFECYCLE_REGRESSION
@@ -1470,8 +1489,11 @@ void Sandbox::socketError(QLocalSocket::LocalSocketError e) {
 	}
 #endif // Q_OS_MAC
 	if (!RemoveStaleLocalServer(_localServerName)) {
-		LOG(("Could not remove stale local socket %1.").arg(_localServerName));
-		return Quit();
+		const auto diagnostic
+			= u"Could not use the single-instance IPC path: %1"_q.arg(
+				_localServerName);
+		LOG((diagnostic));
+		return showSingleInstanceError(diagnostic);
 	}
 
 	if (!_localServer.listen(_localServerName)) {
@@ -1632,6 +1654,26 @@ void Sandbox::showSingleInstanceError(
 		fprintf(stderr, "Socket error regression: failure_window=%d\n",
 				window->isVisible() ? 1 : 0);
 		QTimer::singleShot(0, this, [] { QCoreApplication::exit(0); });
+	}
+	if (qEnvironmentVariable("TDESKTOP_SOCKET_ERROR_REGRESSION")
+		== u"ipc-collision"_q) {
+		auto entry = QFile(_localServerName);
+		const auto entryPreserved
+			= entry.open(QIODevice::ReadOnly)
+			  && (entry.readAll()
+				  == QByteArray(kSocketCollisionFixtureContents));
+		const auto pathVisible
+			= text && text->toPlainText().contains(_localServerName);
+		const auto visible = window->isVisible();
+		const auto encoded = QFile::encodeName(_localServerName);
+		fprintf(stderr,
+				"Socket error regression: collision_window=%d "
+				"path_visible=%d entry_preserved=%d path=%s\n",
+				visible ? 1 : 0, pathVisible ? 1 : 0, entryPreserved ? 1 : 0,
+				encoded.constData());
+		const auto passed = visible && pathVisible && entryPreserved;
+		QTimer::singleShot(
+			0, this, [passed] { QCoreApplication::exit(passed ? 0 : 1); });
 	}
 #endif // Q_OS_MAC && TDESKTOP_LIFECYCLE_REGRESSION
 }

@@ -9,7 +9,8 @@ import sys
 
 def main():
     executable, home_arg, temp_arg = sys.argv[1:]
-    for mode in ('transient', 'unknown', 'persistent', 'lock-error', 'lock-refused'):
+    for mode in ('transient', 'unknown', 'persistent', 'lock-error',
+                 'lock-refused', 'ipc-collision'):
         home = Path(home_arg) / mode
         home.mkdir(parents=True, exist_ok=True)
         env = dict(os.environ, HOME=str(home), TMPDIR=temp_arg,
@@ -52,6 +53,18 @@ def main():
                       and window.group(1) == policy.group(1)
                       and window.group(2) == str(protected)
                       and not protected.exists())
+        elif mode == 'ipc-collision':
+            collision = re.search(
+                r'Socket error regression: collision_window=(\d+) '
+                r'path_visible=(\d+) entry_preserved=(\d+) path=([^\n]+)',
+                output)
+            collision_path = Path(collision.group(4)) if collision else None
+            passed = (collision and collision.group(1) == '1'
+                      and collision.group(2) == '1'
+                      and collision.group(3) == '1'
+                      and collision_path.is_absolute()
+                      and collision_path.is_file()
+                      and collision_path.read_text() == 'Teagram IPC collision fixture')
         else:
             passed = ('Socket error regression: injected=1' in output
                       and expected in output)
