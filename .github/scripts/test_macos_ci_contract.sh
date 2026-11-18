@@ -1604,6 +1604,34 @@ fi
 grep -Fq 'run_font_shutdown_regression shutdown-remove-pending' \
   Telegram/build/test_mac_profile_guard.sh \
   || contract_fail 'The macOS font shutdown regression must force a pending removal across application quit.'
+grep -Fq 'coretext_population_hold=1' Telegram/build/test_mac_profile_guard.sh \
+  || contract_fail 'The macOS font shutdown regression must assert its synchronized Qt CoreText hold.'
+grep -Fq 'tests/font_shutdown_probe.mm' Telegram/CMakeLists.txt \
+  || contract_fail 'The macOS integration build must include its CoreText population probe.'
+grep -Fq 'ArmFontShutdownProbe' Telegram/SourceFiles/core/sandbox.cpp \
+  || contract_fail 'The shutdown worker must arm the synchronized Qt CoreText probe.'
+grep -Fq 'ReleaseFontShutdownProbe' Telegram/SourceFiles/core/sandbox.cpp \
+  || contract_fail 'Application quit must release the synchronized Qt CoreText probe.'
+if ! awk '
+  /const auto stopWorker = \[=\]\(ProbeExit exitMode\)/ { in_stop_worker = 1 }
+  in_stop_worker && /ReleaseFontShutdownProbe/ { release = 1 }
+  in_stop_worker && /^\t\t\t};/ { exit !release }
+  END { exit !release }
+' Telegram/SourceFiles/core/sandbox.cpp; then
+  contract_fail 'The timeout path must release a held CoreText probe before draining the worker.'
+fi
+grep -Fq 'dlsym(RTLD_NEXT, "CTFontManagerCopyAvailableFontFamilyNames")' \
+  Telegram/SourceFiles/tests/font_shutdown_probe.mm \
+  || contract_fail 'The shutdown probe must forward Qt population to real CoreText.'
+grep -Fq 'const auto result = original();' \
+  Telegram/SourceFiles/tests/font_shutdown_probe.mm \
+  || contract_fail 'The shutdown probe must complete the real CoreText query before holding Qt population.'
+grep -Fq '&& IsQtFontDatabasePopulation()' \
+  Telegram/SourceFiles/tests/font_shutdown_probe.mm \
+  || contract_fail 'The shutdown probe must only hold the Qt font-family population call.'
+grep -Fq 'while (!ProbeReleased.load' \
+  Telegram/SourceFiles/tests/font_shutdown_probe.mm \
+  || contract_fail 'The CoreText probe must remain held until application quit begins.'
 if grep -Fq 'CTFontManagerCopyAvailableFontFamilyNames();' \
   Telegram/SourceFiles/core/sandbox.cpp; then
   contract_fail 'The shutdown probe must not bypass Qt font-database population with a direct CoreText query.'

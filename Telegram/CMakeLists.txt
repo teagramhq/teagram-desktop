@@ -1532,6 +1532,7 @@ PRIVATE
     tests/signup_controls_regression.h
     tests/font_startup_regression.cpp
     tests/font_startup_regression.h
+    tests/font_shutdown_probe.h
     tests/account_lifecycle_regression.cpp
     tests/account_lifecycle_regression.h
     media/audio/media_audio.cpp
@@ -2237,6 +2238,7 @@ if (APPLE)
         media/streaming/media_streaming_native_frame_mac.mm
         core/mac_protected_path_runtime.mm
         core/mac_protected_path_runtime.h
+        tests/font_shutdown_probe.mm
         core/teagram_update_install_mac.mm
         core/teagram_update_install.h
         core/teagram_update_manager.cpp
@@ -2322,6 +2324,9 @@ elseif (APPLE)
     endif()
 
     target_link_frameworks(Telegram PRIVATE CoreBluetooth)
+    if (TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST)
+        target_link_frameworks(Telegram PRIVATE CoreText)
+    endif()
     target_link_frameworks_weak(Telegram PRIVATE UserNotifications)
 
     set(icons_path ${CMAKE_CURRENT_SOURCE_DIR}/Telegram/Images.xcassets)
@@ -2499,7 +2504,9 @@ if (TDESKTOP_TEAGRAM)
         set_property(SOURCE
             "${src_loc}/main.cpp"
             "${src_loc}/data/data_session.cpp"
+            "${src_loc}/core/sandbox.cpp"
             "${src_loc}/core/mac_protected_path_runtime.mm"
+            "${src_loc}/tests/font_shutdown_probe.mm"
             "${src_loc}/tests/account_lifecycle_regression.cpp"
             APPEND PROPERTY COMPILE_DEFINITIONS
             TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST

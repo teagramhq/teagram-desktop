@@ -1820,6 +1820,13 @@ sys.exit(result.returncode if result.returncode >= 0 else 128 - result.returncod
 		fi
 		return 1
 	fi
+	if [[ -z "$forced_failure" || "$forced_failure" == probe-missed-first ]] \
+		&& ! grep -F -q 'Font shutdown regression: coretext_population_hold=1' \
+			"$shutdown_log"; then
+		cat "$shutdown_log" >&2
+		echo 'font shutdown did not synchronize with Qt CoreText population' >&2
+		return 1
+	fi
 	local in_flight_position
 	in_flight_position="$(grep -F -n 'Font shutdown regression: quit_observed=1' \
 		"$shutdown_log" | tail -n 1 | cut -d: -f1 || true)"

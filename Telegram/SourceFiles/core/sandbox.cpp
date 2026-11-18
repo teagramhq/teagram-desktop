@@ -29,6 +29,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "window/main_window.h"
 #include "core/core_settings.h"
 #include "core/mac_protected_path_runtime.h"
+#if defined(TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST)
+#include "tests/font_shutdown_probe.h"
+#endif
 #include "ui/style/style_core_font.h"
 #endif // Q_OS_MAC
 #include "base/timer.h"
@@ -914,6 +917,9 @@ void Sandbox::startFontDatabaseWarmup() {
 					std::memory_order_release);
 			}
 			ProbeFinalRelease.store(true, std::memory_order_release);
+#if defined(TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST)
+			Core::Tests::ReleaseFontShutdownProbe();
+#endif
 		});
 	}
 	try {
@@ -953,6 +959,20 @@ void Sandbox::startFontDatabaseWarmup() {
 				}
 				return;
 			}
+#if defined(TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST)
+			if (quitRegression
+				&& (testFailure.isEmpty()
+					|| testFailure == "probe-missed-first")) {
+				const auto skippedPopulations
+					= (ignoreFirstEnumeration
+					   && ignoreFirstEnumeration->load(
+						   std::memory_order_acquire))
+						  ? 1
+						  : 0;
+				Core::Tests::ArmFontShutdownProbe(pthread_self(),
+												  skippedPopulations);
+			}
+#endif
 			const auto openSansLoaded = style::internal::PreloadCustomFonts();
 			const auto populateFontDatabase = [] {
 #if QT_VERSION < QT_VERSION_CHECK(6, 0, 0)
@@ -1113,6 +1133,9 @@ void Sandbox::startFontDatabaseWarmup() {
 			const auto stopWorker = [=](ProbeExit exitMode) {
 				_launchAfterFontDatabaseWarmup = false;
 				ProbeFinalRelease.store(true, std::memory_order_release);
+#if defined(TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST)
+				Core::Tests::ReleaseFontShutdownProbe();
+#endif
 				*pendingExit = exitMode;
 			};
 			started->start();
