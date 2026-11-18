@@ -8,9 +8,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/sandbox.h"
 
 #include "base/platform/base_platform_info.h"
-#ifdef Q_OS_LINUX
-#include "platform/linux/local_socket_peer.h"
-#endif // Q_OS_LINUX
 #include "platform/platform_specific.h"
 #include "mainwidget.h"
 #include "mainwindow.h"
@@ -68,11 +65,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <QtGui/QWindow>
 #endif // Q_OS_MAC
 #include <QtGui/qpa/qplatformscreen.h>
-
-#ifdef Q_OS_LINUX
-#include <sys/socket.h>
-#include <unistd.h>
-#endif // Q_OS_LINUX
 
 #ifdef Q_OS_MAC
 #include <cstdint>
@@ -343,6 +335,13 @@ int Sandbox::start() {
 		_localServerName = Platform::SingleInstanceLocalServerName(h);
 	}
 
+#ifdef Q_OS_LINUX
+	if (_localServerName.isEmpty()) {
+		LOG(("XDG_RUNTIME_DIR must be a user-owned 0700 directory."));
+		return 1;
+	}
+#endif // Q_OS_LINUX
+
 #ifdef Q_OS_MAC
 	if (_localServerName.isEmpty()) {
 		LOG(("Mac local socket directory is unavailable."));
@@ -431,10 +430,9 @@ int Sandbox::start() {
 		}
 	}
 
-#if defined Q_OS_LINUX && QT_VERSION >= QT_VERSION_CHECK(6, 2, 0)
-	_localServer.setSocketOptions(QLocalServer::AbstractNamespaceOption);
-	_localSocket.setSocketOptions(QLocalSocket::AbstractNamespaceOption);
-#endif // Q_OS_LINUX && Qt >= 6.2.0
+#ifdef Q_OS_LINUX
+	_localServer.setSocketOptions(QLocalServer::UserAccessOption);
+#endif // Q_OS_LINUX
 
 	connect(
 		&_localSocket,
@@ -1098,26 +1096,6 @@ void Sandbox::socketDisconnected() {
 void Sandbox::newInstanceConnected() {
 	DEBUG_LOG(("Sandbox Info: new local socket connected"));
 	for (auto client = _localServer.nextPendingConnection(); client; client = _localServer.nextPendingConnection()) {
-#ifdef Q_OS_LINUX
-		struct ucred credentials = {};
-		auto credentialsLength = socklen_t(sizeof(credentials));
-		const auto socketDescriptor
-			= static_cast<int>(client->socketDescriptor());
-		const auto peerMatches
-			= (getsockopt(socketDescriptor, SOL_SOCKET, SO_PEERCRED,
-						  &credentials, &credentialsLength)
-			   == 0)
-			  && (credentialsLength == sizeof(credentials))
-			  && Platform::Linux::IsLocalSocketPeerUidAllowed(credentials.uid,
-															  geteuid());
-		if (!peerMatches) {
-			DEBUG_LOG(
-				("Sandbox Error: local socket peer credentials check failed"));
-			client->abort();
-			client->deleteLater();
-			continue;
-		}
-#endif // Q_OS_LINUX
 		_localClients.push_back(LocalClient(client, QByteArray()));
 		connect(
 			client,
