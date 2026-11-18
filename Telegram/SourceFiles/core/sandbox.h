@@ -123,6 +123,7 @@ private:
 	// Single instance application
 	void socketConnected();
 	void socketError(QLocalSocket::LocalSocketError e);
+	void afterSingleInstanceStarted();
 	void socketDisconnected();
 	void socketWritten(qint64 bytes);
 	void socketReading();

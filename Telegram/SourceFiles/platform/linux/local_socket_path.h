@@ -11,15 +11,19 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include <QtCore/QByteArray>
 #include <QtCore/QDir>
+#include <QtCore/QElapsedTimer>
 #include <QtCore/QFile>
 #include <QtCore/QFileInfo>
 #include <QtCore/QLockFile>
+#include <QtCore/QObject>
 #include <QtCore/QString>
+#include <QtCore/QTimer>
 #include <QtNetwork/QLocalServer>
 #include <QtNetwork/QLocalSocket>
 
 #include <cerrno>
 #include <pwd.h>
+#include <utility>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/un.h>
@@ -141,6 +145,7 @@ ChooseHomeDirectory(const QString &passwdHome, const QString &environmentHome) {
 enum class SingleInstanceSocketPathFailure {
 	None,
 	InvalidServerName,
+	XdgRuntimeDirectoryCheckFailed,
 	HomeDirectoryCheckFailed,
 	FallbackDirectoryCheckFailed,
 	SocketPathTooLong,
@@ -151,6 +156,8 @@ enum class SingleInstanceSocketPathFailure {
 	switch (failure) {
 	case SingleInstanceSocketPathFailure::InvalidServerName:
 		return u"Could not create the single-instance IPC socket: invalid server name."_q;
+	case SingleInstanceSocketPathFailure::XdgRuntimeDirectoryCheckFailed:
+		return u"Could not create the single-instance IPC socket: the Snap XDG_RUNTIME_DIR failed its owner, mode, or path-length check."_q;
 	case SingleInstanceSocketPathFailure::HomeDirectoryCheckFailed:
 		return u"Could not create the single-instance IPC socket. XDG_RUNTIME_DIR is unset, unsafe, too long, or unavailable, and HOME failed the owner or mode check."_q;
 	case SingleInstanceSocketPathFailure::FallbackDirectoryCheckFailed:
@@ -187,13 +194,26 @@ SingleInstanceSocketPathInDirectory(const QString &runtimeDirectory,
 [[nodiscard]] inline QString SingleInstanceSocketPathForLaunch(
 	const QString &xdgRuntimeDirectory, const QString &stableRuntimeDirectory,
 	const QString &serverName, uid_t effectiveUid, const QString &homeDirectory,
-	SingleInstanceSocketPathFailure *failure = nullptr) {
+	SingleInstanceSocketPathFailure *failure = nullptr,
+	bool useXdgRuntimeForSingleInstance = false) {
 	if (failure) {
 		*failure = SingleInstanceSocketPathFailure::None;
 	}
 	if (!SingleInstanceSocketPathDetails::IsValidServerName(serverName)) {
 		if (failure) {
 			*failure = SingleInstanceSocketPathFailure::InvalidServerName;
+		}
+		return QString();
+	}
+	if (useXdgRuntimeForSingleInstance) {
+		const auto xdgRuntimePath = SingleInstanceSocketPathInDirectory(
+			xdgRuntimeDirectory, serverName, effectiveUid);
+		if (!xdgRuntimePath.isEmpty()) {
+			return xdgRuntimePath;
+		}
+		if (failure) {
+			*failure = SingleInstanceSocketPathFailure::
+				XdgRuntimeDirectoryCheckFailed;
 		}
 		return QString();
 	}
@@ -236,12 +256,14 @@ SingleInstanceSocketPathInDirectory(const QString &runtimeDirectory,
 SingleInstanceSocketPath(const QString &xdgRuntimeDirectory,
 						 const QString &serverName, uid_t effectiveUid,
 						 const QString &homeDirectory,
-						 SingleInstanceSocketPathFailure *failure = nullptr) {
+						 SingleInstanceSocketPathFailure *failure = nullptr,
+						 bool useXdgRuntimeForSingleInstance = false) {
 	return SingleInstanceSocketPathForLaunch(
 		xdgRuntimeDirectory,
 		SingleInstanceSocketPathDetails::SingleInstanceRuntimeDirectory(
 			effectiveUid),
-		serverName, effectiveUid, homeDirectory, failure);
+		serverName, effectiveUid, homeDirectory, failure,
+		useXdgRuntimeForSingleInstance);
 }
 
 [[nodiscard]] inline QString
@@ -259,42 +281,116 @@ enum class SingleInstanceServerResult {
 	Failed,
 };
 
-template <typename Action>
-[[nodiscard]] inline bool
-WithSingleInstanceServerLock(const QString &serverPath, Action action) {
-	QLockFile electionLock(serverPath + u".lock"_q);
-	if (!electionLock.tryLock(30'000)) {
-		return false;
-	}
-	action();
-	return true;
+inline void QueueSingleInstanceSocketReconnect(QObject *context,
+											   QLocalSocket *socket,
+											   QString serverPath) {
+	QTimer::singleShot(0, context,
+					   [socket, serverPath = std::move(serverPath)] {
+						   socket->connectToServer(serverPath);
+					   });
 }
 
-template <typename Cleanup>
-[[nodiscard]] inline SingleInstanceServerResult
-StartSingleInstanceServer(QLocalServer &server, const QString &serverPath,
-						  Cleanup cleanup) {
-	auto result = SingleInstanceServerResult::Failed;
-	if (!WithSingleInstanceServerLock(serverPath, [&] {
-			QLocalSocket existing;
-			existing.connectToServer(serverPath);
-			if (existing.waitForConnected(1'000)) {
-				result = SingleInstanceServerResult::Secondary;
-				return;
-			} else if (existing.error() != QLocalSocket::ServerNotFoundError
-					   && existing.error()
-							  != QLocalSocket::ConnectionRefusedError) {
-				return;
-			}
-
-			cleanup(serverPath);
-			result = server.listen(serverPath)
-						 ? SingleInstanceServerResult::Primary
-						 : SingleInstanceServerResult::Failed;
-		})) {
-		return SingleInstanceServerResult::Failed;
+template <typename Cleanup, typename Finished>
+class SingleInstanceServerStarter final : public QObject {
+  public:
+	SingleInstanceServerStarter(QLocalServer &server, QString serverPath,
+								Cleanup cleanup, Finished finished,
+								int lockTimeoutMs, int retryIntervalMs)
+		: QObject(&server), _server(server), _serverPath(std::move(serverPath)),
+		  _lock(_serverPath + u".lock"_q), _cleanup(std::move(cleanup)),
+		  _finished(std::move(finished)), _retryTimer(this), _probeSocket(this),
+		  _lockTimeoutMs(lockTimeoutMs), _retryIntervalMs(retryIntervalMs) {
+		_retryTimer.setSingleShot(true);
+		connect(&_retryTimer, &QTimer::timeout, this,
+				[this] { tryAcquireLock(); });
+		connect(&_probeSocket, &QLocalSocket::connected, this, [this] {
+			finish(SingleInstanceServerResult::Secondary, QString());
+		});
+		connect(&_probeSocket, &QLocalSocket::errorOccurred, this,
+				[this](QLocalSocket::LocalSocketError error) {
+					if (error == QLocalSocket::ServerNotFoundError
+						|| error == QLocalSocket::ConnectionRefusedError) {
+						_cleanup(_serverPath);
+						if (_server.listen(_serverPath)) {
+							finish(SingleInstanceServerResult::Primary,
+								   QString());
+						} else {
+							finish(SingleInstanceServerResult::Failed,
+								   _server.errorString());
+						}
+					} else {
+						finish(SingleInstanceServerResult::Failed,
+							   _probeSocket.errorString());
+					}
+				});
+		_lockTimer.start();
+		QTimer::singleShot(0, this, [this] { tryAcquireLock(); });
 	}
-	return result;
+
+  private:
+	void tryAcquireLock() {
+		if (!_lock.tryLock(0)) {
+			switch (_lock.error()) {
+			case QLockFile::PermissionError:
+				return finish(
+					SingleInstanceServerResult::Failed,
+					QString::fromLatin1("Permission denied acquiring the "
+										"single-instance election lock."));
+			case QLockFile::UnknownError:
+				return finish(
+					SingleInstanceServerResult::Failed,
+					QString::fromLatin1("Could not acquire the single-instance "
+										"election lock."));
+			case QLockFile::LockFailedError:
+			case QLockFile::NoError:
+				break;
+			}
+			if (_lockTimer.elapsed() >= _lockTimeoutMs) {
+				return finish(
+					SingleInstanceServerResult::Failed,
+					QString::fromLatin1("Timed out waiting for the "
+										"single-instance election lock."));
+			}
+			_retryTimer.start(_retryIntervalMs);
+			return;
+		}
+		_probeSocket.connectToServer(_serverPath);
+	}
+
+	void finish(SingleInstanceServerResult result, QString error) {
+		if (_completed) {
+			return;
+		}
+		_completed = true;
+		_retryTimer.stop();
+		_lock.unlock();
+		_probeSocket.abort();
+		auto finished = std::move(_finished);
+		deleteLater();
+		finished(result, error);
+	}
+
+	QLocalServer &_server;
+	const QString _serverPath;
+	QLockFile _lock;
+	Cleanup _cleanup;
+	Finished _finished;
+	QElapsedTimer _lockTimer;
+	QTimer _retryTimer;
+	QLocalSocket _probeSocket;
+	const int _lockTimeoutMs = 30'000;
+	const int _retryIntervalMs = 50;
+	bool _completed = false;
+};
+
+template <typename Cleanup, typename Finished>
+void StartSingleInstanceServer(QLocalServer &server, const QString &serverPath,
+							   Cleanup cleanup, Finished finished,
+							   int lockTimeoutMs = 30'000,
+							   int retryIntervalMs = 50) {
+	new SingleInstanceServerStarter<Cleanup, Finished>(
+		server, serverPath, std::move(cleanup), std::move(finished),
+		lockTimeoutMs, retryIntervalMs);
 }
 
 } // namespace Platform::Linux

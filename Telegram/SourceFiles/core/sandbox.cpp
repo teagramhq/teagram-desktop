@@ -1030,17 +1030,28 @@ void Sandbox::socketError(QLocalSocket::LocalSocketError e) {
 	}
 #endif // Q_OS_MAC
 #if !defined Q_OS_WIN && !defined Q_OS_MAC
-	const auto result = Platform::Linux::StartSingleInstanceServer(
+	Platform::Linux::StartSingleInstanceServer(
 		_localServer, _localServerName,
-		[](const QString &serverName) { psCheckLocalSocket(serverName); });
-	if (result == Platform::Linux::SingleInstanceServerResult::Secondary) {
-		_localSocket.connectToServer(_localServerName);
-		return;
-	} else if (result == Platform::Linux::SingleInstanceServerResult::Failed) {
-		LOG(("Failed to start listening to %1 server: %2")
-				.arg(_localServerName, _localServer.errorString()));
-		return Quit();
-	}
+		[](const QString &serverName) { psCheckLocalSocket(serverName); },
+		[this](Platform::Linux::SingleInstanceServerResult result,
+			   const QString &error) {
+			if (Quitting()) {
+				return;
+			}
+			if (result
+				== Platform::Linux::SingleInstanceServerResult::Secondary) {
+				Platform::Linux::QueueSingleInstanceSocketReconnect(
+					this, &_localSocket, _localServerName);
+				return;
+			} else if (result
+					   == Platform::Linux::SingleInstanceServerResult::Failed) {
+				LOG(("Failed to start listening to %1 server: %2")
+						.arg(_localServerName, error));
+				return Quit();
+			}
+			afterSingleInstanceStarted();
+		});
+	return;
 #else
 	psCheckLocalSocket(_localServerName);
 
@@ -1059,12 +1070,15 @@ void Sandbox::socketError(QLocalSocket::LocalSocketError e) {
 	}
 #endif // Q_OS_MAC
 #endif // !Q_OS_WINRT
+	afterSingleInstanceStarted();
+}
 
-	if (!Core::UpdaterDisabled()
-		&& !cNoStartUpdate()
+void Sandbox::afterSingleInstanceStarted() {
+	if (!Core::UpdaterDisabled() && !cNoStartUpdate()
 		&& Core::checkReadyUpdate()) {
 		cSetRestartingUpdate(true);
-		DEBUG_LOG(("Sandbox Info: installing update instead of starting app..."));
+		DEBUG_LOG(
+			("Sandbox Info: installing update instead of starting app..."));
 		return Quit();
 	}
 

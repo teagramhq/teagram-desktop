@@ -598,15 +598,16 @@ void SetApplicationIcon(const QIcon &icon) {
 
 QString SingleInstanceLocalServerName(const QString &hash,
 									  QString *errorMessage) {
+	const auto snap = KSandbox::isSnap();
 	const auto serverName = Platform::Linux::SingleInstanceLocalServerName(
-		hash, QCoreApplication::applicationName(), KSandbox::isSnap(),
+		hash, QCoreApplication::applicationName(), snap,
 		qEnvironmentVariable("SNAP_INSTANCE_NAME"));
 	auto failure = Platform::Linux::SingleInstanceSocketPathFailure::None;
 	const auto result = Platform::Linux::SingleInstanceSocketPath(
 		qEnvironmentVariable("XDG_RUNTIME_DIR"), serverName, geteuid(),
 		Platform::Linux::SingleInstanceSocketPathDetails::UserHomeDirectory(
 			geteuid(), qEnvironmentVariable("HOME")),
-		&failure);
+		&failure, snap);
 	if (errorMessage) {
 		*errorMessage
 			= Platform::Linux::SingleInstanceSocketPathFailureMessage(failure);

@@ -9,14 +9,11 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "tests/unit/unit_test.h"
 
 #include <QtCore/QDir>
+#include <QtCore/QEventLoop>
 #include <QtCore/QFile>
 #include <QtCore/QTemporaryDir>
+#include <QtCore/QTimer>
 
-#include <atomic>
-#include <chrono>
-#include <condition_variable>
-#include <mutex>
-#include <thread>
 #include <sys/un.h>
 #include <unistd.h>
 
@@ -26,6 +23,27 @@ bool SetPrivatePermissions(const QString &path) {
 	const auto permissions = QFileDevice::ReadOwner | QFileDevice::WriteOwner
 							 | QFileDevice::ExeOwner;
 	return QFile::setPermissions(path, permissions);
+}
+
+Platform::Linux::SingleInstanceServerResult
+StartSingleInstanceServerAndWait(QLocalServer &server,
+								 const QString &serverPath,
+								 QString *errorMessage = nullptr) {
+	auto result = Platform::Linux::SingleInstanceServerResult::Failed;
+	auto loop = QEventLoop();
+	Platform::Linux::StartSingleInstanceServer(
+		server, serverPath, [](const QString &path) { QFile::remove(path); },
+		[&](Platform::Linux::SingleInstanceServerResult completed,
+			const QString &error) {
+			result = completed;
+			if (errorMessage) {
+				*errorMessage = error;
+			}
+			loop.quit();
+		});
+	QTimer::singleShot(5'000, &loop, &QEventLoop::quit);
+	loop.exec();
+	return result;
 }
 
 } // namespace
@@ -176,8 +194,7 @@ TEST_CASE(LinuxSingleInstanceSocketUsesOneEndpointWithMixedXdgRuntimeDirs) {
 	}
 	auto primary = QLocalServer();
 	primary.setSocketOptions(QLocalServer::UserAccessOption);
-	const auto result = Platform::Linux::StartSingleInstanceServer(
-		primary, withXdg, [](const QString &path) { QFile::remove(path); });
+	const auto result = StartSingleInstanceServerAndWait(primary, withXdg);
 	CHECK(result == Platform::Linux::SingleInstanceServerResult::Primary);
 	if (result != Platform::Linux::SingleInstanceServerResult::Primary) {
 		return;
@@ -185,6 +202,125 @@ TEST_CASE(LinuxSingleInstanceSocketUsesOneEndpointWithMixedXdgRuntimeDirs) {
 	auto second = QLocalSocket();
 	second.connectToServer(withoutXdg);
 	CHECK(second.waitForConnected(1'000));
+}
+
+TEST_CASE(LinuxSingleInstanceSocketUsesSnapRuntimeDirectory) {
+	auto xdgBase = QTemporaryDir();
+	auto hostRuntimeDirectory = QTemporaryDir();
+	auto homeDirectory = QTemporaryDir();
+	CHECK(xdgBase.isValid());
+	CHECK(hostRuntimeDirectory.isValid());
+	CHECK(homeDirectory.isValid());
+	if (!xdgBase.isValid() || !hostRuntimeDirectory.isValid()
+		|| !homeDirectory.isValid()) {
+		return;
+	}
+	const auto xdgRuntimeDirectory
+		= QDir(xdgBase.path())
+			  .filePath(u"run/user/%1/snap.teagram-desktop"_q.arg(
+				  qulonglong(geteuid())));
+	CHECK(QDir().mkpath(xdgRuntimeDirectory));
+	CHECK(SetPrivatePermissions(xdgRuntimeDirectory));
+	CHECK(SetPrivatePermissions(hostRuntimeDirectory.path()));
+	const auto socketPath
+		= QDir(xdgRuntimeDirectory).filePath(u"teagram-instance"_q);
+	const auto selectedPath
+		= Platform::Linux::SingleInstanceSocketPathForLaunch(
+			xdgRuntimeDirectory, hostRuntimeDirectory.path(),
+			u"teagram-instance"_q, geteuid(), homeDirectory.path(), nullptr,
+			true);
+	CHECK_EQ(selectedPath, socketPath);
+
+	auto primary = QLocalServer();
+	primary.setSocketOptions(QLocalServer::UserAccessOption);
+	CHECK(StartSingleInstanceServerAndWait(primary, selectedPath)
+		  == Platform::Linux::SingleInstanceServerResult::Primary);
+	if (!primary.isListening()) {
+		return;
+	}
+	auto loop = QEventLoop();
+	auto command = QByteArray();
+	auto response = QByteArray();
+	QObject::connect(&primary, &QLocalServer::newConnection, &loop, [&] {
+		const auto peer = primary.nextPendingConnection();
+		QObject::connect(peer, &QLocalSocket::readyRead, &loop, [&, peer] {
+			command += peer->readAll();
+			if (command.contains(';')) {
+				peer->write("RES:1_2;");
+				peer->flush();
+			}
+		});
+	});
+	auto second = QLocalSocket();
+	QObject::connect(&second, &QLocalSocket::connected, &loop, [&] {
+		second.write("CMD:show;");
+		second.flush();
+	});
+	QObject::connect(&second, &QLocalSocket::readyRead, &loop, [&] {
+		response += second.readAll();
+		if (response.contains(';')) {
+			loop.quit();
+		}
+	});
+	second.connectToServer(selectedPath);
+	QTimer::singleShot(5'000, &loop, &QEventLoop::quit);
+	loop.exec();
+	CHECK_EQ(command, QByteArray("CMD:show;"));
+	CHECK_EQ(response, QByteArray("RES:1_2;"));
+}
+
+TEST_CASE(LinuxSingleInstanceSocketReconnectWaitsForErrorCallback) {
+	auto runtimeDirectory = QTemporaryDir();
+	CHECK(runtimeDirectory.isValid());
+	if (!runtimeDirectory.isValid()) {
+		return;
+	}
+	CHECK(SetPrivatePermissions(runtimeDirectory.path()));
+	const auto socketPath
+		= QDir(runtimeDirectory.path()).filePath(u"teagram-instance"_q);
+	auto server = QLocalServer();
+	auto client = QLocalSocket();
+	auto loop = QEventLoop();
+	auto inErrorCallback = false;
+	auto reconnected = false;
+	auto command = QByteArray();
+	auto response = QByteArray();
+	QObject::connect(&client, &QLocalSocket::errorOccurred, &loop, [&] {
+		inErrorCallback = true;
+		client.close();
+		CHECK(server.listen(socketPath));
+		Platform::Linux::QueueSingleInstanceSocketReconnect(&loop, &client,
+															socketPath);
+		inErrorCallback = false;
+	});
+	QObject::connect(&client, &QLocalSocket::connected, &loop, [&] {
+		CHECK(!inErrorCallback);
+		reconnected = true;
+		client.write("CMD:show;");
+		client.flush();
+	});
+	QObject::connect(&server, &QLocalServer::newConnection, &loop, [&] {
+		const auto peer = server.nextPendingConnection();
+		QObject::connect(peer, &QLocalSocket::readyRead, &loop, [&, peer] {
+			command += peer->readAll();
+			if (command.contains(';')) {
+				peer->write("RES:1_2;");
+				peer->flush();
+			}
+		});
+	});
+	QObject::connect(&client, &QLocalSocket::readyRead, &loop, [&] {
+		response += client.readAll();
+		if (response.contains(';')) {
+			loop.quit();
+		}
+	});
+	client.connectToServer(socketPath);
+	QTimer::singleShot(5'000, &loop, &QEventLoop::quit);
+	loop.exec();
+	CHECK(reconnected);
+	CHECK_EQ(command, QByteArray("CMD:show;"));
+	CHECK_EQ(response, QByteArray("RES:1_2;"));
 }
 
 TEST_CASE(
@@ -363,17 +499,16 @@ TEST_CASE(LinuxSingleInstanceServerHandsOffToAnExistingPrimary) {
 	auto secondary = QLocalServer();
 	primary.setSocketOptions(QLocalServer::UserAccessOption);
 	secondary.setSocketOptions(QLocalServer::UserAccessOption);
-	const auto cleanup = [](const QString &path) { QFile::remove(path); };
-	const auto firstResult = Platform::Linux::StartSingleInstanceServer(
-		primary, socketPath, cleanup);
-	const auto secondResult = Platform::Linux::StartSingleInstanceServer(
-		secondary, socketPath, cleanup);
+	const auto firstResult
+		= StartSingleInstanceServerAndWait(primary, socketPath);
+	const auto secondResult
+		= StartSingleInstanceServerAndWait(secondary, socketPath);
 	CHECK(firstResult == Platform::Linux::SingleInstanceServerResult::Primary);
 	CHECK(secondResult
 		  == Platform::Linux::SingleInstanceServerResult::Secondary);
 }
 
-TEST_CASE(LinuxSingleInstanceSocketSerializesConcurrentPrimaryElection) {
+TEST_CASE(LinuxSingleInstanceSocketRetriesContendedElectionWithoutBlocking) {
 	auto runtimeDirectory = QTemporaryDir();
 	CHECK(runtimeDirectory.isValid());
 	if (!runtimeDirectory.isValid()) {
@@ -382,54 +517,127 @@ TEST_CASE(LinuxSingleInstanceSocketSerializesConcurrentPrimaryElection) {
 	CHECK(SetPrivatePermissions(runtimeDirectory.path()));
 	const auto socketPath
 		= QDir(runtimeDirectory.path()).filePath(u"teagram-instance"_q);
+	auto heldLock = QLockFile(socketPath + u".lock"_q);
+	CHECK(heldLock.tryLock(0));
+	auto server = QLocalServer();
+	auto loop = QEventLoop();
+	auto timerFired = false;
+	auto result = Platform::Linux::SingleInstanceServerResult::Primary;
+	auto error = QString();
+	Platform::Linux::StartSingleInstanceServer(
+		server, socketPath, [](const QString &path) { QFile::remove(path); },
+		[&](Platform::Linux::SingleInstanceServerResult completed,
+			const QString &message) {
+			result = completed;
+			error = message;
+			loop.quit();
+		},
+		50, 5);
+	QTimer::singleShot(1, &loop, [&] { timerFired = true; });
+	QTimer::singleShot(1'000, &loop, &QEventLoop::quit);
+	loop.exec();
+	CHECK(timerFired);
+	CHECK(result == Platform::Linux::SingleInstanceServerResult::Failed);
+	CHECK(error.contains(u"election lock"_q));
+	CHECK(error != server.errorString());
+}
 
-	std::condition_variable condition;
-	std::mutex mutex;
-	auto active = std::atomic_bool(false);
-	auto primaryExists = std::atomic_bool(false);
-	auto overlapped = std::atomic_bool(false);
-	auto lockFailures = std::atomic_int(0);
-	auto ready = 0;
-	auto primary = std::atomic_int(0);
-	auto secondary = std::atomic_int(0);
-	auto start = false;
-	const auto launch = [&] {
-		{
-			std::unique_lock lock(mutex);
-			++ready;
-			condition.notify_all();
-			condition.wait(lock, [&] { return start; });
-		}
-		const auto locked
-			= Platform::Linux::WithSingleInstanceServerLock(socketPath, [&] {
-				  if (active.exchange(true)) {
-					  overlapped = true;
-				  }
-				  std::this_thread::sleep_for(std::chrono::milliseconds(100));
-				  if (primaryExists.exchange(true)) {
-					  ++secondary;
-				  } else {
-					  ++primary;
-				  }
-				  active = false;
-			  });
-		if (!locked) {
-			++lockFailures;
-		}
-	};
-	std::thread first(launch);
-	std::thread second(launch);
-	{
-		std::unique_lock lock(mutex);
-		condition.wait(lock, [&] { return ready == 2; });
-		start = true;
-		condition.notify_all();
+TEST_CASE(LinuxSingleInstanceSocketHandsOffCommandAfterConcurrentLaunches) {
+	auto runtimeDirectory = QTemporaryDir();
+	CHECK(runtimeDirectory.isValid());
+	if (!runtimeDirectory.isValid()) {
+		return;
 	}
-	first.join();
-	second.join();
-
-	CHECK(!overlapped.load());
-	CHECK_EQ(primary.load(), 1);
-	CHECK_EQ(secondary.load(), 1);
-	CHECK_EQ(lockFailures.load(), 0);
+	CHECK(SetPrivatePermissions(runtimeDirectory.path()));
+	const auto socketPath
+		= QDir(runtimeDirectory.path()).filePath(u"teagram-instance"_q);
+	auto loop = QEventLoop();
+	auto command = QByteArray();
+	auto response = QByteArray();
+	auto failure = QString();
+	struct Launch final {
+		QLocalServer server;
+		QLocalSocket socket;
+		bool electionStarted = false;
+		Platform::Linux::SingleInstanceServerResult result
+			= Platform::Linux::SingleInstanceServerResult::Failed;
+	};
+	auto first = Launch();
+	auto second = Launch();
+	const auto prepare = [&](Launch &launch) {
+		launch.server.setSocketOptions(QLocalServer::UserAccessOption);
+		const auto launchPointer = &launch;
+		QObject::connect(
+			&launch.server, &QLocalServer::newConnection, &loop,
+			[&, launchPointer] {
+				const auto peer = launchPointer->server.nextPendingConnection();
+				QObject::connect(peer, &QLocalSocket::readyRead, &loop,
+								 [&, peer] {
+									 command += peer->readAll();
+									 if (command.contains(';')) {
+										 peer->write("RES:123_456;");
+										 peer->flush();
+									 }
+								 });
+			});
+		QObject::connect(
+			&launch.socket, &QLocalSocket::errorOccurred, &loop,
+			[&, launchPointer = &launch](QLocalSocket::LocalSocketError) {
+				if (launchPointer->electionStarted) {
+					return;
+				}
+				launchPointer->electionStarted = true;
+				Platform::Linux::StartSingleInstanceServer(
+					launchPointer->server, socketPath,
+					[](const QString &path) { QFile::remove(path); },
+					[&, launchPointer](
+						Platform::Linux::SingleInstanceServerResult result,
+						const QString &error) {
+						launchPointer->result = result;
+						if (result
+							== Platform::Linux::SingleInstanceServerResult::
+								Secondary) {
+							Platform::Linux::QueueSingleInstanceSocketReconnect(
+								&loop, &launchPointer->socket, socketPath);
+						} else if (result
+								   == Platform::Linux::
+									   SingleInstanceServerResult::Failed) {
+							failure = error;
+							loop.quit();
+						}
+					});
+			});
+		QObject::connect(&launch.socket, &QLocalSocket::connected, &loop,
+						 [&, launchPointer] {
+							 if (!launchPointer->electionStarted) {
+								 launchPointer->result = Platform::Linux::
+									 SingleInstanceServerResult::Secondary;
+							 }
+							 launchPointer->socket.write("CMD:show;");
+							 launchPointer->socket.flush();
+						 });
+		QObject::connect(&launch.socket, &QLocalSocket::readyRead, &loop,
+						 [&, launchPointer] {
+							 response += launchPointer->socket.readAll();
+							 if (response.contains(';')) {
+								 loop.quit();
+							 }
+						 });
+	};
+	prepare(first);
+	prepare(second);
+	first.socket.connectToServer(socketPath);
+	second.socket.connectToServer(socketPath);
+	QTimer::singleShot(5'000, &loop, &QEventLoop::quit);
+	loop.exec();
+	CHECK(failure.isEmpty());
+	CHECK((first.result == Platform::Linux::SingleInstanceServerResult::Primary)
+		  != (second.result
+			  == Platform::Linux::SingleInstanceServerResult::Primary));
+	CHECK(
+		(first.result == Platform::Linux::SingleInstanceServerResult::Secondary)
+		!= (second.result
+			== Platform::Linux::SingleInstanceServerResult::Secondary));
+	CHECK_EQ(command, QByteArray("CMD:show;"));
+	CHECK_EQ(response, QByteArray("RES:123_456;"));
 }
