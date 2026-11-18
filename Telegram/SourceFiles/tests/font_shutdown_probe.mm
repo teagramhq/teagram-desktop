@@ -14,7 +14,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <dlfcn.h>
 #include <execinfo.h>
 #include <pthread.h>
-#include <sched.h>
 
 #include <atomic>
 #include <cstdio>
@@ -76,33 +75,35 @@ void ReleaseFontShutdownProbe() {
 } // namespace Core::Tests
 
 extern "C" __attribute__((noinline, used)) CFArrayRef
-Teagram_CTFontManagerCopyAvailableFontFamilyNames() {
+Teagram_FontFamilyPopulationProbe() {
 	const auto original = OriginalCopyAvailableFontFamilyNames();
 	if (!original) {
 		fprintf(stderr,
 				"Font shutdown regression: probe_error=coretext_lookup\n");
 		std::abort();
 	}
-	const auto result = original();
-	// The real CoreText query has completed, but its Qt caller still owns the
-	// font-database mutex until this interposed frame returns.
-	if (ProbeArmed.load(std::memory_order_acquire)
-		&& pthread_equal(pthread_self(), ProbeWorker)
-		&& IsQtFontDatabasePopulation()) {
-		const auto skipped
-			= ProbeSkippedPopulations.load(std::memory_order_relaxed);
-		if (skipped > 0) {
-			ProbeSkippedPopulations.fetch_sub(1, std::memory_order_relaxed);
-		} else {
-			if (!ProbeHoldReported.exchange(true, std::memory_order_acq_rel)) {
-				fprintf(
-					stderr,
-					"Font shutdown regression: coretext_population_hold=1\n");
-			}
-			while (!ProbeReleased.load(std::memory_order_acquire)) {
-				sched_yield();
-			}
+	if (!ProbeArmed.load(std::memory_order_acquire)
+		|| !pthread_equal(pthread_self(), ProbeWorker)
+		|| !IsQtFontDatabasePopulation()) {
+		return original();
+	}
+	const auto skipped
+		= ProbeSkippedPopulations.load(std::memory_order_relaxed);
+	if (skipped > 0) {
+		ProbeSkippedPopulations.fetch_sub(1, std::memory_order_relaxed);
+		return original();
+	}
+	if (!ProbeHoldReported.exchange(true, std::memory_order_acq_rel)) {
+		fprintf(stderr, "Font shutdown regression: qt_font_database_hold=1\n");
+	}
+	// Repeat the real CoreText query inside Qt's families() call. The GUI
+	// sampler can then catch the native frame while Qt still owns its mutex.
+	auto result = original();
+	while (!ProbeReleased.load(std::memory_order_acquire)) {
+		if (result) {
+			CFRelease(result);
 		}
+		result = original();
 	}
 	return result;
 }
@@ -117,7 +118,7 @@ Teagram_CTFontManagerCopyAvailableFontFamilyNames() {
 			(const void *)(unsigned long)&replacee,                            \
 	}
 
-TDESKTOP_DYLD_INTERPOSE(Teagram_CTFontManagerCopyAvailableFontFamilyNames,
+TDESKTOP_DYLD_INTERPOSE(Teagram_FontFamilyPopulationProbe,
 						CTFontManagerCopyAvailableFontFamilyNames);
 
 #endif // TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST

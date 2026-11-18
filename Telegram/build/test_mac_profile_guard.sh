@@ -1821,11 +1821,26 @@ sys.exit(result.returncode if result.returncode >= 0 else 128 - result.returncod
 		return 1
 	fi
 	if [[ -z "$forced_failure" || "$forced_failure" == probe-missed-first ]] \
-		&& ! grep -F -q 'Font shutdown regression: coretext_population_hold=1' \
+		&& ! grep -F -q 'Font shutdown regression: qt_font_database_hold=1' \
 			"$shutdown_log"; then
 		cat "$shutdown_log" >&2
-		echo 'font shutdown did not synchronize with Qt CoreText population' >&2
+		echo 'font shutdown did not hold Qt font-database population' >&2
 		return 1
+	fi
+	if [[ -z "$forced_failure" || "$forced_failure" == probe-missed-first ]]; then
+		local population_hold_position
+		population_hold_position="$(grep -F -n 'Font shutdown regression: qt_font_database_hold=1' \
+			"$shutdown_log" | head -n 1 | cut -d: -f1 || true)"
+		local population_quit_position
+		population_quit_position="$(grep -F -n 'Font shutdown regression: quit_observed=1' \
+			"$shutdown_log" | tail -n 1 | cut -d: -f1 || true)"
+		if [[ ! "$population_hold_position" =~ ^[0-9]+$ ]] \
+			|| [[ ! "$population_quit_position" =~ ^[0-9]+$ ]] \
+			|| (( population_hold_position >= population_quit_position )); then
+			cat "$shutdown_log" >&2
+			echo 'font shutdown did not quit after entering Qt font-database population' >&2
+			return 1
+		fi
 	fi
 	local in_flight_position
 	in_flight_position="$(grep -F -n 'Font shutdown regression: quit_observed=1' \

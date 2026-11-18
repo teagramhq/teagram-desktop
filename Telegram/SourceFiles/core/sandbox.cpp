@@ -1208,7 +1208,7 @@ void Sandbox::startFontDatabaseWarmup() {
 				timer->stop();
 				Core::Quit();
 			});
-			timer->start(1);
+			timer->start(0);
 		}
 	} catch (const std::system_error &error) {
 		_fontDatabaseWarmupDone = true;
