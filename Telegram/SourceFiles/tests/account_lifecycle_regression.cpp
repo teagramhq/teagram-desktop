@@ -11958,7 +11958,7 @@ void AccumulateMainThreadWorkEstimate(qint64 &aggregateNanoseconds,
 		   && (partialPingStartupWork.schedulerSamples.before->state == 'R')
 		   && (partialPingStartupWork.schedulerSamples.before
 				   ->distanceNanoseconds
-			   == 5'000'000)
+			   == 1'000'000)
 		   && partialPingStartupWork.schedulerSamples.after
 		   && (partialPingStartupWork.schedulerSamples.after->state == 'R')
 		   && (partialPingStartupWork.schedulerSamples.after
