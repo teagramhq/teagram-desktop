@@ -12,6 +12,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <QtCore/QFile>
 #include <QtCore/QTemporaryDir>
 
+#include <sys/un.h>
 #include <unistd.h>
 
 TEST_CASE(LinuxSingleInstanceSocketUsesPrivateRuntimeDirectory) {
@@ -141,6 +142,41 @@ TEST_CASE(LinuxSingleInstanceSocketFallsBackFromAnUntrustedRuntimeDirectory) {
 		runtimeDirectory.path(), u"teagram-instance"_q, geteuid(),
 		temporaryDirectory.path());
 	CHECK_EQ(path, QDir(fallbackDirectory).filePath(u"teagram-instance"_q));
+}
+
+TEST_CASE(LinuxSingleInstanceSocketFallsBackWhenRuntimeSocketPathIsTooLong) {
+	auto temporaryDirectory = QTemporaryDir();
+	CHECK(temporaryDirectory.isValid());
+	if (!temporaryDirectory.isValid()) {
+		return;
+	}
+	const auto runtimeDirectory
+		= temporaryDirectory.filePath(QString(180, QChar('x')));
+	CHECK(QDir().mkdir(runtimeDirectory));
+	const auto permissions = QFileDevice::ReadOwner | QFileDevice::WriteOwner
+							 | QFileDevice::ExeOwner;
+	const auto permissionsSet
+		= QFile::setPermissions(runtimeDirectory, permissions);
+	CHECK(permissionsSet);
+	if (!permissionsSet) {
+		return;
+	}
+
+	const auto serverName = u"teagram-instance"_q;
+	const auto preferredSocketPath
+		= QDir(runtimeDirectory).filePath(serverName);
+	sockaddr_un socketAddress = {};
+	CHECK(size_t(QFile::encodeName(preferredSocketPath).size())
+		  > (sizeof(socketAddress.sun_path) - 1));
+	CHECK(Platform::Linux::SingleInstanceSocketPathInDirectory(
+			  runtimeDirectory, serverName, geteuid())
+			  .isEmpty());
+
+	const auto fallbackDirectory = temporaryDirectory.filePath(
+		u"teagram-runtime-%1"_q.arg(qulonglong(geteuid())));
+	const auto path = Platform::Linux::SingleInstanceSocketPath(
+		runtimeDirectory, serverName, geteuid(), temporaryDirectory.path());
+	CHECK_EQ(path, QDir(fallbackDirectory).filePath(serverName));
 }
 
 TEST_CASE(LinuxSingleInstanceSocketRejectsASymlinkFallbackDirectory) {

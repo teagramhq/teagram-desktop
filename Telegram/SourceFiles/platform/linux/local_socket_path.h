@@ -17,6 +17,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <cerrno>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <sys/un.h>
 
 namespace Platform::Linux {
 namespace SingleInstanceSocketPathDetails {
@@ -126,9 +127,15 @@ SingleInstanceSocketPathInDirectory(const QString &runtimeDirectory,
 	const auto canonicalDirectory
 		= SingleInstanceSocketPathDetails::VerifiedPrivateRuntimeDirectory(
 			runtimeDirectory, effectiveUid);
-	return canonicalDirectory.isEmpty()
-			   ? QString()
-			   : QDir(canonicalDirectory).filePath(serverName);
+	if (canonicalDirectory.isEmpty()) {
+		return QString();
+	}
+	const auto socketPath = QDir(canonicalDirectory).filePath(serverName);
+	const auto encodedSocketPath = QFile::encodeName(socketPath);
+	auto socketAddress = sockaddr_un();
+	const auto socketPathLimit = sizeof(socketAddress.sun_path) - 1;
+	return size_t(encodedSocketPath.size()) > socketPathLimit ? QString()
+															  : socketPath;
 }
 
 [[nodiscard]] inline QString
@@ -148,7 +155,8 @@ SingleInstanceSocketPath(const QString &runtimeDirectory,
 			temporaryDirectory, effectiveUid);
 	return fallbackDirectory.isEmpty()
 			   ? QString()
-			   : QDir(fallbackDirectory).filePath(serverName);
+			   : SingleInstanceSocketPathInDirectory(fallbackDirectory,
+													 serverName, effectiveUid);
 }
 
 [[nodiscard]] inline QString
