@@ -318,7 +318,7 @@ TEST_CASE(LinuxSingleInstanceSocketSerializesConcurrentPrimaryElection) {
 				  if (active.exchange(true)) {
 					  overlapped = true;
 				  }
-				std::this_thread::sleep_for(std::chrono::milliseconds(100));
+				  std::this_thread::sleep_for(std::chrono::milliseconds(100));
 				  if (primaryExists.exchange(true)) {
 					  ++secondary;
 				  } else {
