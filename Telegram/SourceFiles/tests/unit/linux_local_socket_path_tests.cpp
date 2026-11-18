@@ -73,11 +73,17 @@ TEST_CASE(LinuxSingleInstanceSocketRejectsSharedRuntimeDirectory) {
 }
 
 TEST_CASE(LinuxSingleInstanceSocketRejectsRelativeDirectoriesAndPathTraversal) {
+	auto runtimeDirectory = QTemporaryDir();
+	CHECK(runtimeDirectory.isValid());
+	if (!runtimeDirectory.isValid()) {
+		return;
+	}
+	CHECK(SetPrivatePermissions(runtimeDirectory.path()));
 	CHECK(Platform::Linux::SingleInstanceSocketPathInDirectory(
 			  u"relative-runtime"_q, u"teagram-instance"_q, geteuid())
 			  .isEmpty());
 	CHECK(Platform::Linux::SingleInstanceSocketPathInDirectory(
-			  u"/run/user/1000"_q, u"../teagram-instance"_q, geteuid())
+			  runtimeDirectory.path(), u"../teagram-instance"_q, geteuid())
 			  .isEmpty());
 }
 
@@ -110,7 +116,7 @@ TEST_CASE(LinuxSingleInstanceSocketUsesHomeEnvironmentWithoutPasswdEntry) {
 	}
 	namespace Details = Platform::Linux::SingleInstanceSocketPathDetails;
 	const auto fromEnvironment
-		= Details::ChooseHomeDirectory(QString(), homeDirectory.path());
+		= Details::UserHomeDirectory(uid_t(4294967294), homeDirectory.path());
 	CHECK_EQ(fromEnvironment, homeDirectory.path());
 	const auto fromPasswd
 		= Details::ChooseHomeDirectory(u"/home/user"_q, homeDirectory.path());
@@ -242,6 +248,56 @@ TEST_CASE(LinuxSingleInstanceSocketFallsBackWhenRuntimeSocketPathIs107Bytes) {
 		runtimeDirectory, runtimeDirectory, serverName, geteuid(),
 		homeDirectory.path());
 	CHECK_EQ(path, QDir(fallbackDirectory).filePath(serverName));
+}
+
+TEST_CASE(LinuxSingleInstanceSocketReportsUnsafeHomeDirectory) {
+	auto homeDirectory = QTemporaryDir();
+	CHECK(homeDirectory.isValid());
+	if (!homeDirectory.isValid()) {
+		return;
+	}
+	const auto unsafePermissions
+		= QFileDevice::ReadOwner | QFileDevice::WriteOwner
+		  | QFileDevice::ExeOwner | QFileDevice::WriteGroup;
+	CHECK(QFile::setPermissions(homeDirectory.path(), unsafePermissions));
+
+	auto failure = Platform::Linux::SingleInstanceSocketPathFailure::None;
+	const auto path = Platform::Linux::SingleInstanceSocketPathForLaunch(
+		QString(), homeDirectory.filePath(u"missing-runtime"_q),
+		u"teagram-instance"_q, geteuid(), homeDirectory.path(), &failure);
+	CHECK(path.isEmpty());
+	CHECK(failure
+		  == Platform::Linux::SingleInstanceSocketPathFailure::
+			  HomeDirectoryCheckFailed);
+	const auto message
+		= Platform::Linux::SingleInstanceSocketPathFailureMessage(failure);
+	CHECK(message.contains(u"XDG_RUNTIME_DIR"_q));
+	CHECK(message.contains(u"HOME"_q));
+}
+
+TEST_CASE(LinuxSingleInstanceSocketReportsOverlongFallbackPath) {
+	auto temporaryDirectory = QTemporaryDir();
+	CHECK(temporaryDirectory.isValid());
+	if (!temporaryDirectory.isValid()) {
+		return;
+	}
+	const auto homeDirectory = QDir(temporaryDirectory.path())
+								   .filePath(QString(45, QChar('x')) + u"/"_q
+											 + QString(45, QChar('y')));
+	CHECK(QDir().mkpath(homeDirectory));
+	CHECK(SetPrivatePermissions(homeDirectory));
+
+	auto failure = Platform::Linux::SingleInstanceSocketPathFailure::None;
+	const auto path = Platform::Linux::SingleInstanceSocketPathForLaunch(
+		QString(), temporaryDirectory.filePath(u"missing-runtime"_q),
+		u"teagram-instance"_q, geteuid(), homeDirectory, &failure);
+	CHECK(path.isEmpty());
+	CHECK(
+		failure
+		== Platform::Linux::SingleInstanceSocketPathFailure::SocketPathTooLong);
+	const auto message
+		= Platform::Linux::SingleInstanceSocketPathFailureMessage(failure);
+	CHECK(message.contains(u"106-byte"_q));
 }
 
 TEST_CASE(LinuxSingleInstanceSocketAcceptsRuntimeSocketPathAt106Bytes) {

@@ -138,6 +138,31 @@ ChooseHomeDirectory(const QString &passwdHome, const QString &environmentHome) {
 
 } // namespace SingleInstanceSocketPathDetails
 
+enum class SingleInstanceSocketPathFailure {
+	None,
+	InvalidServerName,
+	HomeDirectoryCheckFailed,
+	FallbackDirectoryCheckFailed,
+	SocketPathTooLong,
+};
+
+[[nodiscard]] inline QString SingleInstanceSocketPathFailureMessage(
+	SingleInstanceSocketPathFailure failure) {
+	switch (failure) {
+	case SingleInstanceSocketPathFailure::InvalidServerName:
+		return u"Could not create the single-instance IPC socket: invalid server name."_q;
+	case SingleInstanceSocketPathFailure::HomeDirectoryCheckFailed:
+		return u"Could not create the single-instance IPC socket. XDG_RUNTIME_DIR is unset, unsafe, too long, or unavailable, and HOME failed the owner or mode check."_q;
+	case SingleInstanceSocketPathFailure::FallbackDirectoryCheckFailed:
+		return u"Could not create the single-instance IPC socket. XDG_RUNTIME_DIR is unset, unsafe, too long, or unavailable, and the private HOME runtime directory failed its owner, mode, or symlink check."_q;
+	case SingleInstanceSocketPathFailure::SocketPathTooLong:
+		return u"Could not create the single-instance IPC socket. XDG_RUNTIME_DIR is unset, unsafe, too long, or unavailable, and the HOME fallback exceeds Linux's 106-byte AF_UNIX socket path limit."_q;
+	case SingleInstanceSocketPathFailure::None:
+		break;
+	}
+	return QString();
+}
+
 [[nodiscard]] inline QString
 SingleInstanceSocketPathInDirectory(const QString &runtimeDirectory,
 									const QString &serverName,
@@ -159,12 +184,17 @@ SingleInstanceSocketPathInDirectory(const QString &runtimeDirectory,
 															  : socketPath;
 }
 
-[[nodiscard]] inline QString
-SingleInstanceSocketPathForLaunch(const QString &xdgRuntimeDirectory,
-								  const QString &stableRuntimeDirectory,
-								  const QString &serverName, uid_t effectiveUid,
-								  const QString &homeDirectory) {
+[[nodiscard]] inline QString SingleInstanceSocketPathForLaunch(
+	const QString &xdgRuntimeDirectory, const QString &stableRuntimeDirectory,
+	const QString &serverName, uid_t effectiveUid, const QString &homeDirectory,
+	SingleInstanceSocketPathFailure *failure = nullptr) {
+	if (failure) {
+		*failure = SingleInstanceSocketPathFailure::None;
+	}
 	if (!SingleInstanceSocketPathDetails::IsValidServerName(serverName)) {
+		if (failure) {
+			*failure = SingleInstanceSocketPathFailure::InvalidServerName;
+		}
 		return QString();
 	}
 	const auto stableRuntimePath = SingleInstanceSocketPathInDirectory(
@@ -175,24 +205,43 @@ SingleInstanceSocketPathForLaunch(const QString &xdgRuntimeDirectory,
 		return (xdgRuntimePath == stableRuntimePath) ? xdgRuntimePath
 													 : stableRuntimePath;
 	}
+	if (SingleInstanceSocketPathDetails::VerifiedUserHomeDirectory(
+			homeDirectory, effectiveUid)
+			.isEmpty()) {
+		if (failure) {
+			*failure
+				= SingleInstanceSocketPathFailure::HomeDirectoryCheckFailed;
+		}
+		return QString();
+	}
 	const auto fallbackDirectory
 		= SingleInstanceSocketPathDetails::CreateFallbackRuntimeDirectory(
 			homeDirectory, effectiveUid);
-	return fallbackDirectory.isEmpty()
-			   ? QString()
-			   : SingleInstanceSocketPathInDirectory(fallbackDirectory,
-													 serverName, effectiveUid);
+	if (fallbackDirectory.isEmpty()) {
+		if (failure) {
+			*failure
+				= SingleInstanceSocketPathFailure::FallbackDirectoryCheckFailed;
+		}
+		return QString();
+	}
+	const auto fallbackPath = SingleInstanceSocketPathInDirectory(
+		fallbackDirectory, serverName, effectiveUid);
+	if (fallbackPath.isEmpty() && failure) {
+		*failure = SingleInstanceSocketPathFailure::SocketPathTooLong;
+	}
+	return fallbackPath;
 }
 
 [[nodiscard]] inline QString
 SingleInstanceSocketPath(const QString &xdgRuntimeDirectory,
 						 const QString &serverName, uid_t effectiveUid,
-						 const QString &homeDirectory) {
+						 const QString &homeDirectory,
+						 SingleInstanceSocketPathFailure *failure = nullptr) {
 	return SingleInstanceSocketPathForLaunch(
 		xdgRuntimeDirectory,
 		SingleInstanceSocketPathDetails::SingleInstanceRuntimeDirectory(
 			effectiveUid),
-		serverName, effectiveUid, homeDirectory);
+		serverName, effectiveUid, homeDirectory, failure);
 }
 
 [[nodiscard]] inline QString

@@ -596,12 +596,22 @@ void SetApplicationIcon(const QIcon &icon) {
 	QApplication::setWindowIcon(icon);
 }
 
-QString SingleInstanceLocalServerName(const QString &hash) {
+QString SingleInstanceLocalServerName(const QString &hash,
+									  QString *errorMessage) {
 	const auto serverName = Platform::Linux::SingleInstanceLocalServerName(
 		hash, QCoreApplication::applicationName(), KSandbox::isSnap(),
 		qEnvironmentVariable("SNAP_INSTANCE_NAME"));
-	return Platform::Linux::SingleInstanceSocketPath(
-		qEnvironmentVariable("XDG_RUNTIME_DIR"), serverName, geteuid());
+	auto failure = Platform::Linux::SingleInstanceSocketPathFailure::None;
+	const auto result = Platform::Linux::SingleInstanceSocketPath(
+		qEnvironmentVariable("XDG_RUNTIME_DIR"), serverName, geteuid(),
+		Platform::Linux::SingleInstanceSocketPathDetails::UserHomeDirectory(
+			geteuid(), qEnvironmentVariable("HOME")),
+		&failure);
+	if (errorMessage) {
+		*errorMessage
+			= Platform::Linux::SingleInstanceSocketPathFailureMessage(failure);
+	}
+	return result;
 }
 
 #if QT_VERSION < QT_VERSION_CHECK(6, 5, 0)

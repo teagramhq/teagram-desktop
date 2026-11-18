@@ -51,6 +51,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <QtCore/QMetaObject>
 #include <QtGui/QSessionManager>
 #include <QtGui/QScreen>
+#if !defined Q_OS_WIN && !defined Q_OS_MAC
+#include <QtWidgets/QMessageBox>
+#endif // !Q_OS_WIN && !Q_OS_MAC
 #ifdef Q_OS_MAC
 #include <QtCore/QPoint>
 #include <QtCore/QRect>
@@ -331,16 +334,24 @@ Sandbox::Sandbox(int &argc, char **argv)
 }
 
 int Sandbox::start() {
+	auto localServerNameError = QString();
 	{
 		const auto d = QFile::encodeName(QDir(cWorkingDir()).absolutePath());
-		char h[33] = { 0 };
+		char h[33] = {0};
 		hashMd5Hex(d.constData(), d.size(), h);
-		_localServerName = Platform::SingleInstanceLocalServerName(h);
+		_localServerName
+			= Platform::SingleInstanceLocalServerName(h, &localServerNameError);
 	}
 
 #if !defined Q_OS_WIN && !defined Q_OS_MAC
 	if (_localServerName.isEmpty()) {
-		LOG(("Could not determine a private local socket path."));
+		const auto message
+			= localServerNameError.isEmpty()
+				  ? u"Could not determine a private local socket path."_q
+				  : localServerNameError;
+		LOG(("%1").arg(message));
+		QMessageBox::critical(nullptr, QApplication::applicationName(),
+							  message);
 		return 1;
 	}
 #endif // !Q_OS_WIN && !Q_OS_MAC
