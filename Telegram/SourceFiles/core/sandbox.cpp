@@ -79,6 +79,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <cxxabi.h>
 #include <dlfcn.h>
 #include <execinfo.h>
+#include <CoreText/CTFontManager.h>
 #include <pthread.h>
 #include <sched.h>
 #include <signal.h>
@@ -130,6 +131,7 @@ constexpr auto kFontStartupSplashExposureTimeout = 1000;
 
 #ifdef Q_OS_MAC
 constexpr auto kProbeMaxFrames = 64;
+constexpr auto kProbeFontEnumerationRepeats = 64;
 void *ProbeFrames[kProbeMaxFrames];
 std::atomic_int ProbeDepth = -1;
 
@@ -946,13 +948,27 @@ void Sandbox::startFontDatabaseWarmup() {
 				return;
 			}
 			const auto openSansLoaded = style::internal::PreloadCustomFonts();
-			const auto populateFontDatabase = [] {
+			const auto populateFontDatabase = [quitRegression] {
 #if QT_VERSION < QT_VERSION_CHECK(6, 0, 0)
 				const auto families = QFontDatabase().families();
 #else  // Qt < 6.0.0
 				const auto families = QFontDatabase::families();
 #endif // Qt < 6.0.0
 				Q_UNUSED(families);
+				if (quitRegression) {
+					// CoreText can return the system family list from its
+					// process cache after the first startup probe. Repeat the
+					// native query in this test-only worker so the quit check
+					// still observes the real system enumeration frame on a
+					// warm CI runner.
+					for (auto i = 0; i != kProbeFontEnumerationRepeats; ++i) {
+						const auto systemFamilies
+							= CTFontManagerCopyAvailableFontFamilyNames();
+						if (systemFamilies) {
+							CFRelease(systemFamilies);
+						}
+					}
+				}
 			};
 			populateFontDatabase();
 			if (ignoreFirstEnumeration) {
@@ -1031,6 +1047,10 @@ void Sandbox::startFontDatabaseWarmup() {
 						const auto metrics = QFontMetricsF(font);
 						static_cast<void>(metrics.ascent());
 						static_cast<void>(metrics.height());
+						// Prime the text-width queries used by style::FontData.
+						static_cast<void>(
+							metrics.horizontalAdvance(QLatin1Char(' ')));
+						static_cast<void>(metrics.horizontalAdvance(u"..."_q));
 						static_cast<void>(metrics.tightBoundingRect(sample));
 						painter.setFont(font);
 						painter.drawText(QPoint(0, 24 + row * 32), sample);
