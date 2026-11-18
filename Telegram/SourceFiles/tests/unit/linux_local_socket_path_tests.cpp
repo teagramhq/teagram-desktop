@@ -109,8 +109,8 @@ TEST_CASE(LinuxSingleInstanceSocketFallsBackWhenRuntimeDirectoryIsUnset) {
 	struct stat status = {};
 	CHECK_EQ(lstat(encodedDirectory.constData(), &status), 0);
 	CHECK(S_ISDIR(status.st_mode));
-	CHECK_EQ(status.st_uid, geteuid());
-	CHECK_EQ(status.st_mode & 07777, 0700);
+	CHECK(status.st_uid == geteuid());
+	CHECK((status.st_mode & 07777) == 0700);
 }
 
 TEST_CASE(LinuxSingleInstanceSocketFallsBackFromAnUntrustedRuntimeDirectory) {
