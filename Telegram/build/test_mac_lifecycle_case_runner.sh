@@ -12,7 +12,7 @@ cat > "$FAKE_CASES" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 case "$2" in
-pass)
+pass|native-failure-continuation)
 	printf 'case body passed\n'
 	;;
 fail)
@@ -125,6 +125,22 @@ grep -Fq 'lifecycle_case=pass result=START timeout_seconds=600' \
 	"$TEMP_ROOT/deadline-capped-output.txt" || {
 	cat "$TEMP_ROOT/deadline-capped-output.txt" >&2
 	echo "case runner should cap the timeout at 600 seconds when ample time remains." >&2
+	exit 1
+}
+
+if TDESKTOP_MAC_LIFECYCLE_CASE_TIMEOUT_SECONDS=700 \
+	bash "$RUNNER" "$FAKE_CASES" fake-app "$TEMP_ROOT/long-case-logs" \
+		native-failure-continuation > "$TEMP_ROOT/long-case-output.txt" 2>&1; then
+	:
+else
+	cat "$TEMP_ROOT/long-case-output.txt" >&2
+	echo "case runner should complete the native failure continuation case below its timeout cap." >&2
+	exit 1
+fi
+grep -Fq 'lifecycle_case=native-failure-continuation result=START timeout_seconds=600' \
+	"$TEMP_ROOT/long-case-output.txt" || {
+	cat "$TEMP_ROOT/long-case-output.txt" >&2
+	echo "native failure continuation should keep the existing 600-second case cap." >&2
 	exit 1
 }
 

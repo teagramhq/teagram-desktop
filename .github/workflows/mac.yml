@@ -743,12 +743,12 @@ jobs:
 
       - name: Run protected profile and IPC integration tests.
         id: profile-ipc
-        timeout-minutes: 20
+        timeout-minutes: 15
         if: ${{ !cancelled() && steps.ccache-profile.outputs.protected_path_integration == 'ON' && steps.build.outcome == 'success' }}
         run: |
           set -Eeuo pipefail
           step_started_at="$(date +%s)"
-          step_timeout_seconds=1200
+          step_timeout_seconds=900
           step_finish_headroom_seconds=60
           step_deadline_epoch="$((step_started_at + step_timeout_seconds - step_finish_headroom_seconds))"
           diagnostics="$RUNNER_TEMP/macos-regression-diagnostics/profile-ipc"
@@ -816,7 +816,7 @@ jobs:
 
       - name: Full chat info session regression.
         id: lifecycle-regression
-        timeout-minutes: 30
+        timeout-minutes: 20
         if: ${{ !cancelled() && steps.build.outcome == 'success' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.label.name == 'macos-build')) }}
         run: |
           set -Eeuo pipefail

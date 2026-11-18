@@ -754,7 +754,7 @@ require_step_script "$mac_workflow" build-macos "$account_database_profile_step"
   'profile_root=%s/Library/Application Support/Teagram'
 
 profile_step='Run protected profile and IPC integration tests.'
-require_step_field "$mac_workflow" build-macos "$profile_step" '.timeout-minutes' '20'
+require_step_field "$mac_workflow" build-macos "$profile_step" '.timeout-minutes' '15'
 require_step_script "$mac_workflow" build-macos "$profile_step" \
   'state="$diagnostics/state"' \
   'if [ "$status" -eq 0 ]; then rm -rf "$state"; fi' \
@@ -762,7 +762,7 @@ require_step_script "$mac_workflow" build-macos "$profile_step" \
 profile_step_script="$(step_field "$mac_workflow" build-macos "$profile_step" '.run')"
 for deadline_clause in \
   'step_started_at="$(date +%s)"' \
-  'step_timeout_seconds=1200' \
+  'step_timeout_seconds=900' \
   'step_finish_headroom_seconds=60' \
   'step_deadline_epoch="$((step_started_at + step_timeout_seconds - step_finish_headroom_seconds))"' \
   'TDESKTOP_MAC_LIFECYCLE_STEP_DEADLINE_EPOCH="$step_deadline_epoch"'; do
@@ -814,9 +814,8 @@ fi
   && "$profile_step_timeout_seconds" =~ ^[1-9][0-9]*$ \
   && "$profile_step_finish_headroom_seconds" =~ ^[1-9][0-9]*$ ]] \
   || contract_fail 'The protected profile case, deadline, and cleanup timeout budget must be explicit and positive.'
-grep -Fq 'CASE_RUN_TIMEOUT_LIMIT_SECONDS=900' "$case_runner" \
-  && grep -Fq 'CASE_RUN_TIMEOUT_SECONDS=900' "$case_runner" \
-  || contract_fail 'The native failure continuation case must receive a 15-minute timeout when the step deadline allows it.'
+grep -Fq 'if (( CASE_RUN_TIMEOUT_SECONDS > CASE_TIMEOUT_LIMIT_SECONDS )); then' "$case_runner" \
+  || contract_fail 'Lifecycle cases must share the existing 10-minute timeout cap.'
 cleanup_headroom_seconds="$((2 * cleanup_grace_seconds))"
 case_timeout_budget_seconds="$((case_timeout_limit_seconds + cleanup_headroom_seconds))"
 profile_step_deadline_budget_seconds="$((profile_step_timeout_seconds - profile_step_finish_headroom_seconds))"
@@ -827,8 +826,7 @@ profile_step_deadline_budget_seconds="$((profile_step_timeout_seconds - profile_
   || contract_fail "Lifecycle deadline and cleanup headroom must fit inside the profile/IPC step limit (${profile_step_timeout_minutes}m)."
 for runner_clause in \
   'CASE_CLEANUP_HEADROOM_SECONDS=$((2 * CASE_CLEANUP_GRACE_SECONDS))' \
-  'CASE_RUN_TIMEOUT_LIMIT_SECONDS=900' \
-  'if (( CASE_RUN_TIMEOUT_SECONDS > CASE_RUN_TIMEOUT_LIMIT_SECONDS )); then' \
+  'if (( CASE_RUN_TIMEOUT_SECONDS > CASE_TIMEOUT_LIMIT_SECONDS )); then' \
   'STEP_DEADLINE_EPOCH="${TDESKTOP_MAC_LIFECYCLE_STEP_DEADLINE_EPOCH:-}"' \
   'remaining_case_seconds=$((STEP_DEADLINE_EPOCH - now_epoch - CASE_CLEANUP_HEADROOM_SECONDS))' \
   'if (( remaining_case_seconds < CASE_RUN_TIMEOUT_SECONDS )); then' \
@@ -1051,9 +1049,8 @@ require_step_field "$mac_workflow" build-macos "$regression_step" '.if' \
   "\${{ !cancelled() && steps.build.outcome == 'success' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.label.name == 'macos-build')) }}"
 regression_timeout_minutes="$(step_field "$mac_workflow" build-macos \
   "$regression_step" '.timeout-minutes')"
-[[ "$regression_timeout_minutes" =~ ^[0-9]+$ ]] \
-  && (( regression_timeout_minutes >= 25 )) \
-  || contract_fail 'Full chat info session regression needs 25 minutes for dSYM generation, LLDB startup, and its bounded replay.'
+[[ "$regression_timeout_minutes" == 20 ]] \
+  || contract_fail 'Full chat info session regression must retain its existing 20-minute timeout.'
 require_step_script "$mac_workflow" build-macos "$regression_step" \
   'exec > >(tee "$diagnostics/harness.log") 2>&1' \
   'build_dir="$repo/out"' \
