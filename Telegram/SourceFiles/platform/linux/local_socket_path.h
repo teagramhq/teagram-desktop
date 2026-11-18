@@ -121,11 +121,19 @@ SingleInstanceRuntimeDirectory(uid_t effectiveUid) {
 		QString::number(static_cast<qulonglong>(effectiveUid)));
 }
 
-[[nodiscard]] inline QString UserHomeDirectory(uid_t effectiveUid) {
+[[nodiscard]] inline QString
+ChooseHomeDirectory(const QString &passwdHome, const QString &environmentHome) {
+	return passwdHome.isEmpty() ? environmentHome : passwdHome;
+}
+
+[[nodiscard]] inline QString
+UserHomeDirectory(uid_t effectiveUid, const QString &environmentHome) {
 	const auto entry = getpwuid(effectiveUid);
-	return (entry && entry->pw_dir)
-			   ? QFile::decodeName(QByteArray(entry->pw_dir))
-			   : QString();
+	auto passwdHome = QString();
+	if (entry && entry->pw_dir) {
+		passwdHome = QFile::decodeName(QByteArray(entry->pw_dir));
+	}
+	return ChooseHomeDirectory(passwdHome, environmentHome);
 }
 
 } // namespace SingleInstanceSocketPathDetails
@@ -192,7 +200,8 @@ SingleInstanceSocketPath(const QString &xdgRuntimeDirectory,
 						 const QString &serverName, uid_t effectiveUid) {
 	return SingleInstanceSocketPath(
 		xdgRuntimeDirectory, serverName, effectiveUid,
-		SingleInstanceSocketPathDetails::UserHomeDirectory(effectiveUid));
+		SingleInstanceSocketPathDetails::UserHomeDirectory(
+			effectiveUid, qEnvironmentVariable("HOME")));
 }
 
 enum class SingleInstanceServerResult {

@@ -102,6 +102,28 @@ TEST_CASE(LinuxSingleInstanceSocketFallsBackWhenRuntimeDirectoryIsUnset) {
 	CHECK((status.st_mode & 07777) == 0700);
 }
 
+TEST_CASE(LinuxSingleInstanceSocketUsesHomeEnvironmentWithoutPasswdEntry) {
+	auto homeDirectory = QTemporaryDir();
+	CHECK(homeDirectory.isValid());
+	if (!homeDirectory.isValid()) {
+		return;
+	}
+	namespace Details = Platform::Linux::SingleInstanceSocketPathDetails;
+	const auto fromEnvironment
+		= Details::ChooseHomeDirectory(QString(), homeDirectory.path());
+	CHECK_EQ(fromEnvironment, homeDirectory.path());
+	const auto fromPasswd
+		= Details::ChooseHomeDirectory(u"/home/user"_q, homeDirectory.path());
+	CHECK_EQ(fromPasswd, u"/home/user"_q);
+
+	const auto fallbackDirectory = homeDirectory.filePath(
+		u".teagram-runtime-%1"_q.arg(qulonglong(geteuid())));
+	const auto path = Platform::Linux::SingleInstanceSocketPathForLaunch(
+		QString(), homeDirectory.filePath(u"missing-runtime"_q),
+		u"teagram-instance"_q, geteuid(), fromEnvironment);
+	CHECK_EQ(path, QDir(fallbackDirectory).filePath(u"teagram-instance"_q));
+}
+
 TEST_CASE(LinuxSingleInstanceSocketFallsBackFromAnUntrustedRuntimeDirectory) {
 	auto runtimeDirectory = QTemporaryDir();
 	CHECK(runtimeDirectory.isValid());
