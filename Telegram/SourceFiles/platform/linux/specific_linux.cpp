@@ -600,8 +600,7 @@ QString SingleInstanceLocalServerName(const QString &hash,
 									  QString *errorMessage) {
 	const auto snap = KSandbox::isSnap();
 	const auto serverName = Platform::Linux::SingleInstanceLocalServerName(
-		hash, QCoreApplication::applicationName(), snap,
-		qEnvironmentVariable("SNAP_INSTANCE_NAME"));
+		hash, QCoreApplication::applicationName(), snap);
 	auto failure = Platform::Linux::SingleInstanceSocketPathFailure::None;
 	const auto result = Platform::Linux::SingleInstanceSocketPath(
 		qEnvironmentVariable("XDG_RUNTIME_DIR"), serverName, geteuid(),

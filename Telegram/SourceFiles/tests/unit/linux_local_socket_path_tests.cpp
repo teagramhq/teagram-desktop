@@ -6,6 +6,7 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "platform/linux/local_socket_path.h"
+#include "platform/linux/desktop_identity.h"
 #include "tests/unit/unit_test.h"
 
 #include <QtCore/QDir>
@@ -14,6 +15,10 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <QtCore/QTemporaryDir>
 #include <QtCore/QTimer>
 
+#include <cerrno>
+#include <cstring>
+#include <vector>
+#include <sys/socket.h>
 #include <sys/un.h>
 #include <unistd.h>
 
@@ -269,6 +274,36 @@ TEST_CASE(LinuxSingleInstanceSocketUsesSnapRuntimeDirectory) {
 	CHECK_EQ(response, QByteArray("RES:1_2;"));
 }
 
+TEST_CASE(LinuxSnapSingleInstanceSocketFitsMaximumParallelInstanceName) {
+	auto runtimeRoot = QTemporaryDir(u"/tmp/XXXXXX"_q);
+	CHECK(runtimeRoot.isValid());
+	if (!runtimeRoot.isValid()) {
+		return;
+	}
+	const auto instanceName = u"telegram-desktop_0123456789"_q;
+	const auto runtimeDirectory
+		= QDir(runtimeRoot.path())
+			  .filePath(u"run/user/%1/snap.%2"_q.arg(qulonglong(geteuid()))
+							.arg(instanceName));
+	CHECK(QDir().mkpath(runtimeDirectory));
+	CHECK(SetPrivatePermissions(runtimeDirectory));
+
+	const auto hash = u"0123456789abcdef0123456789abcdef"_q;
+	const auto serverName = Platform::Linux::SingleInstanceLocalServerName(
+		hash, u"Teagram"_q, true);
+	const auto path = Platform::Linux::SingleInstanceSocketPathForLaunch(
+		runtimeDirectory, QString(), serverName, geteuid(), runtimeRoot.path(),
+		nullptr, true);
+	auto address = sockaddr_un();
+	const auto limit = sizeof(address.sun_path) - 2;
+	const auto oldServerName = u"snap.%1.%2"_q.arg(instanceName, hash);
+	const auto oldSocketPath = QDir(runtimeDirectory).filePath(oldServerName);
+	CHECK(size_t(QFile::encodeName(oldSocketPath).size()) > limit);
+	CHECK(!path.isEmpty());
+	CHECK_EQ(path, QDir(runtimeDirectory).filePath(hash));
+	CHECK(size_t(QFile::encodeName(path).size()) <= limit);
+}
+
 TEST_CASE(LinuxSingleInstanceSocketReconnectWaitsForErrorCallback) {
 	auto runtimeDirectory = QTemporaryDir();
 	CHECK(runtimeDirectory.isValid());
@@ -321,6 +356,128 @@ TEST_CASE(LinuxSingleInstanceSocketReconnectWaitsForErrorCallback) {
 	CHECK(reconnected);
 	CHECK_EQ(command, QByteArray("CMD:show;"));
 	CHECK_EQ(response, QByteArray("RES:1_2;"));
+}
+
+TEST_CASE(LinuxSingleInstanceProbeCompletionIsQueuedAfterConnectedSignal) {
+	auto runtimeDirectory = QTemporaryDir();
+	CHECK(runtimeDirectory.isValid());
+	if (!runtimeDirectory.isValid()) {
+		return;
+	}
+	CHECK(SetPrivatePermissions(runtimeDirectory.path()));
+	const auto socketPath
+		= QDir(runtimeDirectory.path()).filePath(u"teagram-instance"_q);
+	auto primary = QLocalServer();
+	CHECK(primary.listen(socketPath));
+	if (!primary.isListening()) {
+		return;
+	}
+	auto probe = QLocalSocket();
+	auto loop = QEventLoop();
+	auto insideConnectedSignal = false;
+	auto completedAfterSignal = false;
+	QObject::connect(&probe, &QLocalSocket::connected, &loop, [&] {
+		insideConnectedSignal = true;
+		Platform::Linux::QueueSingleInstanceProbeCompletion(&loop, [&] {
+			completedAfterSignal = !insideConnectedSignal;
+			loop.quit();
+		});
+		insideConnectedSignal = false;
+	});
+	probe.connectToServer(socketPath);
+	QTimer::singleShot(1'000, &loop, &QEventLoop::quit);
+	loop.exec();
+	CHECK(completedAfterSignal);
+}
+
+TEST_CASE(LinuxSingleInstanceProbeTimeoutReleasesElectionLock) {
+	auto runtimeDirectory = QTemporaryDir();
+	CHECK(runtimeDirectory.isValid());
+	if (!runtimeDirectory.isValid()) {
+		return;
+	}
+	CHECK(SetPrivatePermissions(runtimeDirectory.path()));
+	const auto socketPath
+		= QDir(runtimeDirectory.path()).filePath(u"teagram-instance"_q);
+	auto address = sockaddr_un();
+	address.sun_family = AF_UNIX;
+	const auto encodedPath = QFile::encodeName(socketPath);
+	CHECK(size_t(encodedPath.size()) < sizeof(address.sun_path));
+	memcpy(address.sun_path, encodedPath.constData(), encodedPath.size() + 1);
+	const auto listener = ::socket(AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK, 0);
+	CHECK(listener >= 0);
+	if (listener < 0) {
+		return;
+	}
+	const auto bound
+		= ::bind(listener, reinterpret_cast<const sockaddr *>(&address),
+				 socklen_t(sizeof(address)));
+	CHECK_EQ(bound, 0);
+	if (bound != 0) {
+		::close(listener);
+		return;
+	}
+	const auto listening = ::listen(listener, 1);
+	CHECK_EQ(listening, 0);
+	if (listening != 0) {
+		::close(listener);
+		return;
+	}
+	auto clients = std::vector<int>();
+	auto backlogFull = false;
+	for (auto i = 0; i != 64 && !backlogFull; ++i) {
+		const auto client = ::socket(AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK, 0);
+		CHECK(client >= 0);
+		if (client < 0) {
+			break;
+		}
+		if (::connect(client, reinterpret_cast<const sockaddr *>(&address),
+					  socklen_t(sizeof(address)))
+			== 0) {
+			clients.push_back(client);
+		} else if (errno == EINPROGRESS) {
+			clients.push_back(client);
+		} else if ((errno == EAGAIN) || (errno == EWOULDBLOCK)) {
+			::close(client);
+			backlogFull = true;
+		} else {
+			CHECK(false);
+			::close(client);
+			break;
+		}
+	}
+	CHECK(backlogFull);
+	if (!backlogFull) {
+		for (const auto client : clients) {
+			::close(client);
+		}
+		::close(listener);
+		return;
+	}
+
+	auto server = QLocalServer();
+	auto loop = QEventLoop();
+	auto result = Platform::Linux::SingleInstanceServerResult::Primary;
+	auto error = QString();
+	Platform::Linux::StartSingleInstanceServer(
+		server, socketPath, [](const QString &path) { QFile::remove(path); },
+		[&](Platform::Linux::SingleInstanceServerResult completed,
+			const QString &message) {
+			result = completed;
+			error = message;
+			loop.quit();
+		},
+		1'000, 5, 50);
+	QTimer::singleShot(1'000, &loop, &QEventLoop::quit);
+	loop.exec();
+	CHECK(result == Platform::Linux::SingleInstanceServerResult::Failed);
+	CHECK(error.contains(u"probe"_q));
+	auto lock = QLockFile(socketPath + u".lock"_q);
+	CHECK(lock.tryLock(0));
+	for (const auto client : clients) {
+		::close(client);
+	}
+	::close(listener);
 }
 
 TEST_CASE(

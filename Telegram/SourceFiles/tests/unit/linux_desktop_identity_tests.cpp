@@ -54,11 +54,11 @@ TEST_CASE(LinuxTeagramDesktopIdentityUsesPrivateNames) {
 		CHECK(name != u"telegramdesktop.desktop"_q);
 	}
 	CHECK(Platform::Linux::SingleInstanceLocalServerName(
-			  u"same-hash"_q, AppNameQt.utf16(), false, QString())
+			  u"same-hash"_q, AppNameQt.utf16(), false)
 		  != u"same-hash-TelegramDesktop"_q);
 	CHECK(Platform::Linux::SingleInstanceLocalServerName(
-			  u"same-hash"_q, AppNameQt.utf16(), true, u"telegram-desktop"_q)
-		  != u"snap.telegram-desktop.same-hash"_q);
+			  u"same-hash"_q, AppNameQt.utf16(), true)
+		  == u"same-hash"_q);
 
 	const auto xdg = QDir(QString::fromUtf8(TDESKTOP_TEST_SOURCE_DIR))
 						 .filePath(u"lib/xdg"_q);

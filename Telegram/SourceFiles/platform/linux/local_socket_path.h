@@ -290,39 +290,65 @@ inline void QueueSingleInstanceSocketReconnect(QObject *context,
 					   });
 }
 
+template <typename Callback>
+inline void QueueSingleInstanceProbeCompletion(QObject *context,
+											   Callback callback) {
+	QTimer::singleShot(0, context, std::move(callback));
+}
+
 template <typename Cleanup, typename Finished>
 class SingleInstanceServerStarter final : public QObject {
   public:
 	SingleInstanceServerStarter(QLocalServer &server, QString serverPath,
 								Cleanup cleanup, Finished finished,
-								int lockTimeoutMs, int retryIntervalMs)
+								int lockTimeoutMs, int retryIntervalMs,
+								int probeTimeoutMs)
 		: QObject(&server), _server(server), _serverPath(std::move(serverPath)),
 		  _lock(_serverPath + u".lock"_q), _cleanup(std::move(cleanup)),
-		  _finished(std::move(finished)), _retryTimer(this), _probeSocket(this),
-		  _lockTimeoutMs(lockTimeoutMs), _retryIntervalMs(retryIntervalMs) {
+		  _finished(std::move(finished)), _retryTimer(this), _probeTimer(this),
+		  _probeSocket(this), _lockTimeoutMs(lockTimeoutMs),
+		  _retryIntervalMs(retryIntervalMs), _probeTimeoutMs(probeTimeoutMs) {
 		_retryTimer.setSingleShot(true);
+		_probeTimer.setSingleShot(true);
 		connect(&_retryTimer, &QTimer::timeout, this,
 				[this] { tryAcquireLock(); });
 		connect(&_probeSocket, &QLocalSocket::connected, this, [this] {
-			finish(SingleInstanceServerResult::Secondary, QString());
+			_probeTimer.stop();
+			QueueSingleInstanceProbeCompletion(this, [this] {
+				finish(SingleInstanceServerResult::Secondary, QString());
+			});
 		});
 		connect(&_probeSocket, &QLocalSocket::errorOccurred, this,
 				[this](QLocalSocket::LocalSocketError error) {
-					if (error == QLocalSocket::ServerNotFoundError
-						|| error == QLocalSocket::ConnectionRefusedError) {
-						_cleanup(_serverPath);
-						if (_server.listen(_serverPath)) {
-							finish(SingleInstanceServerResult::Primary,
-								   QString());
+					_probeTimer.stop();
+					const auto errorMessage = _probeSocket.errorString();
+					QueueSingleInstanceProbeCompletion(this, [this, error,
+															  errorMessage] {
+						if (_completed) {
+							return;
+						}
+						if (error == QLocalSocket::ServerNotFoundError
+							|| error == QLocalSocket::ConnectionRefusedError) {
+							_cleanup(_serverPath);
+							if (_server.listen(_serverPath)) {
+								finish(SingleInstanceServerResult::Primary,
+									   QString());
+							} else {
+								finish(SingleInstanceServerResult::Failed,
+									   _server.errorString());
+							}
 						} else {
 							finish(SingleInstanceServerResult::Failed,
-								   _server.errorString());
+								   errorMessage);
 						}
-					} else {
-						finish(SingleInstanceServerResult::Failed,
-							   _probeSocket.errorString());
-					}
+					});
 				});
+		connect(&_probeTimer, &QTimer::timeout, this, [this] {
+			finish(
+				SingleInstanceServerResult::Failed,
+				QString::fromLatin1(
+					"Timed out probing the existing single-instance server."));
+		});
 		_lockTimer.start();
 		QTimer::singleShot(0, this, [this] { tryAcquireLock(); });
 	}
@@ -354,6 +380,7 @@ class SingleInstanceServerStarter final : public QObject {
 			_retryTimer.start(_retryIntervalMs);
 			return;
 		}
+		_probeTimer.start(_probeTimeoutMs);
 		_probeSocket.connectToServer(_serverPath);
 	}
 
@@ -363,6 +390,7 @@ class SingleInstanceServerStarter final : public QObject {
 		}
 		_completed = true;
 		_retryTimer.stop();
+		_probeTimer.stop();
 		_lock.unlock();
 		_probeSocket.abort();
 		auto finished = std::move(_finished);
@@ -377,9 +405,11 @@ class SingleInstanceServerStarter final : public QObject {
 	Finished _finished;
 	QElapsedTimer _lockTimer;
 	QTimer _retryTimer;
+	QTimer _probeTimer;
 	QLocalSocket _probeSocket;
 	const int _lockTimeoutMs = 30'000;
 	const int _retryIntervalMs = 50;
+	const int _probeTimeoutMs = 5'000;
 	bool _completed = false;
 };
 
@@ -387,10 +417,11 @@ template <typename Cleanup, typename Finished>
 void StartSingleInstanceServer(QLocalServer &server, const QString &serverPath,
 							   Cleanup cleanup, Finished finished,
 							   int lockTimeoutMs = 30'000,
-							   int retryIntervalMs = 50) {
+							   int retryIntervalMs = 50,
+							   int probeTimeoutMs = 5'000) {
 	new SingleInstanceServerStarter<Cleanup, Finished>(
 		server, serverPath, std::move(cleanup), std::move(finished),
-		lockTimeoutMs, retryIntervalMs);
+		lockTimeoutMs, retryIntervalMs, probeTimeoutMs);
 }
 
 } // namespace Platform::Linux
