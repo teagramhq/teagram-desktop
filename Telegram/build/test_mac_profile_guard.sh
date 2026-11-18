@@ -1764,7 +1764,8 @@ run_font_shutdown_regression() {
 	local launch_status=0
 	local -a shutdown_command=("$APP" -noupdate -debug)
 	if [[ "$forced_failure" == probe-timeout-retry \
-		|| "$forced_failure" == shutdown-remove-pending ]]; then
+		|| "$forced_failure" == shutdown-remove-pending \
+		|| "$forced_failure" == probe-release-before-arm ]]; then
 		shutdown_command=(python3 -c '
 import subprocess
 import sys
@@ -1808,6 +1809,8 @@ sys.exit(result.returncode if result.returncode >= 0 else 128 - result.returncod
 	local expected_shutdown_line
 	if [[ "$forced_failure" == shutdown-remove-pending ]]; then
 		expected_shutdown_line='Font shutdown regression: quit_observed=1 font_work=active remove_pending_at_quit=1 removal_completed=1'
+	elif [[ "$forced_failure" == probe-release-before-arm ]]; then
+		expected_shutdown_line='Font shutdown regression: quit_observed=1 font_work=active enumeration_overlapped=0'
 	else
 		expected_shutdown_line='Font shutdown regression: quit_observed=1 font_work=active enumeration_overlapped=1'
 	fi
@@ -1818,6 +1821,13 @@ sys.exit(result.returncode if result.returncode >= 0 else 128 - result.returncod
 		else
 			echo "font shutdown regression did not quit during an active system font enumeration" >&2
 		fi
+		return 1
+	fi
+	if [[ "$forced_failure" == probe-release-before-arm ]] \
+		&& ! grep -F -q 'Font shutdown regression: probe_release_preserved=1' \
+			"$shutdown_log"; then
+		cat "$shutdown_log" >&2
+		echo 'font shutdown cancellation before probe arm was not observed' >&2
 		return 1
 	fi
 	if [[ -z "$forced_failure" || "$forced_failure" == probe-missed-first ]] \
@@ -2178,6 +2188,13 @@ run_font_startup_regression() {
 		return 1
 	fi
 	printf 'Font shutdown retry after missed enumeration=PASS\n'
+	local release_before_arm_log="$TEST_HOME/font-probe-release-before-arm.log"
+	if ! run_font_shutdown_regression probe-release-before-arm \
+		>"$release_before_arm_log" 2>&1; then
+		cat "$release_before_arm_log" >&2
+		return 1
+	fi
+	printf 'Font shutdown cancellation before probe arm=PASS\n'
 	local probe_failure_log="$TEST_HOME/font-probe-install-failure.log"
 	if run_font_shutdown_regression signal-install >"$probe_failure_log" 2>&1; then
 		echo 'font shutdown regression accepted a failed probe installation' >&2
@@ -2273,6 +2290,7 @@ run_start_in_tray_regression() {
 	local case_log="$case_home/start.log"
 	local quit_log="$case_home/quit.log"
 	local expected='Mac start-in-tray regression: startup=complete start_intray=1 window_and_tray=1 hidden=1 splash_visible=1 splash_destroyed=1'
+	local delayed_expected='Mac start-in-tray regression: delayed_activation_check hidden=1'
 	local ready=false
 	local exit_status
 	mkdir -p "$case_home"
@@ -2303,6 +2321,11 @@ run_start_in_tray_regression() {
 	if ! process_alive "$FIRST_PID"; then
 		cat "$case_log" >&2
 		echo 'start-in-tray process exited after startup' >&2
+		return 1
+	fi
+	if ! grep -F -q "$delayed_expected" "$case_log"; then
+		cat "$case_log" >&2
+		echo 'start-in-tray window reopened after the 500 ms visibility checkpoint' >&2
 		return 1
 	fi
 	if ! env HOME="$case_home" TMPDIR="$TEST_TMP_BASE" \

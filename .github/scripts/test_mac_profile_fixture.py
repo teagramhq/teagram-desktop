@@ -152,6 +152,14 @@ if [[ "${TDESKTOP_FONT_STARTUP_QUIT_REGRESSION:-}" == 1 ]]; then
         printf 'Font shutdown regression: worker_joined=1 application_created=0 teardown=complete\\n'
         exit 0
     fi
+    if [[ "${TDESKTOP_FONT_STARTUP_TEST_FAILURE:-}" == probe-release-before-arm ]]; then
+        if [[ "$FONT_SHUTDOWN_TEST_MODE" != probe-release-before-arm-unpreserved ]]; then
+            printf 'Font shutdown regression: probe_release_preserved=1\\n'
+        fi
+        printf 'Font shutdown regression: quit_observed=1 font_work=active enumeration_overlapped=0\\n'
+        printf 'Font shutdown regression: worker_joined=1 application_created=0 teardown=complete\\n'
+        exit 0
+    fi
     if [[ "${TDESKTOP_FONT_STARTUP_TEST_FAILURE:-}" == shutdown-remove-pending ]]; then
         printf 'Font shutdown regression: quit_observed=1 font_work=active remove_pending_at_quit=1 removal_completed=1\\n'
         printf 'Font shutdown regression: worker_joined=1 application_created=0 teardown=complete\\n'
@@ -265,6 +273,13 @@ if [[ "${TDESKTOP_FONT_STARTUP_QUIT_REGRESSION:-}" == 1 ]]; then
             printf 'Font shutdown regression: retry_gui_event=1\\n'
             printf 'Font shutdown regression: retry_worker_done=1\\n'
         fi
+        printf 'Font shutdown regression: worker_joined=1 application_created=0 teardown=complete\\n'
+        exit 0
+    elif [[ "${TDESKTOP_FONT_STARTUP_TEST_FAILURE:-}" == probe-release-before-arm ]]; then
+        if [[ "$FONT_SHUTDOWN_TEST_MODE" != probe-release-before-arm-unpreserved ]]; then
+            printf 'Font shutdown regression: probe_release_preserved=1\\n'
+        fi
+        printf 'Font shutdown regression: quit_observed=1 font_work=active enumeration_overlapped=0\\n'
         printf 'Font shutdown regression: worker_joined=1 application_created=0 teardown=complete\\n'
         exit 0
     elif [[ "${TDESKTOP_FONT_STARTUP_TEST_FAILURE:-}" == shutdown-remove-pending \
@@ -750,6 +765,10 @@ font_retry_timeout_bad_order = run_font_startup_fixture(
     50_000_000, 50_000_000, 1, mode='retry-timeout-bad-order')
 assert 'font shutdown retry timeout ordering was not observed' \
     in font_retry_timeout_bad_order
+font_release_before_arm_unpreserved = run_font_startup_fixture(
+    50_000_000, 50_000_000, 1, mode='probe-release-before-arm-unpreserved')
+assert 'font shutdown cancellation before probe arm was not observed' \
+    in font_release_before_arm_unpreserved
 print('macOS font startup timing and failure guards: PASS')
 
 
@@ -782,8 +801,15 @@ case "$TRAY_TEST_MODE" in
         for ((i = 0; i < 20; ++i)); do sleep 0.1 & wait "$!" || :; done
         exit 0
         ;;
+    delayed-visible)
+        printf 'Mac start-in-tray regression: startup=complete start_intray=1 window_and_tray=1 hidden=1 splash_visible=1 splash_destroyed=1\\n'
+        sleep 0.6
+        printf 'Mac start-in-tray regression: delayed_activation_check hidden=0\\n'
+        ;;
     *)
         printf 'Mac start-in-tray regression: startup=complete start_intray=1 window_and_tray=1 hidden=1 splash_visible=1 splash_destroyed=1\\n'
+        sleep 0.6
+        printf 'Mac start-in-tray regression: delayed_activation_check hidden=1\\n'
         ;;
 esac
 if [[ "$TRAY_TEST_MODE" == exit-after-startup ]]; then
@@ -826,6 +852,9 @@ tray_visible = run_start_in_tray_fixture('visible', 1)
 assert 'start-in-tray process exited before startup completed' in tray_visible
 tray_wrong_mode = run_start_in_tray_fixture('wrong-mode', 1)
 assert 'start-in-tray process exited before startup completed' in tray_wrong_mode
+tray_delayed_visible = run_start_in_tray_fixture('delayed-visible', 1)
+assert 'start-in-tray window reopened after the 500 ms visibility checkpoint' \
+    in tray_delayed_visible
 tray_late_exit = run_start_in_tray_fixture('exit-after-startup', 1)
 assert 'start-in-tray process exited after startup' in tray_late_exit
 print('macOS start-in-tray lifecycle guard: PASS')

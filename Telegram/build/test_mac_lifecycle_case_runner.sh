@@ -224,6 +224,12 @@ if [[ "${TDESKTOP_FONT_STARTUP_QUIT_REGRESSION:-}" == 1 ]]; then
 		printf 'Font shutdown regression: worker_joined=1 application_created=0 teardown=complete\n'
 		exit 0
 	fi
+	if [[ "${TDESKTOP_FONT_STARTUP_TEST_FAILURE:-}" == probe-release-before-arm ]]; then
+		printf 'Font shutdown regression: probe_release_preserved=1\n'
+		printf 'Font shutdown regression: quit_observed=1 font_work=active enumeration_overlapped=0\n'
+		printf 'Font shutdown regression: worker_joined=1 application_created=0 teardown=complete\n'
+		exit 0
+	fi
 	if [[ "${TDESKTOP_FONT_STARTUP_TEST_FAILURE:-}" == shutdown-remove-pending ]]; then
 		printf 'Font shutdown regression: quit_observed=1 font_work=active remove_pending_at_quit=1 removal_completed=1\n'
 		printf 'Font shutdown regression: worker_joined=1 application_created=0 teardown=complete\n'

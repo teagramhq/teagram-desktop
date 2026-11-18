@@ -1614,6 +1614,27 @@ grep -Fq 'ReleaseFontShutdownProbe' Telegram/SourceFiles/core/sandbox.cpp \
   || contract_fail 'Application quit must release the synchronized Qt CoreText probe.'
 grep -Fq 'timer->start(0);' Telegram/SourceFiles/core/sandbox.cpp \
   || contract_fail 'The repeated real CoreText population must be sampled without the old millisecond gap.'
+grep -Fq 'IsFontShutdownProbeReleased' Telegram/SourceFiles/tests/font_shutdown_probe.h \
+  || contract_fail 'The cancellation-before-arm regression must inspect the preserved release state.'
+if sed -n '/void ArmFontShutdownProbe(/,/^}/p' \
+    Telegram/SourceFiles/tests/font_shutdown_probe.mm \
+    | grep -Fq 'ProbeReleased.store(false'; then
+  contract_fail 'Arming the font shutdown probe must preserve an early release.'
+fi
+grep -Fq 'run_font_shutdown_regression probe-release-before-arm' \
+  Telegram/build/test_mac_profile_guard.sh \
+  || contract_fail 'The macOS shutdown regression must cover release before probe arm.'
+grep -Fq 'IgnoreNextApplicationActivation' Telegram/SourceFiles/core/sandbox.cpp \
+  || contract_fail 'Start-in-tray must suppress its delayed initial activation.'
+grep -Fq 'QTimer::singleShot(500' Telegram/SourceFiles/core/sandbox.cpp \
+  || contract_fail 'The original 500 ms start-in-tray checkpoint must remain.'
+grep -Fq 'delayed_activation_check' Telegram/SourceFiles/core/sandbox.cpp \
+  || contract_fail 'The start-in-tray test must retain a later delayed-activation check.'
+grep -Fq 'applicationDidBecomeActive' Telegram/SourceFiles/platform/mac/specific_mac_p.mm \
+  || contract_fail 'The delayed start-in-tray activation guard must stay on the AppKit activation path.'
+grep -Fq 'kIgnoreNextActivationTimeoutMs = 1500' \
+  Telegram/SourceFiles/platform/mac/specific_mac_p.mm \
+  || contract_fail 'The initial activation suppression must expire after startup.'
 if ! awk '
   /const auto stopWorker = \[=\]\(ProbeExit exitMode\)/ { in_stop_worker = 1 }
   in_stop_worker && /ReleaseFontShutdownProbe/ { release = 1 }

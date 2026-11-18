@@ -13,5 +13,6 @@ namespace Core::Tests {
 
 void ArmFontShutdownProbe(pthread_t worker, int skippedPopulations);
 void ReleaseFontShutdownProbe();
+[[nodiscard]] bool IsFontShutdownProbeReleased();
 
 } // namespace Core::Tests

@@ -63,13 +63,16 @@ void ArmFontShutdownProbe(pthread_t worker, int skippedPopulations) {
 	ProbeWorker = worker;
 	ProbeSkippedPopulations.store(skippedPopulations,
 								  std::memory_order_relaxed);
-	ProbeReleased.store(false, std::memory_order_relaxed);
 	ProbeHoldReported.store(false, std::memory_order_relaxed);
 	ProbeArmed.store(true, std::memory_order_release);
 }
 
 void ReleaseFontShutdownProbe() {
 	ProbeReleased.store(true, std::memory_order_release);
+}
+
+bool IsFontShutdownProbeReleased() {
+	return ProbeReleased.load(std::memory_order_acquire);
 }
 
 } // namespace Core::Tests

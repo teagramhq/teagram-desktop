@@ -839,12 +839,12 @@ void Sandbox::launchApplication() {
 				&& _application->activePrimaryWindow()) {
 				// Delayed startup can activate the app after we hide it.
 				// macOS reopens hidden windows on activation.
-				Platform::IgnoreApplicationActivationRightNow();
+				Platform::IgnoreNextApplicationActivation();
 				_application->activePrimaryWindow()->widget()->hide();
 			}
 		}
 		if (trayRegression) {
-			QTimer::singleShot(1000, this, [=] {
+			QTimer::singleShot(500, this, [=] {
 				const auto window = _application
 										? _application->activePrimaryWindow()
 										: nullptr;
@@ -861,6 +861,15 @@ void Sandbox::launchApplication() {
 							: 0,
 						(window && !window->widget()->isVisible()) ? 1 : 0,
 						splashVisible ? 1 : 0, _fontStartupWindow ? 0 : 1);
+			});
+			QTimer::singleShot(1000, this, [=] {
+				const auto window = _application
+										? _application->activePrimaryWindow()
+										: nullptr;
+				fprintf(stderr,
+						"Mac start-in-tray regression: "
+						"delayed_activation_check hidden=%d\n",
+						(window && !window->widget()->isVisible()) ? 1 : 0);
 			});
 		}
 #endif // Q_OS_MAC
@@ -960,9 +969,14 @@ void Sandbox::startFontDatabaseWarmup() {
 				return;
 			}
 #if defined(TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST)
+			if (quitRegression && testFailure == "probe-release-before-arm") {
+				while (!ProbeFinalRelease.load(std::memory_order_acquire)) {
+					std::this_thread::yield();
+				}
+			}
 			if (quitRegression
-				&& (testFailure.isEmpty()
-					|| testFailure == "probe-missed-first")) {
+				&& (testFailure.isEmpty() || testFailure == "probe-missed-first"
+					|| testFailure == "probe-release-before-arm")) {
 				const auto skippedPopulations
 					= (ignoreFirstEnumeration
 					   && ignoreFirstEnumeration->load(
@@ -971,6 +985,11 @@ void Sandbox::startFontDatabaseWarmup() {
 						  : 0;
 				Core::Tests::ArmFontShutdownProbe(pthread_self(),
 												  skippedPopulations);
+				if (testFailure == "probe-release-before-arm"
+					&& Core::Tests::IsFontShutdownProbeReleased()) {
+					fprintf(stderr, "Font shutdown regression: "
+									"probe_release_preserved=1\n");
+				}
 			}
 #endif
 			const auto openSansLoaded = style::internal::PreloadCustomFonts();
@@ -1150,6 +1169,10 @@ void Sandbox::startFontDatabaseWarmup() {
 					} else {
 						QCoreApplication::exit(1);
 					}
+					return;
+				}
+				if (testFailure == "probe-release-before-arm") {
+					stopWorker(ProbeExit::Quit);
 					return;
 				}
 				if (retryCheckpoint) {
