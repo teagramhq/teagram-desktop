@@ -249,6 +249,7 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
         platform/linux/app_data_path.cpp
         tests/unit/linux_data_path_tests.cpp
         tests/unit/linux_desktop_identity_tests.cpp
+        tests/unit/linux_local_socket_peer_tests.cpp
         tests/unit/username_input_tests.cpp
         ui/widgets/fields/username_input.cpp
     )

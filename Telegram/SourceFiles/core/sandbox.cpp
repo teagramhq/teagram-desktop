@@ -8,6 +8,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/sandbox.h"
 
 #include "base/platform/base_platform_info.h"
+#ifdef Q_OS_LINUX
+#include "platform/linux/local_socket_peer.h"
+#endif // Q_OS_LINUX
 #include "platform/platform_specific.h"
 #include "mainwidget.h"
 #include "mainwindow.h"
@@ -65,6 +68,11 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <QtGui/QWindow>
 #endif // Q_OS_MAC
 #include <QtGui/qpa/qplatformscreen.h>
+
+#ifdef Q_OS_LINUX
+#include <sys/socket.h>
+#include <unistd.h>
+#endif // Q_OS_LINUX
 
 #ifdef Q_OS_MAC
 #include <cstdint>
@@ -1090,6 +1098,26 @@ void Sandbox::socketDisconnected() {
 void Sandbox::newInstanceConnected() {
 	DEBUG_LOG(("Sandbox Info: new local socket connected"));
 	for (auto client = _localServer.nextPendingConnection(); client; client = _localServer.nextPendingConnection()) {
+#ifdef Q_OS_LINUX
+		struct ucred credentials = {};
+		auto credentialsLength = socklen_t(sizeof(credentials));
+		const auto socketDescriptor
+			= static_cast<int>(client->socketDescriptor());
+		const auto peerMatches
+			= (getsockopt(socketDescriptor, SOL_SOCKET, SO_PEERCRED,
+						  &credentials, &credentialsLength)
+			   == 0)
+			  && (credentialsLength == sizeof(credentials))
+			  && Platform::Linux::IsLocalSocketPeerUidAllowed(credentials.uid,
+															  geteuid());
+		if (!peerMatches) {
+			DEBUG_LOG(
+				("Sandbox Error: local socket peer credentials check failed"));
+			client->abort();
+			client->deleteLater();
+			continue;
+		}
+#endif // Q_OS_LINUX
 		_localClients.push_back(LocalClient(client, QByteArray()));
 		connect(
 			client,
