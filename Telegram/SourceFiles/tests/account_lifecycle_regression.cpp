@@ -11334,30 +11334,41 @@ struct StartupWorkEstimate final {
 	const MainThreadWorkInterval &interval,
 	const std::vector<Core::UiStallWatchdog::PingAcknowledgementEvidence>
 		&acknowledgements,
-	const std::vector<Core::UiStallWatchdog::StallEvidence> &stallEvidence) {
+	const std::vector<Core::UiStallWatchdog::StallEvidence> &stallEvidence,
+	const std::vector<Core::UiStallWatchdog::SchedulerSampleEvidence>
+		&continuousSchedulerSamples) {
+	const auto estimateFor = [&](const SchedulerTraceWindow &samples) {
+		const auto trace
+			= samples.capturePending ? QString() : samples.trace;
+		const auto sampleOffsets
+			= samples.capturePending ? std::vector<qint64>()
+									: samples.sampleOffsetsNanoseconds;
+		return EstimateMainThreadWork(
+			interval.mainThreadWorkNanoseconds, interval.durationNanoseconds,
+			trace, sampleOffsets, samples.before, samples.after);
+	};
 	auto schedulerSamples
-		= SchedulerTraceForInterval(interval, acknowledgements);
-	const auto trace
-		= schedulerSamples.capturePending ? QString() : schedulerSamples.trace;
-	const auto sampleOffsets = schedulerSamples.capturePending
-								   ? std::vector<qint64>()
-								   : schedulerSamples.sampleOffsetsNanoseconds;
-	auto estimate = EstimateMainThreadWork(
-		interval.mainThreadWorkNanoseconds, interval.durationNanoseconds, trace,
-		sampleOffsets, schedulerSamples.before, schedulerSamples.after);
+		= SchedulerTraceForInterval(interval, continuousSchedulerSamples);
+	auto estimate = estimateFor(schedulerSamples);
 	if (schedulerSamples.capturePending || (estimate.blockedNanoseconds < 0)) {
-		const auto matchingStall = FindMatchingMainThreadWorkEvidence(
-			interval, stallEvidence, kStartupHeartbeatGapThresholdNanoseconds);
-		if (matchingStall) {
-			auto stallSamples
-				= SchedulerTraceForInterval(interval, *matchingStall);
-			if (!stallSamples.capturePending) {
-				const auto stallEstimate = EstimateMainThreadWork(
-					interval.mainThreadWorkNanoseconds,
-					interval.durationNanoseconds, stallSamples.trace,
-					stallSamples.sampleOffsetsNanoseconds, stallSamples.before,
-					stallSamples.after);
-				if (stallEstimate.blockedNanoseconds >= 0) {
+		auto acknowledgementSamples
+			= SchedulerTraceForInterval(interval, acknowledgements);
+		const auto acknowledgementEstimate
+			= estimateFor(acknowledgementSamples);
+		if (!acknowledgementSamples.capturePending
+			&& (acknowledgementEstimate.blockedNanoseconds >= 0)) {
+			schedulerSamples = std::move(acknowledgementSamples);
+			estimate = acknowledgementEstimate;
+		} else {
+			const auto matchingStall = FindMatchingMainThreadWorkEvidence(
+				interval, stallEvidence,
+				kStartupHeartbeatGapThresholdNanoseconds);
+			if (matchingStall) {
+				auto stallSamples
+					= SchedulerTraceForInterval(interval, *matchingStall);
+				const auto stallEstimate = estimateFor(stallSamples);
+				if (!stallSamples.capturePending
+					&& (stallEstimate.blockedNanoseconds >= 0)) {
 					schedulerSamples = std::move(stallSamples);
 					estimate = stallEstimate;
 				}
@@ -11623,7 +11634,61 @@ void AccumulateMainThreadWorkEstimate(qint64 &aggregateNanoseconds,
 		= EstimateStartupWork(corroboratedStartupGap, {},
 							  std::vector<Core::UiStallWatchdog::StallEvidence>{
 								  corroboratingStall,
-							  });
+							  }, {});
+	const auto partialPingSchedulerOffsets = std::vector<qint64>{
+		0, 10'000'000, 20'000'000, 30'000'000, 40'000'000,
+		50'000'000, 60'000'000, 70'000'000, 80'000'000, 90'000'000,
+		100'000'000,
+	};
+	const auto partialPingAcknowledgement
+		= Core::UiStallWatchdog::PingAcknowledgementEvidence{
+			.acknowledgedAt
+			= corroboratedStartupGap.startedAt.addMSecs(99).toString(
+				Qt::ISODateWithMs),
+			.acknowledgedAtNanoseconds = 198'000'000,
+			.responseNanoseconds = 100'000'000,
+			.pingIntervalNanoseconds = 100'000'000,
+			.sequence = 1,
+			.postedAtSteadyNanoseconds = 98'000'000,
+			.schedulerTrace = QString(11, QChar(u'R')),
+			.schedulerSampleOffsetsNanoseconds = partialPingSchedulerOffsets,
+			.schedulerTraceComplete = true,
+		};
+	auto partialPingStall = corroboratingStall;
+	partialPingStall.startedAt
+		= corroboratedStartupGap.startedAt.addMSecs(-2).toString(
+			Qt::ISODateWithMs);
+	partialPingStall.durationMilliseconds = 101;
+	partialPingStall.durationNanoseconds = 101'000'000;
+	partialPingStall.postedAtSteadyNanoseconds = 98'000'000;
+	partialPingStall.schedulerTrace = QString(11, QChar(u'R'));
+	partialPingStall.schedulerSampleOffsetsNanoseconds
+		= partialPingSchedulerOffsets;
+	auto partialPingSchedulerTimeline
+		= std::vector<Core::UiStallWatchdog::SchedulerSampleEvidence>();
+	for (auto at = qint64(95'000'000); at <= 207'000'000; at += 1'000'000) {
+		partialPingSchedulerTimeline.push_back({
+			.sampledAtSteadyNanoseconds = at,
+			.state = 'R',
+		});
+	}
+	const auto partialPingAcknowledgementWindow = SchedulerTraceForInterval(
+		corroboratedStartupGap,
+		std::vector<Core::UiStallWatchdog::PingAcknowledgementEvidence>{
+			partialPingAcknowledgement,
+		});
+	const auto partialPingStallWindow
+		= SchedulerTraceForInterval(corroboratedStartupGap, partialPingStall);
+	const auto partialPingCorroboratedStalls = BuildCorroboratedStartupStalls(
+		std::vector<MainThreadWorkInterval>{corroboratedStartupGap},
+		std::vector<Core::UiStallWatchdog::StallEvidence>{partialPingStall});
+	const auto partialPingStartupWork = EstimateStartupWork(
+		corroboratedStartupGap,
+		std::vector<Core::UiStallWatchdog::PingAcknowledgementEvidence>{
+			partialPingAcknowledgement,
+		},
+		std::vector<Core::UiStallWatchdog::StallEvidence>{partialPingStall},
+		partialPingSchedulerTimeline);
 	auto incompleteCorroboratingStall = corroboratingStall;
 	incompleteCorroboratingStall.durationMilliseconds = 96;
 	incompleteCorroboratingStall.durationNanoseconds = 96'000'000;
@@ -11633,14 +11698,14 @@ void AccumulateMainThreadWorkEstimate(qint64 &aggregateNanoseconds,
 		= EstimateStartupWork(corroboratedStartupGap, {},
 							  std::vector<Core::UiStallWatchdog::StallEvidence>{
 								  incompleteCorroboratingStall,
-							  });
+							  }, {});
 	auto overBudgetCorroboratingStall = corroboratingStall;
 	overBudgetCorroboratingStall.schedulerTrace = QString(13, QChar(u'W'));
 	const auto overBudgetCorroboratedStartupWork
 		= EstimateStartupWork(corroboratedStartupGap, {},
 							  std::vector<Core::UiStallWatchdog::StallEvidence>{
 								  overBudgetCorroboratingStall,
-							  });
+							  }, {});
 	const auto sparseStartupWindow = MainThreadWorkInterval{
 		.durationNanoseconds = 225'000'000,
 		.startedAtSteadyNanoseconds = 10'000'000,
@@ -11876,6 +11941,32 @@ void AccumulateMainThreadWorkEstimate(qint64 &aggregateNanoseconds,
 		   && !corroboratedStartupWork.schedulerSamples.capturePending
 		   && (corroboratedStartupWork.estimate.estimatedWorkNanoseconds
 			   == 77'495'000)
+		   && partialPingAcknowledgementWindow.capturePending
+		   && partialPingStallWindow.capturePending
+		   && (partialPingCorroboratedStalls.size() == 1)
+		   && (CountUncoveredStartupHeartbeatGaps(
+			   std::vector<MainThreadWorkInterval>{corroboratedStartupGap},
+			   partialPingCorroboratedStalls,
+			   std::vector<Core::UiStallWatchdog::PingAcknowledgementEvidence>{
+				   partialPingAcknowledgement,
+			   })
+			   == 0)
+		   && !partialPingStartupWork.schedulerSamples.capturePending
+		   && partialPingStartupWork.schedulerSamples.before
+		   && (partialPingStartupWork.schedulerSamples.before->state == 'R')
+		   && (partialPingStartupWork.schedulerSamples.before
+				   ->distanceNanoseconds
+			   == 5'000'000)
+		   && partialPingStartupWork.schedulerSamples.after
+		   && (partialPingStartupWork.schedulerSamples.after->state == 'R')
+		   && (partialPingStartupWork.schedulerSamples.after
+				   ->distanceNanoseconds
+			   == 1'000'000)
+		   && (partialPingStartupWork.estimate.estimatedWorkNanoseconds
+			   == 23'495'000)
+		   && MainThreadEstimatedWorkWithinBudget(
+			   partialPingStartupWork.estimate.estimatedWorkNanoseconds,
+			   kMaxStartupHeartbeatThreadWorkNanoseconds)
 		   && incompleteCorroboratedStartupWork.schedulerSamples.capturePending
 		   && (incompleteCorroboratedStartupWork.estimate
 				   .estimatedWorkNanoseconds
@@ -14543,15 +14634,15 @@ void RunAuthenticatedCacheSymlinkCases(
 									 "1000 ms.\n");
 			}
 			const auto startupSchedulerTraceSettled = [&] {
-				const auto acknowledgements = Core::UiStallWatchdog::
-					RecentPingAcknowledgementsForTesting();
+				const auto schedulerTimeline = Core::UiStallWatchdog::
+					RecentSchedulerSamplesForTesting();
 				return std::all_of(
 					begin(startupHeartbeatGaps), end(startupHeartbeatGaps),
 					[&](const auto &gap) {
 						return (gap.durationNanoseconds
 								< kStartupHeartbeatGapThresholdNanoseconds)
 							   || !SchedulerTraceForInterval(gap,
-															 acknowledgements)
+														 schedulerTimeline)
 									   .capturePending;
 					});
 			};
@@ -14562,8 +14653,8 @@ void RunAuthenticatedCacheSymlinkCases(
 			if (!startupSchedulerTraceCaptured) {
 				std::fprintf(
 					stderr,
-					"Startup scheduler trace capture did not complete "
-					"within 1000 ms; over-budget windows use wall time.\n");
+					"Startup scheduler history did not cover every heartbeat "
+					"within 1000 ms; incomplete windows use fallback evidence.\n");
 			}
 			const auto startupStallEvidence
 				= Core::UiStallWatchdog::RecentStallEvidenceForTesting();
@@ -14571,6 +14662,8 @@ void RunAuthenticatedCacheSymlinkCases(
 				startupHeartbeatGaps, startupStallEvidence);
 			const auto startupPingAcknowledgements
 				= Core::UiStallWatchdog::RecentPingAcknowledgementsForTesting();
+			const auto startupSchedulerTimeline
+				= Core::UiStallWatchdog::RecentSchedulerSamplesForTesting();
 			uncoveredStartupHeartbeatGaps = CountUncoveredStartupHeartbeatGaps(
 				startupHeartbeatGaps, corroboratedStartupStalls,
 				startupPingAcknowledgements);
@@ -14631,7 +14724,8 @@ void RunAuthenticatedCacheSymlinkCases(
 			auto startupWorkWithinBound = true;
 			for (const auto &gap : startupHeartbeatGaps) {
 				const auto startupWork = EstimateStartupWork(
-					gap, startupPingAcknowledgements, startupStallEvidence);
+					gap, startupPingAcknowledgements, startupStallEvidence,
+					startupSchedulerTimeline);
 				const auto &schedulerSamples = startupWork.schedulerSamples;
 				const auto &trace = schedulerSamples.trace;
 				const auto &estimate = startupWork.estimate;
