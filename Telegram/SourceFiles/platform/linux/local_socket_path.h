@@ -126,8 +126,8 @@ ChooseHomeDirectory(const QString &passwdHome, const QString &environmentHome) {
 	return passwdHome.isEmpty() ? environmentHome : passwdHome;
 }
 
-[[nodiscard]] inline QString
-UserHomeDirectory(uid_t effectiveUid, const QString &environmentHome) {
+[[nodiscard]] inline QString UserHomeDirectory(uid_t effectiveUid,
+											   const QString &environmentHome) {
 	const auto entry = getpwuid(effectiveUid);
 	auto passwdHome = QString();
 	if (entry && entry->pw_dir) {
