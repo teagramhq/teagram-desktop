@@ -238,6 +238,7 @@ if [[ "${TDESKTOP_FONT_STARTUP_QUIT_REGRESSION:-}" == 1 ]]; then
 	if [[ "${TDESKTOP_FONT_STARTUP_TEST_FAILURE:-}" == probe-missed-first ]]; then
 		printf 'Font shutdown regression: enumeration_retry=1\n'
 	fi
+	printf 'Font shutdown regression: probe_interposer=active\n'
 	printf 'Font shutdown regression: qt_font_database_hold=1\n'
 	printf 'Font shutdown regression: quit_observed=1 font_work=active enumeration_overlapped=1\n'
 	printf 'Font shutdown regression: worker_joined=1 application_created=0 teardown=complete\n'

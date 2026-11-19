@@ -2238,7 +2238,6 @@ if (APPLE)
         media/streaming/media_streaming_native_frame_mac.mm
         core/mac_protected_path_runtime.mm
         core/mac_protected_path_runtime.h
-        tests/font_shutdown_probe.mm
         core/teagram_update_install_mac.mm
         core/teagram_update_install.h
         core/teagram_update_manager.cpp
@@ -2250,6 +2249,20 @@ else()
     PRIVATE
         tray_accounts_menu_dummy.cpp
     )
+endif()
+
+if (APPLE AND TDESKTOP_TEAGRAM AND TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST)
+    add_library(TeagramFontShutdownProbe SHARED
+        "${src_loc}/tests/font_shutdown_probe.mm"
+    )
+    init_non_host_target(TeagramFontShutdownProbe)
+    target_include_directories(TeagramFontShutdownProbe PRIVATE ${src_loc})
+    target_compile_definitions(TeagramFontShutdownProbe PRIVATE
+        TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST
+    )
+    target_compile_options(TeagramFontShutdownProbe PRIVATE -fno-omit-frame-pointer)
+    target_link_frameworks(TeagramFontShutdownProbe PRIVATE CoreText)
+    target_link_libraries(Telegram PRIVATE TeagramFontShutdownProbe)
 endif()
 
 if (NOT build_winstore)
@@ -2324,9 +2337,6 @@ elseif (APPLE)
     endif()
 
     target_link_frameworks(Telegram PRIVATE CoreBluetooth)
-    if (TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST)
-        target_link_frameworks(Telegram PRIVATE CoreText)
-    endif()
     target_link_frameworks_weak(Telegram PRIVATE UserNotifications)
 
     set(icons_path ${CMAKE_CURRENT_SOURCE_DIR}/Telegram/Images.xcassets)
@@ -2506,7 +2516,6 @@ if (TDESKTOP_TEAGRAM)
             "${src_loc}/data/data_session.cpp"
             "${src_loc}/core/sandbox.cpp"
             "${src_loc}/core/mac_protected_path_runtime.mm"
-            "${src_loc}/tests/font_shutdown_probe.mm"
             "${src_loc}/tests/account_lifecycle_regression.cpp"
             APPEND PROPERTY COMPILE_DEFINITIONS
             TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST

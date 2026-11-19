@@ -27,6 +27,7 @@ pthread_t ProbeWorker = {};
 std::atomic_bool ProbeArmed = false;
 std::atomic_bool ProbeReleased = false;
 std::atomic_int ProbeSkippedPopulations = 0;
+std::atomic_bool ProbeInterposerReported = false;
 
 [[nodiscard]] bool IsQtFontDatabasePopulation() {
 	void *frames[kProbeMaxFrames] = {};
@@ -117,6 +118,11 @@ Teagram_FontFamilyPopulationProbe() {
 			CFRelease(result);
 		}
 		result = original();
+		if (!ProbeInterposerReported.exchange(true,
+											  std::memory_order_acq_rel)) {
+			fprintf(stderr,
+					"Font shutdown regression: probe_interposer=active\n");
+		}
 	}
 	return result;
 }

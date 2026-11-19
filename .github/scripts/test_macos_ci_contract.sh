@@ -1606,8 +1606,44 @@ grep -Fq 'run_font_shutdown_regression shutdown-remove-pending' \
   || contract_fail 'The macOS font shutdown regression must force a pending removal across application quit.'
 grep -Fq 'qt_font_database_hold=1' Telegram/build/test_mac_profile_guard.sh \
 	|| contract_fail 'The macOS font shutdown regression must assert its Qt database hold separately from CoreText enumeration.'
-grep -Fq 'tests/font_shutdown_probe.mm' Telegram/CMakeLists.txt \
-  || contract_fail 'The macOS integration build must include its CoreText population probe.'
+if ! python3 - <<'PY'
+import re
+from pathlib import Path
+
+cmake = Path('Telegram/CMakeLists.txt').read_text()
+probe_target = re.search(
+    r'if \(APPLE AND TDESKTOP_TEAGRAM AND '
+    r'TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST\)(.*?)\nendif\(\)',
+    cmake,
+    re.DOTALL,
+)
+if (
+    not probe_target
+    or 'add_library(TeagramFontShutdownProbe SHARED' not in probe_target.group(1)
+):
+    raise SystemExit('font probe must be built as a test-only dylib')
+if (
+    'target_link_libraries(Telegram PRIVATE TeagramFontShutdownProbe)'
+    not in probe_target.group(1)
+):
+    raise SystemExit('Teagram must load the test probe dylib at launch')
+apple_sources = re.search(
+    r'if \(APPLE\)\s+nice_target_sources\(Telegram.*?\n\s*\)\nelse\(\)',
+    cmake,
+    re.DOTALL,
+)
+if not apple_sources or 'tests/font_shutdown_probe.mm' in apple_sources.group():
+    raise SystemExit('font probe must not be compiled into the executable')
+PY
+then
+  contract_fail 'The macOS integration probe must be a test-only dylib loaded at launch.'
+fi
+grep -Fq 'Font shutdown regression: probe_interposer=active' \
+  Telegram/SourceFiles/tests/font_shutdown_probe.mm \
+  || contract_fail 'The native font probe must report that dyld ran its interposer.'
+grep -Fq 'Font shutdown regression: probe_interposer=active' \
+  Telegram/build/test_mac_profile_guard.sh \
+  || contract_fail 'The native fixture must require the dyld interposer activation marker.'
 grep -Fq 'ArmFontShutdownProbe' Telegram/SourceFiles/core/sandbox.cpp \
   || contract_fail 'The shutdown worker must arm the synchronized Qt CoreText probe.'
 grep -Fq 'ReleaseFontShutdownProbe' Telegram/SourceFiles/core/sandbox.cpp \

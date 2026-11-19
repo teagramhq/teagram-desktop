@@ -1839,6 +1839,13 @@ sys.exit(result.returncode if result.returncode >= 0 else 128 - result.returncod
 		echo 'font shutdown did not hold Qt font-database population' >&2
 		return 1
 	fi
+	if [[ -z "$forced_failure" || "$forced_failure" == probe-missed-first ]] \
+		&& ! grep -F -q 'Font shutdown regression: probe_interposer=active' \
+			"$shutdown_log"; then
+		cat "$shutdown_log" >&2
+		echo 'font shutdown fixture did not observe the CoreText dylib interposer' >&2
+		return 1
+	fi
 	if [[ -z "$forced_failure" || "$forced_failure" == probe-missed-first ]]; then
 		local population_hold_position
 		population_hold_position="$(grep -F -n 'Font shutdown regression: qt_font_database_hold=1' \

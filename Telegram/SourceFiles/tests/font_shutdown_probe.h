@@ -11,8 +11,10 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 namespace Core::Tests {
 
-void ArmFontShutdownProbe(pthread_t worker, int skippedPopulations);
-void ReleaseFontShutdownProbe();
-[[nodiscard]] bool IsFontShutdownProbeReleased();
+__attribute__((visibility("default"))) void
+ArmFontShutdownProbe(pthread_t worker, int skippedPopulations);
+__attribute__((visibility("default"))) void ReleaseFontShutdownProbe();
+[[nodiscard]] __attribute__((visibility("default"))) bool
+IsFontShutdownProbeReleased();
 
 } // namespace Core::Tests
