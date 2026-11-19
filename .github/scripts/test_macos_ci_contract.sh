@@ -1612,6 +1612,29 @@ grep -Fq 'ArmFontShutdownProbe' Telegram/SourceFiles/core/sandbox.cpp \
   || contract_fail 'The shutdown worker must arm the synchronized Qt CoreText probe.'
 grep -Fq 'ReleaseFontShutdownProbe' Telegram/SourceFiles/core/sandbox.cpp \
   || contract_fail 'Application quit must release the synchronized Qt CoreText probe.'
+if ! python3 - <<'PY'
+from pathlib import Path
+
+source = Path('Telegram/SourceFiles/core/sandbox.cpp').read_text()
+warmup = source.split('void Sandbox::startFontDatabaseWarmup()', 1)[1]
+blocks = (
+    ('aboutToQuit',
+     'connect(this, &QCoreApplication::aboutToQuit, [=] {',
+     '\n\t\t});'),
+    ('stopWorker',
+     'const auto stopWorker = [=](ProbeExit exitMode) {',
+     '\n\t\t\t};'),
+)
+for name, start, end in blocks:
+    block = warmup.split(start, 1)[1].split(end, 1)[0]
+    release = block.index('ReleaseFontShutdownProbe')
+    final_release = block.index('ProbeFinalRelease.store')
+    if release > final_release:
+        raise SystemExit(f'{name} must release the probe before waking its worker')
+PY
+then
+  contract_fail 'The font shutdown release must be visible before waking the pre-arm worker.'
+fi
 grep -Fq 'timer->start(0);' Telegram/SourceFiles/core/sandbox.cpp \
   || contract_fail 'The repeated real CoreText population must be sampled without the old millisecond gap.'
 grep -Fq 'IsFontShutdownProbeReleased' Telegram/SourceFiles/tests/font_shutdown_probe.h \

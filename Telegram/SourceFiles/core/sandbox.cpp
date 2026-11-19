@@ -944,10 +944,10 @@ void Sandbox::startFontDatabaseWarmup() {
 					shutdownRemovalPending->load(std::memory_order_acquire),
 					std::memory_order_release);
 			}
-			ProbeFinalRelease.store(true, std::memory_order_release);
 #if defined(TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST)
 			Core::Tests::ReleaseFontShutdownProbe();
 #endif
+			ProbeFinalRelease.store(true, std::memory_order_release);
 		});
 	}
 	try {
@@ -1170,10 +1170,10 @@ void Sandbox::startFontDatabaseWarmup() {
 				= std::make_shared<ProbeExit>(ProbeExit::None);
 			const auto stopWorker = [=](ProbeExit exitMode) {
 				_launchAfterFontDatabaseWarmup = false;
-				ProbeFinalRelease.store(true, std::memory_order_release);
 #if defined(TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST)
 				Core::Tests::ReleaseFontShutdownProbe();
 #endif
+				ProbeFinalRelease.store(true, std::memory_order_release);
 				*pendingExit = exitMode;
 			};
 			started->start();
