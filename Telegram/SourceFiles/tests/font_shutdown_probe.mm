@@ -109,9 +109,11 @@ Teagram_FontFamilyPopulationProbe() {
 		ProbeSkippedPopulations.fetch_sub(1, std::memory_order_relaxed);
 		return original();
 	}
-	if (!ProbeInterposerReported.exchange(true,
-										  std::memory_order_acq_rel)) {
-		fprintf(stderr,
+	if (!ProbeInterposerReported.exchange(
+			true,
+			std::memory_order_acq_rel)) {
+		fprintf(
+			stderr,
 			"Font shutdown regression: probe_interposer=active\n");
 	}
 	// Repeat the real CoreText query inside Qt's families() call. The GUI
