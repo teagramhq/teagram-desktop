@@ -1674,6 +1674,28 @@ grep -Fq 'entry_preserved' .github/scripts/test_macos_socket_error.py \
   || contract_fail 'The IPC collision regression must verify that the non-socket entry remains intact.'
 grep -Fq "r'([^\\n]+)'" .github/scripts/test_macos_shutdown_relaunch.py \
   || contract_fail 'The relaunch recheck fixture must capture the socket path up to its newline.'
+grep -Fq 'void retrySingleInstance(bool immediate = false);' \
+  Telegram/SourceFiles/core/sandbox.h \
+  || contract_fail 'Single-instance retries must keep their default backoff.'
+grep -Fq 'result == Core::SingleInstanceLock::Result::Acquired);' \
+  Telegram/SourceFiles/core/sandbox.cpp \
+  || contract_fail 'Only a successful profile-lock acquisition may retry immediately.'
+grep -Fq 'const auto delay = immediate ? 0 : 50;' \
+  Telegram/SourceFiles/core/sandbox.cpp \
+  || contract_fail 'Only successful acquisition retries may skip the 50 ms backoff.'
+grep -Fq 'QTimer::singleShot(delay, this, [=] {' \
+  Telegram/SourceFiles/core/sandbox.cpp \
+  || contract_fail 'The selected single-instance retry delay must reach the timer.'
+grep -Fq 'return retrySingleInstance();' Telegram/SourceFiles/core/sandbox.cpp \
+  || contract_fail 'Unexpected socket errors must retain the default retry backoff.'
+grep -Fq 'retrySingleInstance();' Telegram/SourceFiles/core/sandbox.cpp \
+  || contract_fail 'Socket disconnects must retain the default retry backoff.'
+grep -Fq 'Single instance retry regression: delay_ms=0' \
+  .github/scripts/test_macos_shutdown_relaunch.py \
+  || contract_fail 'The lock-acquire recheck must assert its immediate retry.'
+grep -Fq 'Single instance retry regression: delay_ms=50' \
+  .github/scripts/test_macos_socket_error.py \
+  || contract_fail 'Socket retry regressions must assert their 50 ms backoff.'
 if ! awk '
   /const auto stopWorker = \[=\]\(ProbeExit exitMode\)/ { in_stop_worker = 1 }
   in_stop_worker && /ReleaseFontShutdownProbe/ { release = 1 }

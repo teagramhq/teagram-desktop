@@ -1469,10 +1469,11 @@ void Sandbox::socketError(QLocalSocket::LocalSocketError e) {
 			LOG((diagnostic));
 			return showSingleInstanceError(diagnostic);
 		}
-		// Reconnect after acquiring the lock. Another process may have
-		// started its server after our previous connection attempt.
+		// Another process may have started its server after our previous
+		// connection attempt. A successful acquire allows an immediate recheck.
 		_retryingSingleInstance = true;
-		return retrySingleInstance();
+		return retrySingleInstance(
+			result == Core::SingleInstanceLock::Result::Acquired);
 	}
 #endif // !Q_OS_WINRT
 
@@ -1582,7 +1583,7 @@ void Sandbox::socketDisconnected() {
 	}
 }
 
-void Sandbox::retrySingleInstance() {
+void Sandbox::retrySingleInstance(bool immediate) {
 	if (_singleInstanceRetryScheduled || Quitting()) {
 		return;
 	}
@@ -1591,7 +1592,15 @@ void Sandbox::retrySingleInstance() {
 		return showSingleInstanceError();
 	}
 	_singleInstanceRetryScheduled = true;
-	QTimer::singleShot(50, this, [=] {
+	const auto delay = immediate ? 0 : 50;
+#if defined(Q_OS_MAC) && defined(TDESKTOP_LIFECYCLE_REGRESSION)
+	if (qEnvironmentVariableIsSet("TDESKTOP_INSTANCE_RECHECK_HOLD_FILE")
+		|| qEnvironmentVariableIsSet("TDESKTOP_SOCKET_ERROR_REGRESSION")) {
+		fprintf(stderr,
+				"Single instance retry regression: delay_ms=%d\n", delay);
+	}
+#endif // Q_OS_MAC && TDESKTOP_LIFECYCLE_REGRESSION
+	QTimer::singleShot(delay, this, [=] {
 		_singleInstanceRetryScheduled = false;
 		if (!Quitting()) {
 #if defined(Q_OS_MAC) && defined(TDESKTOP_LIFECYCLE_REGRESSION)

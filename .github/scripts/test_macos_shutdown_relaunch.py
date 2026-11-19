@@ -70,7 +70,10 @@ def run_recheck(executable, home, temp_arg, env):
                 connection.sendall(b'RES:1_0;')
                 if process.wait(timeout=20) != 0:
                     raise RuntimeError('relaunch did not forward to the newly available server')
-        if 'Emoji cache relaunch: forwarded=1' not in log.read_text(errors='replace'):
+        recheck_output = log.read_text(errors='replace')
+        if 'Single instance retry regression: delay_ms=0' not in recheck_output:
+            raise RuntimeError('successful lock acquisition did not retry immediately')
+        if 'Emoji cache relaunch: forwarded=1' not in recheck_output:
             raise RuntimeError('server response was not handled')
         print('Single instance server recheck=PASS forwarded=1')
         return 0

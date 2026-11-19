@@ -68,6 +68,9 @@ def main():
         else:
             passed = ('Socket error regression: injected=1' in output
                       and expected in output)
+            if mode == 'persistent':
+                passed = (passed and
+                          'Single instance retry regression: delay_ms=50' in output)
         expected_status = 1 if mode == 'lock-refused' else 0
         if result.returncode != expected_status or not passed:
             print(output, file=sys.stderr)

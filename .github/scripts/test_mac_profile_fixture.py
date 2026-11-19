@@ -57,6 +57,7 @@ if [[ -n "${TDESKTOP_SOCKET_ERROR_REGRESSION:-}" ]]; then
         exit 0
     fi
     if [[ "$TDESKTOP_SOCKET_ERROR_REGRESSION" == persistent ]]; then
+        printf 'Single instance retry regression: delay_ms=50\\n'
         if [[ "${TDESKTOP_FONT_TEST_MODE:-${FONT_TEST_MODE:-}}" != socket-error-no-window ]]; then
             printf 'Socket error regression: failure_window=1\\n'
         fi
@@ -68,6 +69,7 @@ if [[ -n "${TDESKTOP_INSTANCE_RECHECK_HOLD_FILE:-}" ]]; then
     printf 'Single instance recheck regression: initial_failure=1 socket=%s\\n' "$TDESKTOP_INSTANCE_RECHECK_TEST_SOCKET"
     while [[ ! -e "$TDESKTOP_INSTANCE_RECHECK_HOLD_FILE" ]]; do sleep 0.02; done
     if [[ "${TDESKTOP_FONT_TEST_MODE:-${FONT_TEST_MODE:-}}" == emoji-relaunch-skip-recheck ]]; then exit 1; fi
+    printf 'Single instance retry regression: delay_ms=0\\n'
     python3 -c 'import socket,sys; s=socket.socket(socket.AF_UNIX); s.connect(sys.argv[1]); s.sendall(b"CMD:show;"); s.recv(128)' "$TDESKTOP_INSTANCE_RECHECK_TEST_SOCKET"
     printf 'Emoji cache relaunch: forwarded=1\\n'
     exit 0
@@ -370,6 +372,7 @@ if [[ -n "${TDESKTOP_SOCKET_ERROR_REGRESSION:-}" ]]; then
         exit 0
     fi
     if [[ "$TDESKTOP_SOCKET_ERROR_REGRESSION" == persistent ]]; then
+        printf 'Single instance retry regression: delay_ms=50\\n'
         if [[ "${TDESKTOP_FONT_TEST_MODE:-${FONT_TEST_MODE:-}}" != socket-error-no-window ]]; then
             printf 'Socket error regression: failure_window=1\\n'
         fi
@@ -381,6 +384,7 @@ if [[ -n "${TDESKTOP_INSTANCE_RECHECK_HOLD_FILE:-}" ]]; then
     printf 'Single instance recheck regression: initial_failure=1 socket=%s\\n' "$TDESKTOP_INSTANCE_RECHECK_TEST_SOCKET"
     while [[ ! -e "$TDESKTOP_INSTANCE_RECHECK_HOLD_FILE" ]]; do sleep 0.02; done
     if [[ "${TDESKTOP_FONT_TEST_MODE:-${FONT_TEST_MODE:-}}" == emoji-relaunch-skip-recheck ]]; then exit 1; fi
+    printf 'Single instance retry regression: delay_ms=0\\n'
     python3 -c 'import socket,sys; s=socket.socket(socket.AF_UNIX); s.connect(sys.argv[1]); s.sendall(b"CMD:show;"); s.recv(128)' "$TDESKTOP_INSTANCE_RECHECK_TEST_SOCKET"
     printf 'Emoji cache relaunch: forwarded=1\\n'
     exit 0
