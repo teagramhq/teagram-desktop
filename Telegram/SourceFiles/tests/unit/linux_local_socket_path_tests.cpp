@@ -358,7 +358,7 @@ TEST_CASE(LinuxSingleInstanceSocketReconnectWaitsForErrorCallback) {
 	CHECK_EQ(response, QByteArray("RES:1_2;"));
 }
 
-TEST_CASE(LinuxSingleInstanceProbeCompletionIsQueuedAfterConnectedSignal) {
+TEST_CASE(LinuxSingleInstanceProbeReturnsSecondaryForExistingListener) {
 	auto runtimeDirectory = QTemporaryDir();
 	CHECK(runtimeDirectory.isValid());
 	if (!runtimeDirectory.isValid()) {
@@ -368,26 +368,15 @@ TEST_CASE(LinuxSingleInstanceProbeCompletionIsQueuedAfterConnectedSignal) {
 	const auto socketPath
 		= QDir(runtimeDirectory.path()).filePath(u"teagram-instance"_q);
 	auto primary = QLocalServer();
+	primary.setSocketOptions(QLocalServer::UserAccessOption);
 	CHECK(primary.listen(socketPath));
 	if (!primary.isListening()) {
 		return;
 	}
-	auto probe = QLocalSocket();
-	auto loop = QEventLoop();
-	auto insideConnectedSignal = false;
-	auto completedAfterSignal = false;
-	QObject::connect(&probe, &QLocalSocket::connected, &loop, [&] {
-		insideConnectedSignal = true;
-		Platform::Linux::QueueSingleInstanceProbeCompletion(&loop, [&] {
-			completedAfterSignal = !insideConnectedSignal;
-			loop.quit();
-		});
-		insideConnectedSignal = false;
-	});
-	probe.connectToServer(socketPath);
-	QTimer::singleShot(1'000, &loop, &QEventLoop::quit);
-	loop.exec();
-	CHECK(completedAfterSignal);
+	auto secondary = QLocalServer();
+	secondary.setSocketOptions(QLocalServer::UserAccessOption);
+	CHECK(StartSingleInstanceServerAndWait(secondary, socketPath)
+		  == Platform::Linux::SingleInstanceServerResult::Secondary);
 }
 
 TEST_CASE(LinuxSingleInstanceProbeTimeoutReleasesElectionLock) {
