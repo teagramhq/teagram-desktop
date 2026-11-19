@@ -1641,6 +1641,21 @@ fi
 grep -Fq 'Font shutdown regression: probe_interposer=active' \
   Telegram/SourceFiles/tests/font_shutdown_probe.mm \
   || contract_fail 'The native font probe must report that dyld ran its interposer.'
+if ! python3 - <<'PY'
+from pathlib import Path
+
+source = Path('Telegram/SourceFiles/tests/font_shutdown_probe.mm').read_text()
+probe = source.split('Teagram_FontFamilyPopulationProbe() {', 1)[1]
+eligibility = probe.index('if (!ProbeArmed.load')
+skipped = probe.index('if (skipped > 0)')
+marker = probe.index('"Font shutdown regression: probe_interposer=active\\n"')
+first_call = probe.index('auto result = original();')
+if not eligibility < skipped < marker < first_call:
+    raise SystemExit('interposer marker must follow eligibility and precede the first native call')
+PY
+then
+  contract_fail 'The native font probe must report activation before its first CoreText call.'
+fi
 grep -Fq 'Font shutdown regression: probe_interposer=active' \
   Telegram/build/test_mac_profile_guard.sh \
   || contract_fail 'The native fixture must require the dyld interposer activation marker.'

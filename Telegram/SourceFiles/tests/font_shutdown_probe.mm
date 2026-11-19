@@ -109,6 +109,11 @@ Teagram_FontFamilyPopulationProbe() {
 		ProbeSkippedPopulations.fetch_sub(1, std::memory_order_relaxed);
 		return original();
 	}
+	if (!ProbeInterposerReported.exchange(true,
+										  std::memory_order_acq_rel)) {
+		fprintf(stderr,
+			"Font shutdown regression: probe_interposer=active\n");
+	}
 	// Repeat the real CoreText query inside Qt's families() call. The GUI
 	// sampler can then catch a real CoreText frame while Qt still owns its
 	// mutex. Only that stack sample reports the hold as observed.
@@ -118,11 +123,6 @@ Teagram_FontFamilyPopulationProbe() {
 			CFRelease(result);
 		}
 		result = original();
-		if (!ProbeInterposerReported.exchange(true,
-											  std::memory_order_acq_rel)) {
-			fprintf(stderr,
-					"Font shutdown regression: probe_interposer=active\n");
-		}
 	}
 	return result;
 }
