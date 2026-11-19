@@ -184,8 +184,6 @@ void ProbeSignal(int) {
 
 [[nodiscard]] bool FramesInSystemEnumeration(void *const *frames, int depth) {
 	auto coreTextEnumeration = false;
-	auto descriptorLookup = false;
-	auto descriptorArrayLookup = false;
 	auto qtFamilyList = false;
 	auto qtCoreTextPopulation = false;
 	auto qtDatabasePopulation = false;
@@ -201,12 +199,6 @@ void ProbeSignal(int) {
 		if (name.contains("QFontDatabase") && name.contains("families")) {
 			qtFamilyList = true;
 		}
-		if (name.contains("getFontDescription")) {
-			descriptorLookup = true;
-		}
-		if (name.contains("CFArrayContainsValue")) {
-			descriptorArrayLookup = true;
-		}
 		if (name.contains("QCoreTextFontDatabase")
 			&& (name.contains("populateFromDescriptor")
 				|| name.contains("populateFontDatabase"))) {
@@ -217,14 +209,11 @@ void ProbeSignal(int) {
 			qtDatabasePopulation = true;
 		}
 	}
-	const auto nativeFontPopulation
-		= coreTextEnumeration || (descriptorLookup && descriptorArrayLookup);
 	const auto qtFontDatabasePopulation
 		= qtFamilyList || qtCoreTextPopulation || qtDatabasePopulation;
-	// A family-list query can be brief. Also accept CoreFoundation descriptor
-	// lookup while Qt populates individual entries, under the same database
-	// mutex, and hold that real population stack through application quit.
-	return nativeFontPopulation && qtFontDatabasePopulation;
+	// Only real CoreText family enumeration during Qt population counts.
+	// The test interposer repeats the query while Qt holds its lock.
+	return coreTextEnumeration && qtFontDatabasePopulation;
 }
 
 enum class StackSample {

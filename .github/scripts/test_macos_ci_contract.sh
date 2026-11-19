@@ -1743,8 +1743,6 @@ fi
 if ! awk '
   /bool FramesInSystemEnumeration\(/ { in_probe = 1 }
   in_probe && /name\.contains\("CTFontManagerCopyAvailableFontFamilyNames"\)/ { core_text = 1 }
-  in_probe && /name\.contains\("getFontDescription"\)/ { descriptor = 1 }
-  in_probe && /name\.contains\("CFArrayContainsValue"\)/ { core_foundation = 1 }
   in_probe && /name\.contains\("QFontDatabase"\)/ { qt_database = 1 }
   in_probe && /name\.contains\("families"\)/ { qt_families = 1 }
   in_probe && /name\.contains\("QCoreTextFontDatabase"\)/ { qt_coretext = 1 }
@@ -1752,12 +1750,11 @@ if ! awk '
   in_probe && /name\.contains\("populateFontDatabase"\)/ { qt_population = 1 }
   in_probe && /name\.contains\("QFontDatabasePrivate"\)/ { qt_private = 1 }
   in_probe && /name\.contains\("ensureFontDatabase"\)/ { qt_ensure = 1 }
-  in_probe && /descriptorLookup && descriptorArrayLookup/ { descriptor_pair = 1 }
   in_probe && /qtFamilyList \|\| qtCoreTextPopulation \|\| qtDatabasePopulation/ { qt_paths = 1 }
-  in_probe && /return nativeFontPopulation && qtFontDatabasePopulation/ { paired = 1 }
-  in_probe && /^}/ { exit !(core_text && qt_database && qt_families && descriptor && core_foundation && qt_coretext && (qt_descriptor || qt_population) && qt_private && qt_ensure && descriptor_pair && qt_paths && paired) }
+  in_probe && /return coreTextEnumeration && qtFontDatabasePopulation/ { paired = 1 }
+  in_probe && /^}/ { exit !(core_text && qt_database && qt_families && qt_coretext && (qt_descriptor || qt_population) && qt_private && qt_ensure && qt_paths && paired) }
 ' Telegram/SourceFiles/core/sandbox.cpp; then
-  contract_fail 'The shutdown probe must require native font work inside Qt font-database population.'
+  contract_fail 'The shutdown probe must require a real CoreText family enumeration frame inside Qt font-database population.'
 fi
 if ! awk '
   /^run_font_startup_regression\(\) \{$/ { in_startup = 1; next }
