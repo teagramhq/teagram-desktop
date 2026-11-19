@@ -1596,8 +1596,8 @@ void Sandbox::retrySingleInstance(bool immediate) {
 #if defined(Q_OS_MAC) && defined(TDESKTOP_LIFECYCLE_REGRESSION)
 	if (qEnvironmentVariableIsSet("TDESKTOP_INSTANCE_RECHECK_HOLD_FILE")
 		|| qEnvironmentVariableIsSet("TDESKTOP_SOCKET_ERROR_REGRESSION")) {
-		fprintf(stderr,
-				"Single instance retry regression: delay_ms=%d\n", delay);
+		fprintf(stderr, "Single instance retry regression: delay_ms=%d\n",
+				delay);
 	}
 #endif // Q_OS_MAC && TDESKTOP_LIFECYCLE_REGRESSION
 	QTimer::singleShot(delay, this, [=] {
