@@ -1723,9 +1723,19 @@ if grep -Fq 'Teagram_CTFontManagerCopyAvailableFontFamilyNames' \
 	Telegram/SourceFiles/tests/font_shutdown_probe.mm; then
 	contract_fail 'The interposer symbol must not satisfy the real CoreText stack matcher.'
 fi
-grep -Fq 'qt_font_database_hold=1' \
-	Telegram/SourceFiles/tests/font_shutdown_probe.mm \
-	|| contract_fail 'The Qt population hold must have its own evidence marker.'
+if ! awk '
+  /const auto sampled/ { in_sample = 1 }
+  in_sample && /if \(!sampled/ { unmatched = NR }
+  in_sample && /qt_font_database_hold=1/ { hold = NR }
+  in_sample && /Core::Quit\(\);/ { quit = NR; exit !(unmatched && hold && unmatched < hold && hold < quit) }
+  END { if (!quit) exit 1 }
+' Telegram/SourceFiles/core/sandbox.cpp; then
+	contract_fail 'The Qt hold marker must follow a matched Qt/CoreText stack sample before quit.'
+fi
+if grep -Fq 'qt_font_database_hold=1' \
+	Telegram/SourceFiles/tests/font_shutdown_probe.mm; then
+	contract_fail 'The interposer must not claim a Qt hold before the real stack sample.'
+fi
 if grep -Fq 'CTFontManagerCopyAvailableFontFamilyNames();' \
   Telegram/SourceFiles/core/sandbox.cpp; then
   contract_fail 'The shutdown probe must not bypass Qt font-database population with a direct CoreText query.'

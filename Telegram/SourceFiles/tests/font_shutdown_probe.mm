@@ -26,7 +26,6 @@ constexpr auto kProbeMaxFrames = 64;
 pthread_t ProbeWorker = {};
 std::atomic_bool ProbeArmed = false;
 std::atomic_bool ProbeReleased = false;
-std::atomic_bool ProbeHoldReported = false;
 std::atomic_int ProbeSkippedPopulations = 0;
 
 [[nodiscard]] bool IsQtFontDatabasePopulation() {
@@ -63,7 +62,6 @@ void ArmFontShutdownProbe(pthread_t worker, int skippedPopulations) {
 	ProbeWorker = worker;
 	ProbeSkippedPopulations.store(skippedPopulations,
 								  std::memory_order_relaxed);
-	ProbeHoldReported.store(false, std::memory_order_relaxed);
 	ProbeArmed.store(true, std::memory_order_release);
 }
 
@@ -96,11 +94,9 @@ Teagram_FontFamilyPopulationProbe() {
 		ProbeSkippedPopulations.fetch_sub(1, std::memory_order_relaxed);
 		return original();
 	}
-	if (!ProbeHoldReported.exchange(true, std::memory_order_acq_rel)) {
-		fprintf(stderr, "Font shutdown regression: qt_font_database_hold=1\n");
-	}
 	// Repeat the real CoreText query inside Qt's families() call. The GUI
-	// sampler can then catch the native frame while Qt still owns its mutex.
+	// sampler can then catch a real CoreText frame while Qt still owns its
+	// mutex. Only that stack sample reports the hold as observed.
 	auto result = original();
 	while (!ProbeReleased.load(std::memory_order_acquire)) {
 		if (result) {

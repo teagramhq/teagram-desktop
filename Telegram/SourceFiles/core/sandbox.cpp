@@ -1247,6 +1247,8 @@ void Sandbox::startFontDatabaseWarmup() {
 					stopWorker(ProbeExit::Quit);
 					return;
 				}
+				fprintf(stderr,
+						"Font shutdown regression: qt_font_database_hold=1\n");
 				timer->stop();
 				Core::Quit();
 			});
