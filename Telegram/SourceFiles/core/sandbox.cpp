@@ -184,7 +184,11 @@ void ProbeSignal(int) {
 
 [[nodiscard]] bool FramesInSystemEnumeration(void *const *frames, int depth) {
 	auto coreTextEnumeration = false;
-	auto qtFontDatabasePopulation = false;
+	auto descriptorLookup = false;
+	auto descriptorArrayLookup = false;
+	auto qtFamilyList = false;
+	auto qtCoreTextPopulation = false;
+	auto qtDatabasePopulation = false;
 	for (auto i = 0; i != depth; ++i) {
 		auto info = Dl_info();
 		if (!dladdr(frames[i], &info) || !info.dli_sname) {
@@ -195,15 +199,32 @@ void ProbeSignal(int) {
 			coreTextEnumeration = true;
 		}
 		if (name.contains("QFontDatabase") && name.contains("families")) {
-			qtFontDatabasePopulation = true;
+			qtFamilyList = true;
 		}
-		if (coreTextEnumeration && qtFontDatabasePopulation) {
-			return true;
+		if (name.contains("getFontDescription")) {
+			descriptorLookup = true;
+		}
+		if (name.contains("CFArrayContainsValue")) {
+			descriptorArrayLookup = true;
+		}
+		if (name.contains("QCoreTextFontDatabase")
+			&& (name.contains("populateFromDescriptor")
+				|| name.contains("populateFontDatabase"))) {
+			qtCoreTextPopulation = true;
+		}
+		if (name.contains("QFontDatabasePrivate")
+			&& name.contains("ensureFontDatabase")) {
+			qtDatabasePopulation = true;
 		}
 	}
-	// Require the native frame while Qt is populating its database, so the
-	// probe holds the Qt font-database mutex through application shutdown.
-	return coreTextEnumeration && qtFontDatabasePopulation;
+	const auto nativeFontPopulation
+		= coreTextEnumeration || (descriptorLookup && descriptorArrayLookup);
+	const auto qtFontDatabasePopulation
+		= qtFamilyList || qtCoreTextPopulation || qtDatabasePopulation;
+	// A family-list query can be brief. Also accept CoreFoundation descriptor
+	// lookup while Qt populates individual entries, under the same database
+	// mutex, and hold that real population stack through application quit.
+	return nativeFontPopulation && qtFontDatabasePopulation;
 }
 
 enum class StackSample {

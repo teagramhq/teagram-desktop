@@ -33,6 +33,10 @@ std::atomic_int ProbeSkippedPopulations = 0;
 	const auto depth = backtrace(frames, kProbeMaxFrames);
 	auto database = false;
 	auto families = false;
+	auto coreTextDatabase = false;
+	auto qtPopulation = false;
+	auto privateDatabase = false;
+	auto databaseEnsure = false;
 	for (auto i = 0; i != depth; ++i) {
 		auto info = Dl_info();
 		if (!dladdr(frames[i], &info) || !info.dli_sname) {
@@ -41,8 +45,18 @@ std::atomic_int ProbeSkippedPopulations = 0;
 		const auto name = std::string_view(info.dli_sname);
 		database = database || (name.find("QFontDatabase") != name.npos);
 		families = families || (name.find("families") != name.npos);
+		coreTextDatabase = coreTextDatabase
+						   || (name.find("QCoreTextFontDatabase") != name.npos);
+		qtPopulation = qtPopulation
+					   || (name.find("populateFromDescriptor") != name.npos)
+					   || (name.find("populateFontDatabase") != name.npos);
+		privateDatabase = privateDatabase
+						  || (name.find("QFontDatabasePrivate") != name.npos);
+		databaseEnsure
+			= databaseEnsure || (name.find("ensureFontDatabase") != name.npos);
 	}
-	return database && families;
+	return (database && families) || (coreTextDatabase && qtPopulation)
+		   || (privateDatabase && databaseEnsure);
 }
 
 using CopyAvailableFontFamilyNames = CFArrayRef (*)(void);
