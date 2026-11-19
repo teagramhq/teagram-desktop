@@ -64,9 +64,7 @@ using CopyAvailableFontFamilyNames = CFArrayRef (*)(void);
 
 [[nodiscard]] CopyAvailableFontFamilyNames
 OriginalCopyAvailableFontFamilyNames() {
-	static const auto result = reinterpret_cast<CopyAvailableFontFamilyNames>(
-		dlsym(RTLD_NEXT, "CTFontManagerCopyAvailableFontFamilyNames"));
-	return result;
+	return &CTFontManagerCopyAvailableFontFamilyNames;
 }
 
 } // namespace

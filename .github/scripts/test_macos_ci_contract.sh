@@ -1755,9 +1755,12 @@ if ! awk '
 ' Telegram/SourceFiles/core/sandbox.cpp; then
   contract_fail 'The timeout path must release a held CoreText probe before draining the worker.'
 fi
-grep -Fq 'dlsym(RTLD_NEXT, "CTFontManagerCopyAvailableFontFamilyNames")' \
+grep -Fq 'return &CTFontManagerCopyAvailableFontFamilyNames;' \
   Telegram/SourceFiles/tests/font_shutdown_probe.mm \
-  || contract_fail 'The shutdown probe must forward Qt population to real CoreText.'
+  || contract_fail 'The shutdown probe must use dyld’s original CoreText binding.'
+if grep -Fq 'RTLD_NEXT' Telegram/SourceFiles/tests/font_shutdown_probe.mm; then
+  contract_fail 'The shutdown probe must not resolve its interposed CoreText symbol through RTLD_NEXT.'
+fi
 grep -Fq 'auto result = original();' \
   Telegram/SourceFiles/tests/font_shutdown_probe.mm \
 	|| contract_fail 'The shutdown probe must keep making real CoreText queries inside Qt population.'
