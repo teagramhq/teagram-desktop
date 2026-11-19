@@ -162,7 +162,7 @@ if [[ "${TDESKTOP_FONT_STARTUP_QUIT_REGRESSION:-}" == 1 ]]; then
         if [[ "$FONT_SHUTDOWN_TEST_MODE" != probe-release-before-arm-unpreserved ]]; then
             printf 'Font shutdown regression: probe_release_preserved=1\\n'
         fi
-        printf 'Font shutdown regression: quit_observed=1 font_work=active enumeration_overlapped=0\\n'
+        printf 'Font shutdown regression: quit_observed=0 font_work=active enumeration_overlapped=0\\n'
         printf 'Font shutdown regression: worker_joined=1 application_created=0 teardown=complete\\n'
         exit 0
     fi
@@ -282,10 +282,16 @@ if [[ "${TDESKTOP_FONT_STARTUP_QUIT_REGRESSION:-}" == 1 ]]; then
         printf 'Font shutdown regression: worker_joined=1 application_created=0 teardown=complete\\n'
         exit 0
     elif [[ "${TDESKTOP_FONT_STARTUP_TEST_FAILURE:-}" == probe-release-before-arm ]]; then
+        if [[ "$FONT_SHUTDOWN_TEST_MODE" == probe-release-before-arm-joined-before-release ]]; then
+            printf 'Font shutdown regression: quit_observed=0 font_work=active enumeration_overlapped=0\\n'
+            printf 'Font shutdown regression: worker_joined=1 application_created=0 teardown=complete\\n'
+            printf 'Font shutdown regression: probe_release_preserved=1\\n'
+            exit 0
+        fi
         if [[ "$FONT_SHUTDOWN_TEST_MODE" != probe-release-before-arm-unpreserved ]]; then
             printf 'Font shutdown regression: probe_release_preserved=1\\n'
         fi
-        printf 'Font shutdown regression: quit_observed=1 font_work=active enumeration_overlapped=0\\n'
+        printf 'Font shutdown regression: quit_observed=0 font_work=active enumeration_overlapped=0\\n'
         printf 'Font shutdown regression: worker_joined=1 application_created=0 teardown=complete\\n'
         exit 0
     elif [[ "${TDESKTOP_FONT_STARTUP_TEST_FAILURE:-}" == shutdown-remove-pending \
@@ -781,6 +787,11 @@ font_release_before_arm_unpreserved = run_font_startup_fixture(
     50_000_000, 50_000_000, 1, mode='probe-release-before-arm-unpreserved')
 assert 'font shutdown cancellation before probe arm was not observed' \
     in font_release_before_arm_unpreserved
+font_release_before_arm_joined_before_release = run_font_startup_fixture(
+    50_000_000, 50_000_000, 1,
+    mode='probe-release-before-arm-joined-before-release')
+assert 'font shutdown cancellation before probe arm was not followed by worker join' \
+    in font_release_before_arm_joined_before_release
 print('macOS font startup timing and failure guards: PASS')
 
 

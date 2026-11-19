@@ -1810,7 +1810,7 @@ sys.exit(result.returncode if result.returncode >= 0 else 128 - result.returncod
 	if [[ "$forced_failure" == shutdown-remove-pending ]]; then
 		expected_shutdown_line='Font shutdown regression: quit_observed=1 font_work=active remove_pending_at_quit=1 removal_completed=1'
 	elif [[ "$forced_failure" == probe-release-before-arm ]]; then
-		expected_shutdown_line='Font shutdown regression: quit_observed=1 font_work=active enumeration_overlapped=0'
+		expected_shutdown_line='Font shutdown regression: quit_observed=0 font_work=active enumeration_overlapped=0'
 	else
 		expected_shutdown_line='Font shutdown regression: quit_observed=1 font_work=active enumeration_overlapped=1'
 	fi
@@ -1818,6 +1818,8 @@ sys.exit(result.returncode if result.returncode >= 0 else 128 - result.returncod
 		cat "$shutdown_log" >&2
 		if [[ "$forced_failure" == shutdown-remove-pending ]]; then
 			echo 'font shutdown did not complete the pending removal after quit' >&2
+		elif [[ "$forced_failure" == probe-release-before-arm ]]; then
+			echo 'font shutdown cancellation before probe arm did not finish before quit' >&2
 		else
 			echo "font shutdown regression did not quit during an active system font enumeration" >&2
 		fi
@@ -1852,30 +1854,43 @@ sys.exit(result.returncode if result.returncode >= 0 else 128 - result.returncod
 			return 1
 		fi
 	fi
-	local in_flight_position
-	in_flight_position="$(grep -F -n 'Font shutdown regression: quit_observed=1' \
-		"$shutdown_log" | tail -n 1 | cut -d: -f1 || true)"
 	local teardown_position
 	teardown_position="$(grep -F -n 'Font shutdown regression: worker_joined=1 application_created=0 teardown=complete' \
 		"$shutdown_log" | tail -n 1 | cut -d: -f1 || true)"
-	if [[ "$forced_failure" == probe-missed-first ]]; then
-		local retry_position
-		retry_position="$(grep -F -n 'Font shutdown regression: enumeration_retry=1' \
+	if [[ "$forced_failure" == probe-release-before-arm ]]; then
+		local release_position
+		release_position="$(grep -F -n 'Font shutdown regression: probe_release_preserved=1' \
 			"$shutdown_log" | head -n 1 | cut -d: -f1 || true)"
-		if [[ ! "$retry_position" =~ ^[0-9]+$ ]] \
-			|| [[ ! "$in_flight_position" =~ ^[0-9]+$ ]] \
-			|| (( retry_position >= in_flight_position )); then
+		if [[ ! "$release_position" =~ ^[0-9]+$ ]] \
+			|| [[ ! "$teardown_position" =~ ^[0-9]+$ ]] \
+			|| (( release_position >= teardown_position )); then
 			cat "$shutdown_log" >&2
-			echo 'font shutdown enumeration retry was not observed' >&2
+			echo 'font shutdown cancellation before probe arm was not followed by worker join' >&2
 			return 1
 		fi
-	fi
-	if [[ ! "$in_flight_position" =~ ^[0-9]+$ ]] \
-		|| [[ ! "$teardown_position" =~ ^[0-9]+$ ]] \
-		|| (( in_flight_position >= teardown_position )); then
-		cat "$shutdown_log" >&2
-		echo "font shutdown did not join the worker and tear down without starting the application" >&2
-		return 1
+	else
+		local in_flight_position
+		in_flight_position="$(grep -F -n 'Font shutdown regression: quit_observed=1' \
+			"$shutdown_log" | tail -n 1 | cut -d: -f1 || true)"
+		if [[ "$forced_failure" == probe-missed-first ]]; then
+			local retry_position
+			retry_position="$(grep -F -n 'Font shutdown regression: enumeration_retry=1' \
+				"$shutdown_log" | head -n 1 | cut -d: -f1 || true)"
+			if [[ ! "$retry_position" =~ ^[0-9]+$ ]] \
+				|| [[ ! "$in_flight_position" =~ ^[0-9]+$ ]] \
+				|| (( retry_position >= in_flight_position )); then
+				cat "$shutdown_log" >&2
+				echo 'font shutdown enumeration retry was not observed' >&2
+				return 1
+			fi
+		fi
+		if [[ ! "$in_flight_position" =~ ^[0-9]+$ ]] \
+			|| [[ ! "$teardown_position" =~ ^[0-9]+$ ]] \
+			|| (( in_flight_position >= teardown_position )); then
+			cat "$shutdown_log" >&2
+			echo "font shutdown did not join the worker and tear down without starting the application" >&2
+			return 1
+		fi
 	fi
 	printf 'Font shutdown teardown=PASS font_work_active=1 application_created=0\n'
 }
