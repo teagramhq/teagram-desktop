@@ -382,6 +382,11 @@ void Application::run() {
 #ifdef Q_OS_MAC
 		const auto holdFile
 			= qEnvironmentVariable("TDESKTOP_EMOJI_RELAUNCH_HOLD_FILE");
+		const auto cacheShutdownRegression = qEnvironmentVariableIsSet(
+			"TDESKTOP_EMOJI_CACHE_SHUTDOWN_REGRESSION");
+		if (!holdFile.isEmpty() || cacheShutdownRegression) {
+			Media::Player::start(_audio.get());
+		}
 		if (!holdFile.isEmpty()) {
 			const auto result = RunFontFallbackRegression();
 			std::fprintf(stderr,
@@ -397,9 +402,7 @@ void Application::run() {
 			timer->start(10);
 			return;
 		}
-		if (qEnvironmentVariableIsSet(
-				"TDESKTOP_EMOJI_CACHE_SHUTDOWN_REGRESSION")) {
-			Media::Player::start(_audio.get());
+		if (cacheShutdownRegression) {
 			const auto result = RunFontFallbackRegression();
 			RunEmojiCacheShutdownRegression([=](bool ready) {
 				QCoreApplication::exit(result | (ready ? 0 : 1));

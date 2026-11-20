@@ -1542,14 +1542,19 @@ if ! python3 - <<'PY'
 from pathlib import Path
 
 source = Path('Telegram/SourceFiles/core/application.cpp').read_text()
-branch = source.index('"TDESKTOP_EMOJI_CACHE_SHUTDOWN_REGRESSION"')
-player = source.index('Media::Player::start(_audio.get());', branch)
-shutdown = source.index('RunEmojiCacheShutdownRegression', branch)
-if not branch < player < shutdown:
-    raise SystemExit('the headless emoji shutdown fixture must initialize Media::Player before draining')
+hold_selector = source.index('qEnvironmentVariable("TDESKTOP_EMOJI_RELAUNCH_HOLD_FILE")')
+hold_branch = source.index('if (!holdFile.isEmpty())', hold_selector)
+shutdown_selector = source.index('"TDESKTOP_EMOJI_CACHE_SHUTDOWN_REGRESSION"')
+player = source.index('Media::Player::start(_audio.get());', hold_selector)
+shutdown = source.index('RunEmojiCacheShutdownRegression', shutdown_selector)
+if not (
+    hold_selector < player < hold_branch
+    and shutdown_selector < player < shutdown
+):
+    raise SystemExit('both headless relaunch fixtures must initialize Media::Player before waiting')
 PY
 then
-	contract_fail 'The headless relaunch primary must initialize the media player before shutdown callbacks run.'
+	contract_fail 'Both headless relaunch fixtures must initialize the media player before their event-loop waits.'
 fi
 emoji_init_line="$(grep -n -F 'Ui::Emoji::Init();' "$application_source" | head -n 1 | cut -d: -f1)"
 font_fallback_exit_line="$(grep -n -F \
