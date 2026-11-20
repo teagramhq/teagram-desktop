@@ -12348,6 +12348,7 @@ struct CacheChatSwitchRegressionResult final {
 	int attachMenuUncachedMissingBotFailures = 0;
 	int attachMenuUncachedBuildCountFailures = 0;
 	bool minimizedRestore = false;
+	bool initialHistoryWindowActivated = false;
 	bool historyScaleInvalidationRebuilt = false;
 	bool historyChatModeInvalidationRebuilt = false;
 	bool chatSwitchComposeUiReused = false;
@@ -12867,8 +12868,14 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		return wallDurationNanoseconds;
 	};
 	// A separate test window has just been created. Let its initial layout and
-	// queued UI updates settle before timing its first history selection.
+	// queued UI updates settle before timing its first history selection. The
+	// app is already foregrounded for a real first history selection, so wait
+	// for this fixture window's activation before starting the cold measurement.
 	settleHistoryUnfocused();
+	Platform::ActivateThisProcess(window->widget());
+	result.initialHistoryWindowActivated
+		= (ActivateWindowForRegression(Core::App(), window)
+		   == WindowActivationForRegressionResult::Activated);
 	showPeerHistoryMeasured(emptyFirstHistory);
 	settleHistoryUnfocused();
 	constexpr auto kWarmupChatSwitches = 8;
@@ -14162,6 +14169,7 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		  && result.botCommandsShownWhileFieldUnfocused
 		  && result.pendingRevealStartedAfterControlsGeometry
 		  && result.minimizedRestore && hydrationCpuClockAvailable
+		  && result.initialHistoryWindowActivated
 		  && (result.maxHydrationMainThreadWorkNanoseconds >= 0)
 		  && MainThreadCpuWorkWithinBudget(
 			  result.maxHydrationMainThreadWorkNanoseconds,
@@ -15105,6 +15113,7 @@ void RunAuthenticatedCacheSymlinkCases(
 					"hydrated_documents=%d chat_switches=%d "
 					"attach_menu_bot_count=%d "
 					"minimized_restore=%d "
+					"initial_history_window_activated=%d "
 					"minimized_switch_ns=%lld "
 					"minimized_restore_budget_ns=%lld "
 					"max_hydration_ns=%lld "
@@ -15159,6 +15168,7 @@ void RunAuthenticatedCacheSymlinkCases(
 					chatSwitch.reactions, chatSwitch.hydratedDocuments,
 					chatSwitch.chatSwitches, chatSwitch.attachMenuBotCount,
 					chatSwitch.minimizedRestore,
+					chatSwitch.initialHistoryWindowActivated,
 					static_cast<long long>(
 						chatSwitch.minimizedSwitchNanoseconds),
 					static_cast<long long>(kMaxMinimizedRestoreNanoseconds),
