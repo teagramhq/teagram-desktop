@@ -11283,11 +11283,14 @@ struct MainThreadWorkEstimate final {
 	qint64 mainThreadCpuEndNanoseconds = -1) {
 	if (wallNanoseconds < 0) {
 		return {};
-	} else if (schedulerTrace.isEmpty() || (schedulerTrace == u"none"_q)) {
-		return {-1, wallNanoseconds};
+	}
+	const auto fallbackWorkNanoseconds
+		= std::max(wallNanoseconds, mainThreadCpuNanoseconds);
+	if (schedulerTrace.isEmpty() || (schedulerTrace == u"none"_q)) {
+		return {-1, fallbackWorkNanoseconds};
 	} else if (schedulerTrace.size()
 			   != qsizetype(sampleOffsetsNanoseconds.size())) {
-		return {-1, wallNanoseconds};
+		return {-1, fallbackWorkNanoseconds};
 	} else if (mainThreadCpuNanoseconds < 0) {
 		return {};
 	}
@@ -11320,7 +11323,7 @@ struct MainThreadWorkEstimate final {
 	for (auto i = std::size_t(0); i != sampleOffsetsNanoseconds.size(); ++i) {
 		const auto offset = sampleOffsetsNanoseconds[i];
 		if ((offset < 0) || (hasPreviousOffset && (offset < previousOffset))) {
-			return {-1, wallNanoseconds};
+			return {-1, fallbackWorkNanoseconds};
 		}
 		previousOffset = offset;
 		hasPreviousOffset = true;
@@ -11329,7 +11332,7 @@ struct MainThreadWorkEstimate final {
 		}
 		const auto state = schedulerTrace[qsizetype(i)];
 		if ((state != u'R') && (state != u'W') && (state != u'U')) {
-			return {-1, wallNanoseconds};
+			return {-1, fallbackWorkNanoseconds};
 		}
 		const auto hasSampleCpu = sampleMainThreadCpuNanoseconds
 								  && (sampleMainThreadCpuNanoseconds->size()
@@ -11338,7 +11341,7 @@ struct MainThreadWorkEstimate final {
 			= hasSampleCpu ? (*sampleMainThreadCpuNanoseconds)[i] : qint64(-1);
 		const auto gap = offset - lastInWindowOffset;
 		if (gap > kMaximumSampleGapNanoseconds) {
-			return {-1, wallNanoseconds};
+			return {-1, fallbackWorkNanoseconds};
 		}
 		if (!hasInWindowSample && gap && before) {
 			if ((before->distanceNanoseconds < 0)
@@ -11346,7 +11349,7 @@ struct MainThreadWorkEstimate final {
 					> kMaximumSampleGapNanoseconds - gap)
 				|| ((before->state != 'R') && (before->state != 'W')
 					&& (before->state != 'U'))) {
-				return {-1, wallNanoseconds};
+				return {-1, fallbackWorkNanoseconds};
 			}
 			addBlockedGap(gap, (before->state != 'R') || (state != u'R'), 0);
 		} else if (!hasInWindowSample) {
@@ -11365,7 +11368,7 @@ struct MainThreadWorkEstimate final {
 	if (!hasInWindowSample
 		|| (wallNanoseconds - lastInWindowOffset
 			> kMaximumSampleGapNanoseconds)) {
-		return {-1, wallNanoseconds};
+		return {-1, fallbackWorkNanoseconds};
 	}
 	const auto tail = wallNanoseconds - lastInWindowOffset;
 	if (tail && after) {
@@ -11374,7 +11377,7 @@ struct MainThreadWorkEstimate final {
 				> kMaximumSampleGapNanoseconds - tail)
 			|| ((after->state != 'R') && (after->state != 'W')
 				&& (after->state != 'U'))) {
-			return {-1, wallNanoseconds};
+			return {-1, fallbackWorkNanoseconds};
 		}
 		addBlockedGap(tail, (previousState != u'R') || (after->state != 'R'),
 					  cpuDeltaKnownInsideGap(previousCpuNanoseconds,
@@ -11754,6 +11757,10 @@ void AccumulateMainThreadWorkEstimate(qint64 &aggregateNanoseconds,
 		= EstimateMainThreadWork(12'000'000, 65'000'000, sparseCpuWindow);
 	const auto cpuOverWall = EstimateMainThreadWork(
 		52'000'000, 49'000'000, u"WWW"_q, {0, 24'500'000, 49'000'000});
+	const auto nearBudgetMissingScheduler
+		= EstimateMainThreadWork(50'010'000, 49'980'000, u"none"_q, {});
+	const auto nearBudgetIncompleteScheduler
+		= EstimateMainThreadWork(50'010'000, 49'980'000, u"R"_q, {0});
 	const auto callbackOffsets = coveredOffsets(200'000'000);
 	const auto blockedAttachMenuCallback = EstimateMainThreadWork(
 		12'000'000, 200'000'000,
@@ -12206,6 +12213,17 @@ void AccumulateMainThreadWorkEstimate(qint64 &aggregateNanoseconds,
 		   && (sparseCpuEstimate.blockedNanoseconds == -1)
 		   && (sparseCpuEstimate.estimatedWorkNanoseconds == 65'000'000)
 		   && (cpuOverWall.estimatedWorkNanoseconds >= 52'000'000)
+		   && (nearBudgetMissingScheduler.estimatedWorkNanoseconds
+			   == 50'010'000)
+		   && !MainThreadEstimatedWorkWithinBudget(
+			   nearBudgetMissingScheduler.estimatedWorkNanoseconds,
+			   kMaxChatSwitchNanoseconds)
+		   && (nearBudgetIncompleteScheduler.blockedNanoseconds == -1)
+		   && (nearBudgetIncompleteScheduler.estimatedWorkNanoseconds
+			   == 50'010'000)
+		   && !MainThreadEstimatedWorkWithinBudget(
+			   nearBudgetIncompleteScheduler.estimatedWorkNanoseconds,
+			   kMaxChatSwitchNanoseconds)
 		   && !MainThreadWorkEstimateWithinBudget(
 			   18'000'000, 225'000'000, u"RRR"_q,
 			   {226'000'000, 227'000'000, 228'000'000}, 100'000'000)
