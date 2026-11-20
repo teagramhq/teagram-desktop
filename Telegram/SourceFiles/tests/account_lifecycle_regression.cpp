@@ -12868,9 +12868,9 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		return wallDurationNanoseconds;
 	};
 	// A separate test window has just been created. Let its initial layout and
-	// queued UI updates settle before timing its first history selection. The
-	// app is already foregrounded for a real first history selection, so wait
-	// for this fixture window's activation before starting the cold measurement.
+	// queued UI updates settle before timing its first history selection.
+	// A real first selection runs in the foreground app, so wait for this
+	// fixture window's activation before starting the cold measurement.
 	settleHistoryUnfocused();
 	Platform::ActivateThisProcess(window->widget());
 	result.initialHistoryWindowActivated
