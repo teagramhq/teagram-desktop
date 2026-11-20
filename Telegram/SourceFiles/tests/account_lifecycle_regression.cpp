@@ -3859,8 +3859,12 @@ enum class WindowActivationForRegressionResult {
 ActivateWindowForRegression(Core::Application &app,
 							not_null<Window::Controller *> window,
 							bool requirePrimary = false) {
+	const auto widget = window->widget();
 	const auto isActive = [&] {
-		return (app.activeWindow() == window.get())
+		return Platform::IsApplicationActiveForRegression()
+			   && widget->isActiveWindow() && widget->isVisible()
+			   && !(widget->windowState() & Qt::WindowMinimized)
+			   && (app.activeWindow() == window.get())
 			   && (!requirePrimary
 				   || (app.activePrimaryWindow() == window.get()));
 	};
@@ -12801,6 +12805,10 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 	auto chatSwitchIndex = 0;
 	const auto showPeerHistoryMeasured = [&](auto history) {
 		const auto index = chatSwitchIndex++;
+		if ((index == 0) && !result.initialHistoryWindowActivated) {
+			controller->showPeerHistory(history);
+			return qint64(-1);
+		}
 		const auto peerId = qint64(history->peer->id.value);
 		const auto startedAt = QDateTime::currentDateTime();
 		const auto mainThreadBefore = MainThreadCpuTimeNanoseconds();

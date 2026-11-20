@@ -2210,6 +2210,37 @@ awk '
   }
 ' "$native_harness" \
   || contract_fail "$native_harness must issue activation before classifying AppKit inactivity at timeout."
+awk '
+  /ActivateWindowForRegression\(Core::Application/ { in_activation = 1 }
+  in_activation && /Platform::IsApplicationActiveForRegression\(\)/ { requires_foreground = 1 }
+  in_activation && /widget->isActiveWindow\(\)/ { checks_active_widget = 1 }
+  in_activation && /widget->isVisible\(\)/ { checks_visible_widget = 1 }
+  in_activation && /Qt::WindowMinimized/ { checks_unminimized_widget = 1 }
+  in_activation && /^}/ { exit }
+  END {
+    exit !(requires_foreground && checks_active_widget && checks_visible_widget &&
+      checks_unminimized_widget)
+  }
+' "$native_harness" \
+  || contract_fail "$native_harness must require the foreground app and active, visible, unminimized target before reporting activation."
+awk '
+  /const auto showPeerHistoryMeasured =/ { in_measurement = 1 }
+  in_measurement && /index == 0.*&& !result.initialHistoryWindowActivated/ { no_activation_guard = NR }
+  in_measurement && /controller->showPeerHistory\(history\)/ {
+    if (no_activation_guard) {
+      unmeasured_fallback = NR
+    }
+  }
+  in_measurement && /timer.start\(\)/ {
+    timer_start = NR
+    exit
+  }
+  END {
+    exit !(no_activation_guard && unmeasured_fallback > no_activation_guard &&
+      timer_start > unmeasured_fallback)
+  }
+' "$native_harness" \
+  || contract_fail "$native_harness must not time the initial history selection unless its window was activated."
 grep -Fq 'Settings deep link native focus assertion skipped:' "$native_harness" \
   || contract_fail "$native_harness must report when the synthetic macOS replay cannot assert native focus."
 grep -Fq 'ordinaryFocusBehaviorMatches' "$native_harness" \
