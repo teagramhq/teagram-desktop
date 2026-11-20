@@ -10509,7 +10509,6 @@ struct MainThreadWorkInterval final {
 	qint64 processWorkNanoseconds = -1;
 	QString label;
 	qint64 startedAtSteadyNanoseconds = -1;
-	qint64 mainThreadCpuStartNanoseconds = -1;
 	qint64 mainThreadCpuEndNanoseconds = -1;
 };
 
@@ -10688,7 +10687,6 @@ struct SchedulerTraceWindow final {
 	bool capturePending = false;
 	std::optional<SchedulerBoundarySample> before;
 	std::optional<SchedulerBoundarySample> after;
-	qint64 mainThreadCpuStartNanoseconds = -1;
 	qint64 mainThreadCpuEndNanoseconds = -1;
 };
 
@@ -10768,8 +10766,6 @@ struct SchedulerTraceWindow final {
 	std::sort(begin(samples), end(samples),
 			  [](const auto &a, const auto &b) { return a.offset < b.offset; });
 	auto result = SchedulerTraceWindow();
-	result.mainThreadCpuStartNanoseconds
-		= interval.mainThreadCpuStartNanoseconds;
 	result.mainThreadCpuEndNanoseconds = interval.mainThreadCpuEndNanoseconds;
 	result.trace.reserve(qsizetype(samples.size()));
 	result.sampleOffsetsNanoseconds.reserve(samples.size());
@@ -10798,8 +10794,6 @@ struct SchedulerTraceWindow final {
 	const auto start = interval.startedAtSteadyNanoseconds;
 	const auto windowEnd = start + interval.durationNanoseconds;
 	auto result = SchedulerTraceWindow();
-	result.mainThreadCpuStartNanoseconds
-		= interval.mainThreadCpuStartNanoseconds;
 	result.mainThreadCpuEndNanoseconds = interval.mainThreadCpuEndNanoseconds;
 	struct TraceSample final {
 		qint64 offset = 0;
@@ -11286,7 +11280,6 @@ struct MainThreadWorkEstimate final {
 	const std::optional<SchedulerBoundarySample> &before = std::nullopt,
 	const std::optional<SchedulerBoundarySample> &after = std::nullopt,
 	const std::vector<qint64> *sampleMainThreadCpuNanoseconds = nullptr,
-	qint64 mainThreadCpuStartNanoseconds = -1,
 	qint64 mainThreadCpuEndNanoseconds = -1) {
 	if (wallNanoseconds < 0) {
 		return {};
@@ -11310,6 +11303,14 @@ struct MainThreadWorkEstimate final {
 		return (start >= 0 && end >= start) ? std::min(gap, end - start)
 											: qint64(0);
 	};
+	// A running sample can omit its current run interval until the next
+	// non-running sample, so that later CPU delta may predate this gap.
+	const auto cpuDeltaKnownInsideGap
+		= [&](qint64 start, qint64 end, qint64 gap,
+			  bool previousSampleWasNotRunning) {
+			  return previousSampleWasNotRunning ? cpuDelta(start, end, gap)
+												 : qint64(0);
+		  };
 	const auto addBlockedGap
 		= [&](qint64 gap, bool blocked, qint64 cpuNanoseconds) {
 			  if (blocked) {
@@ -11347,17 +11348,14 @@ struct MainThreadWorkEstimate final {
 					&& (before->state != 'U'))) {
 				return {-1, wallNanoseconds};
 			}
-			addBlockedGap(gap, (before->state != 'R') || (state != u'R'),
-						  cpuDelta(mainThreadCpuStartNanoseconds,
-								   sampleCpuNanoseconds, gap));
+			addBlockedGap(gap, (before->state != 'R') || (state != u'R'), 0);
 		} else if (!hasInWindowSample) {
-			addBlockedGap(gap, true,
-						  cpuDelta(mainThreadCpuStartNanoseconds,
-								   sampleCpuNanoseconds, gap));
+			addBlockedGap(gap, true, 0);
 		} else {
-			addBlockedGap(
-				gap, (previousState != u'R') || (state != u'R'),
-				cpuDelta(previousCpuNanoseconds, sampleCpuNanoseconds, gap));
+			addBlockedGap(gap, (previousState != u'R') || (state != u'R'),
+						  cpuDeltaKnownInsideGap(previousCpuNanoseconds,
+												 sampleCpuNanoseconds, gap,
+												 previousState != u'R'));
 		}
 		lastInWindowOffset = offset;
 		previousState = state;
@@ -11379,12 +11377,14 @@ struct MainThreadWorkEstimate final {
 			return {-1, wallNanoseconds};
 		}
 		addBlockedGap(tail, (previousState != u'R') || (after->state != 'R'),
-					  cpuDelta(previousCpuNanoseconds,
-							   mainThreadCpuEndNanoseconds, tail));
+					  cpuDeltaKnownInsideGap(previousCpuNanoseconds,
+											 mainThreadCpuEndNanoseconds, tail,
+											 previousState != u'R'));
 	} else {
 		addBlockedGap(tail, true,
-					  cpuDelta(previousCpuNanoseconds,
-							   mainThreadCpuEndNanoseconds, tail));
+					  cpuDeltaKnownInsideGap(previousCpuNanoseconds,
+											 mainThreadCpuEndNanoseconds, tail,
+											 previousState != u'R'));
 	}
 	if (mainThreadCpuNanoseconds
 		> std::numeric_limits<qint64>::max() - blockedNanoseconds) {
@@ -11404,7 +11404,6 @@ EstimateMainThreadWork(qint64 mainThreadCpuNanoseconds, qint64 wallNanoseconds,
 		schedulerSamples.sampleOffsetsNanoseconds, schedulerSamples.before,
 		schedulerSamples.after,
 		&schedulerSamples.sampleMainThreadCpuNanoseconds,
-		schedulerSamples.mainThreadCpuStartNanoseconds,
 		schedulerSamples.mainThreadCpuEndNanoseconds);
 }
 
@@ -11662,7 +11661,6 @@ void AccumulateMainThreadWorkEstimate(qint64 &aggregateNanoseconds,
 		MainThreadWorkInterval{
 			.durationNanoseconds = 100'000'000,
 			.startedAtSteadyNanoseconds = 100'000'000,
-			.mainThreadCpuStartNanoseconds = 0,
 			.mainThreadCpuEndNanoseconds = 40'000'000,
 		},
 		std::vector<Core::UiStallWatchdog::SchedulerSampleEvidence>{
@@ -11702,11 +11700,40 @@ void AccumulateMainThreadWorkEstimate(qint64 &aggregateNanoseconds,
 		});
 	const auto cpuOverlapEstimate
 		= EstimateMainThreadWork(40'000'000, 100'000'000, cpuOverlapWindow);
+	// The R sample is stale; the following W sample charges CPU accumulated
+	// before its gap. That delta must not erase the near-budget wait.
+	const auto delayedCpuAccountingWindow = SchedulerTraceForInterval(
+		MainThreadWorkInterval{
+			.durationNanoseconds = 55'000'000,
+			.startedAtSteadyNanoseconds = 400'000'000,
+			.mainThreadCpuEndNanoseconds = 148'000'000,
+		},
+		std::vector<Core::UiStallWatchdog::SchedulerSampleEvidence>{
+			{.sampledAtSteadyNanoseconds = 400'000'000,
+			 .state = 'R',
+			 .mainThreadCpuNanoseconds = 100'000'000},
+			{.sampledAtSteadyNanoseconds = 410'000'000,
+			 .state = 'R',
+			 .mainThreadCpuNanoseconds = 100'000'000},
+			{.sampledAtSteadyNanoseconds = 414'000'000,
+			 .state = 'W',
+			 .mainThreadCpuNanoseconds = 104'000'000},
+			{.sampledAtSteadyNanoseconds = 415'000'000,
+			 .state = 'R',
+			 .mainThreadCpuNanoseconds = 104'000'000},
+			{.sampledAtSteadyNanoseconds = 435'000'000,
+			 .state = 'R',
+			 .mainThreadCpuNanoseconds = 124'000'000},
+			{.sampledAtSteadyNanoseconds = 455'000'000,
+			 .state = 'R',
+			 .mainThreadCpuNanoseconds = 148'000'000},
+		});
+	const auto delayedCpuAccountingEstimate = EstimateMainThreadWork(
+		48'000'000, 55'000'000, delayedCpuAccountingWindow);
 	const auto sparseCpuWindow = SchedulerTraceForInterval(
 		MainThreadWorkInterval{
 			.durationNanoseconds = 65'000'000,
 			.startedAtSteadyNanoseconds = 300'000'000,
-			.mainThreadCpuStartNanoseconds = 0,
 			.mainThreadCpuEndNanoseconds = 12'000'000,
 		},
 		std::vector<Core::UiStallWatchdog::SchedulerSampleEvidence>{
@@ -12168,8 +12195,14 @@ void AccumulateMainThreadWorkEstimate(qint64 &aggregateNanoseconds,
 		   && MainThreadEstimatedWorkWithinBudget(
 			   overlappingSampleIntervals.estimatedWorkNanoseconds,
 			   kMaxChatSwitchNanoseconds)
-		   && (cpuOverlapEstimate.blockedNanoseconds == 30'000'000)
-		   && (cpuOverlapEstimate.estimatedWorkNanoseconds == 70'000'000)
+		   && (cpuOverlapEstimate.blockedNanoseconds == 35'000'000)
+		   && (cpuOverlapEstimate.estimatedWorkNanoseconds == 75'000'000)
+		   && (delayedCpuAccountingEstimate.blockedNanoseconds == 5'000'000)
+		   && (delayedCpuAccountingEstimate.estimatedWorkNanoseconds
+			   == 53'000'000)
+		   && !MainThreadEstimatedWorkWithinBudget(
+			   delayedCpuAccountingEstimate.estimatedWorkNanoseconds,
+			   kMaxChatSwitchNanoseconds)
 		   && (sparseCpuEstimate.blockedNanoseconds == -1)
 		   && (sparseCpuEstimate.estimatedWorkNanoseconds == 65'000'000)
 		   && (cpuOverWall.estimatedWorkNanoseconds >= 52'000'000)
