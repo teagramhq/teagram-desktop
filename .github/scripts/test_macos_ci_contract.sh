@@ -1811,6 +1811,14 @@ if ! awk '
   contract_fail 'The shutdown probe must require a real CoreText family enumeration frame inside Qt font-database population.'
 fi
 if ! awk '
+  /ProbeDecision.store\(inEnumeration \? ProbeHold : ProbeRelease/ { in_sample = 1; release = NR }
+  in_sample && /std::this_thread::yield\(\);/ { yielded = NR }
+  in_sample && /return inEnumeration \?/ { exit !(release && yielded && release < yielded) }
+  END { if (!yielded) exit 1 }
+' Telegram/SourceFiles/core/sandbox.cpp; then
+	contract_fail 'A rejected stack sample must yield to the worker before retrying.'
+fi
+if ! awk '
   /^run_font_startup_regression\(\) \{$/ { in_startup = 1; next }
   in_startup && /^}$/ { in_startup = 0 }
   in_startup && /run_font_shutdown_regression;/ { enumeration = NR }

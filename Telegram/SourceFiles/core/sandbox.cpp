@@ -306,6 +306,11 @@ void PrintProbeFrameSnapshot(const ProbeFrameSnapshot &snapshot) {
 	}
 	ProbeDecision.store(inEnumeration ? ProbeHold : ProbeRelease,
 						std::memory_order_release);
+	if (!inEnumeration) {
+		// Let the worker reach its next native query before the zero-timeout
+		// timer asks for another sample.
+		std::this_thread::yield();
+	}
 	return inEnumeration ? StackSample::InSystemEnumeration
 						 : StackSample::OtherWork;
 }
