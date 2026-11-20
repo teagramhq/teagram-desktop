@@ -12843,7 +12843,6 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 			processWorkNanoseconds,
 			label,
 			startedAtSteadyNanoseconds,
-			mainThreadBefore.value_or(-1),
 			mainThreadAfter.value_or(-1),
 		};
 		chatSwitchWindows.push_back(interval);
@@ -14316,7 +14315,6 @@ RunFirstDialogsHandlerLatencyRegression(not_null<Main::Account *> account) {
 		-1,
 		u"messages.getDialogs response handler"_q,
 		handlerStartedAtSteadyNanoseconds,
-		handlerMainThreadBefore.value_or(-1),
 		handlerMainThreadAfter.value_or(-1),
 	};
 	auto handlerSchedulerTimeline
