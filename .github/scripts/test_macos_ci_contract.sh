@@ -1538,6 +1538,19 @@ all_first_command="$(awk '
 [[ "$all_first_command" == 'run_font_startup_regression' ]] \
   || contract_fail "$profile_harness must run the font-startup regression before any all-case app launches."
 application_source='Telegram/SourceFiles/core/application.cpp'
+if ! python3 - <<'PY'
+from pathlib import Path
+
+source = Path('Telegram/SourceFiles/core/application.cpp').read_text()
+branch = source.index('"TDESKTOP_EMOJI_CACHE_SHUTDOWN_REGRESSION"')
+player = source.index('Media::Player::start(_audio.get());', branch)
+shutdown = source.index('RunEmojiCacheShutdownRegression', branch)
+if not branch < player < shutdown:
+    raise SystemExit('the headless emoji shutdown fixture must initialize Media::Player before draining')
+PY
+then
+	contract_fail 'The headless relaunch primary must initialize the media player before shutdown callbacks run.'
+fi
 emoji_init_line="$(grep -n -F 'Ui::Emoji::Init();' "$application_source" | head -n 1 | cut -d: -f1)"
 font_fallback_exit_line="$(grep -n -F \
 	'QCoreApplication::exit(RunFontFallbackRegression());' "$application_source" \
@@ -1810,13 +1823,32 @@ if ! awk '
 ' Telegram/SourceFiles/core/sandbox.cpp; then
   contract_fail 'The shutdown probe must require a real CoreText family enumeration frame inside Qt font-database population.'
 fi
-if ! awk '
-  /ProbeDecision.store\(inEnumeration \? ProbeHold : ProbeRelease/ { in_sample = 1; release = NR }
-  in_sample && /std::this_thread::yield\(\);/ { yielded = NR }
-  in_sample && /return inEnumeration \?/ { exit !(release && yielded && release < yielded) }
-  END { if (!yielded) exit 1 }
-' Telegram/SourceFiles/core/sandbox.cpp; then
-	contract_fail 'A rejected stack sample must yield to the worker before retrying.'
+if ! python3 - <<'PY'
+from pathlib import Path
+
+probe = Path('Telegram/SourceFiles/tests/font_shutdown_probe.mm').read_text()
+function = probe.split('Teagram_FontFamilyPopulationProbe() {', 1)[1]
+first_call = function.index('auto result = original();')
+ready = function.index('ProbeInterposerReady.store(true, std::memory_order_release);')
+repeat = function.index('while (!ProbeReleased.load')
+if not first_call < ready < repeat:
+    raise SystemExit('the interposer must signal readiness after the first real CoreText query')
+
+header = Path('Telegram/SourceFiles/tests/font_shutdown_probe.h').read_text()
+if 'IsFontShutdownProbeReady' not in header:
+    raise SystemExit('the GUI must be able to observe the interposer readiness signal')
+
+warmup = Path('Telegram/SourceFiles/core/sandbox.cpp').read_text().split(
+    'void Sandbox::startFontDatabaseWarmup()', 1
+)[1]
+callback = warmup.split('connect(timer, &QTimer::timeout, this, [=] {', 1)[1]
+ready_check = callback.index('Core::Tests::IsFontShutdownProbeReady()')
+sample = callback.index('SampleWorkerStack(')
+if ready_check > sample or 'testFailure != "probe-timeout"' not in callback[ready_check - 80:ready_check]:
+    raise SystemExit('sampling must wait for interposer readiness except in the forced timeout case')
+PY
+then
+	contract_fail 'The shutdown sampler must wait for the interposer before requiring a real CoreText frame.'
 fi
 if ! awk '
   /^run_font_startup_regression\(\) \{$/ { in_startup = 1; next }

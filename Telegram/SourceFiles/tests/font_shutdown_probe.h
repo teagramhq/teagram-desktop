@@ -16,5 +16,7 @@ ArmFontShutdownProbe(pthread_t worker, int skippedPopulations);
 __attribute__((visibility("default"))) void ReleaseFontShutdownProbe();
 [[nodiscard]] __attribute__((visibility("default"))) bool
 IsFontShutdownProbeReleased();
+[[nodiscard]] __attribute__((visibility("default"))) bool
+IsFontShutdownProbeReady();
 
 } // namespace Core::Tests

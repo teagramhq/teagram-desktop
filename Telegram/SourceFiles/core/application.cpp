@@ -399,6 +399,7 @@ void Application::run() {
 		}
 		if (qEnvironmentVariableIsSet(
 				"TDESKTOP_EMOJI_CACHE_SHUTDOWN_REGRESSION")) {
+			Media::Player::start(_audio.get());
 			const auto result = RunFontFallbackRegression();
 			RunEmojiCacheShutdownRegression([=](bool ready) {
 				QCoreApplication::exit(result | (ready ? 0 : 1));

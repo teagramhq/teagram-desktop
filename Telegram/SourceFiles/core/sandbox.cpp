@@ -306,11 +306,6 @@ void PrintProbeFrameSnapshot(const ProbeFrameSnapshot &snapshot) {
 	}
 	ProbeDecision.store(inEnumeration ? ProbeHold : ProbeRelease,
 						std::memory_order_release);
-	if (!inEnumeration) {
-		// Let the worker reach its next native query before the zero-timeout
-		// timer asks for another sample.
-		std::this_thread::yield();
-	}
 	return inEnumeration ? StackSample::InSystemEnumeration
 						 : StackSample::OtherWork;
 }
@@ -1244,6 +1239,18 @@ void Sandbox::startFontDatabaseWarmup() {
 					}
 					return;
 				}
+#if defined(TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST)
+				if (testFailure != "probe-timeout"
+					&& !Core::Tests::IsFontShutdownProbeReady()) {
+					if (started->elapsed() >= 10000) {
+						fprintf(stderr,
+								"Font shutdown regression: "
+								"probe_error=interposer_ready_timeout\n");
+						stopWorker(ProbeExit::Failure);
+					}
+					return;
+				}
+#endif // TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST
 				const auto sample = SampleWorkerStack(
 					_fontDatabaseWarmupThread.native_handle(), *lastOtherWork);
 				if (sample == StackSample::Failed) {
