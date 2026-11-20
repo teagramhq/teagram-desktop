@@ -14663,7 +14663,6 @@ void RunAuthenticatedCacheSymlinkCases(
 						processWorkNanoseconds,
 						{},
 						lastMainThreadHeartbeatSteadyNanoseconds,
-						lastMainThreadCpuNanoseconds.value_or(-1),
 						currentMainThreadCpuNanoseconds.value_or(-1),
 					});
 				}
