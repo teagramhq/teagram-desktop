@@ -37,6 +37,7 @@ class UiStallWatchdog final : public QObject {
 		qint64 durationNanoseconds = 0;
 		QString schedulerTrace;
 		std::vector<qint64> schedulerSampleOffsetsNanoseconds;
+		std::vector<qint64> schedulerSampleMainThreadCpuNanoseconds;
 		QString stack;
 	};
 
@@ -49,17 +50,20 @@ class UiStallWatchdog final : public QObject {
 		qint64 postedAtSteadyNanoseconds = 0;
 		QString schedulerTrace;
 		std::vector<qint64> schedulerSampleOffsetsNanoseconds;
+		std::vector<qint64> schedulerSampleMainThreadCpuNanoseconds;
 		bool schedulerTraceComplete = false;
 	};
 
 	struct SchedulerSampleEvidence {
 		qint64 sampledAtSteadyNanoseconds = 0;
 		char state = '?';
+		qint64 mainThreadCpuNanoseconds = -1;
 	};
 
 	struct SchedulerTraceSnapshot {
 		QString trace;
 		std::vector<qint64> sampleOffsetsNanoseconds;
+		std::vector<qint64> sampleMainThreadCpuNanoseconds;
 	};
 
 	explicit UiStallWatchdog(
