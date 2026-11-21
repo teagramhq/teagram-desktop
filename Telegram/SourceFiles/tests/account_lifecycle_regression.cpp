@@ -22093,6 +22093,88 @@ std::optional<qint64> ProcessCpuTimeNanosecondsForRegressionTest() {
 }
 #endif
 
+int RunDialogBatchStateRegression(not_null<Main::Account *> reuseAccount) {
+	constexpr auto kDialogs = 128;
+	constexpr auto kMessages = 96;
+	const auto firstId = UserId(8'200'000);
+	const auto passed = WithDesktopScaleAccount(
+		Core::App().domain(), UserId(firstId.bare - 1),
+		[&](auto account) {
+			auto &session = account->session();
+			auto &data = session.data();
+			auto existingRows = std::vector<Dialogs::Key>();
+			for (const auto &row : data.chatsList()->indexed()->all()) {
+				existingRows.push_back(row->key());
+			}
+			for (const auto &key : existingRows) {
+				data.removeChatListEntry(key);
+			}
+			if (!SeedDesktopScaleDialogs(data, firstId, kDialogs)) {
+				return false;
+			}
+			const auto before = DesktopScaleChatListSnapshot(*data.chatsList());
+			auto capture = ChannelSaveRequestCapture{
+				.instance = &account->mtp(),
+				.desktopScaleDataQueriesOnly = true,
+			};
+			const auto restore
+				= gsl::finally([previous = std::exchange(
+									gChannelSaveRequestCapture, &capture)] {
+					  gChannelSaveRequestCapture = previous;
+				  });
+			session.updates().completeInitialStateForRegressionTest(1);
+			session.updates().getDifference();
+			const auto date = int(base::unixtime::now()) + kMessages + 10;
+			const auto messages = DesktopScaleUpdateBurstMessages(
+				firstId, kDialogs, date, kMessages);
+			const auto difference = MTP_updates_difference(
+				MTP_vector<MTPMessage>(messages),
+				MTP_vector<MTPEncryptedMessage>(0), MTP_vector<MTPUpdate>(0),
+				MTP_vector<MTPChat>(0), MTP_vector<MTPUser>(0),
+				MTP_updates_state(MTP_int(1 + kMessages), MTP_int(0),
+								  MTP_int(date + kMessages), MTP_int(0),
+								  MTP_int(0)));
+			if (!ReplyToCapturedRequestForRegressionTest<
+					MTPupdates_GetDifference>(
+					capture, 0, mtpc_updates_getDifference, difference)) {
+				return false;
+			}
+			for (auto i = 0; i != kMessages; ++i) {
+				if (!data.message(peerFromUser(UserId(firstId.bare + i)),
+								  MsgId(kDesktopScaleUpdateMessageBase + i))) {
+					return false;
+				}
+			}
+			if (!DesktopScaleUpdateBurstStateMatches(before, *data.chatsList(),
+													 firstId, kDialogs,
+													 kMessages, false)) {
+				return false;
+			}
+			auto expectedTop = 0;
+			auto expectedIndex = 0;
+			for (const auto &row : data.chatsList()->indexed()->all()) {
+				if ((row->index() != expectedIndex)
+					|| (row->top() != expectedTop)) {
+					std::fprintf(stderr,
+								 "Dialog batch regression failed: row %d has "
+								 "index %d and "
+								 "top %d, expected index %d and top %d.\n",
+								 expectedIndex, row->index(), row->top(),
+								 expectedIndex, expectedTop);
+					return false;
+				}
+				expectedTop += row->height();
+				++expectedIndex;
+			}
+			return expectedIndex == kDialogs;
+		},
+		reuseAccount.get());
+	if (passed) {
+		std::fprintf(stderr, "DIALOG_BATCH_STATE_PASS\n");
+	}
+	return passed ? 0 : 1;
+}
+
 int RunDesktopScaleCheck() {
 #if defined(Q_OS_LINUX)
 	auto &app = Core::App();
@@ -22197,6 +22279,7 @@ int RunDesktopScaleCheck() {
 		});
 	auto groupOne = DesktopScaleFsSample();
 	auto groupHundred = DesktopScaleFsSample();
+	auto dialogBatchStatePassed = false;
 	const auto groupCreated = WithDesktopScaleAccount(
 		domain, UserId(8'000'000), [&](auto account) {
 			return WithDesktopScaleWindow(account, [&](auto windowController) {
@@ -22208,6 +22291,8 @@ int RunDesktopScaleCheck() {
 					domain, 2'000, UserId(8'100'000), UserId(8'100'001),
 					ChannelId(8'100'002), account.get(),
 					windowController.get());
+				dialogBatchStatePassed
+					= (RunDialogBatchStateRegression(account) == 0);
 				return groupOne.passed && groupHundred.passed;
 			});
 		});
@@ -22283,7 +22368,7 @@ int RunDesktopScaleCheck() {
 		  && dateHundred.passed && historyCreated && groupOne.passed
 		  && groupHundred.passed && searchOne.search.passed && groupCreated
 		  && searchHundred.search.passed && searchOne.updateBurst.passed
-		  && searchHundred.updateBurst.passed
+		  && searchHundred.updateBurst.passed && dialogBatchStatePassed
 		  && DesktopScaleUpdateBurstMeasurementsValid(searchOne.updateBurst,
 													  searchHundred.updateBurst)
 		  && blockingStalls && (*blockingStalls == 0)
@@ -22407,6 +22492,8 @@ int RunDesktopScaleCheck() {
 	std::printf("Contact removal check: %d/%d.\n",
 				int(contactsOne.removed.passed),
 				int(contactsHundred.removed.passed));
+	std::printf("Dialog batch state regression: %s.\n",
+				dialogBatchStatePassed ? "PASS" : "FAIL");
 	std::printf(
 		"Additional scenario checks: history=%d/%d date=%d/%d group=%d/%d "
 		"search=%d/%d updates=%d/%d.\n",

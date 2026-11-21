@@ -8,6 +8,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "dialogs/dialogs_list.h"
 
 #include "dialogs/dialogs_entry.h"
+#include "dialogs/dialogs_list_order.h"
 #include "dialogs/ui/dialogs_layout.h"
 #include "data/data_session.h"
 
@@ -99,7 +100,7 @@ void List::adjustByDate(not_null<Row*> row) {
 			&& (row->entry()->fixedOnTopIndex()
 				|| row->entry()->isPinnedDialog(_filterId));
 		if (!canAdjustWhileFrozen) {
-			_pendingAdjust.emplace(row);
+			_pendingAdjust.emplace(row.get());
 			if (!_addedWhileFrozen.contains(row)) {
 				_pendingMoveFrom.try_emplace(row.get(), row->top());
 			}
@@ -141,43 +142,27 @@ std::vector<List::MovedRow> List::unfreeze() {
 	_frozen = false;
 	auto pending = base::take(_pendingAdjust);
 	if (pending.size() == 1) {
-		adjustByDate(*pending.begin());
-	} else if (pending.size() > 1 && !sortedByDate()) {
-		auto pendingByIndex
-			= std::vector<not_null<Row *>>(pending.begin(), pending.end());
-		ranges::sort(pendingByIndex,
-					 [](Row *a, Row *b) { return a->index() < b->index(); });
-		auto adjusted = pendingByIndex;
-		ranges::stable_sort(adjusted, [&](Row *a, Row *b) {
-			return a->sortKey(_filterId) > b->sortKey(_filterId);
-		});
-		auto rows = std::vector<not_null<Row *>>();
-		rows.reserve(_rows.size());
-		auto nextAdjusted = adjusted.begin();
-		auto nextPending = pendingByIndex.begin();
-		for (const auto &row : _rows) {
-			if ((nextPending != pendingByIndex.end())
-				&& (row == *nextPending)) {
-				++nextPending;
-				continue;
-			}
-			const auto rowKey = row->sortKey(_filterId);
-			while ((nextAdjusted != adjusted.end())
-				   && (((*nextAdjusted)->sortKey(_filterId) > rowKey)
-					   || (((*nextAdjusted)->sortKey(_filterId) == rowKey)
-						   && ((*nextAdjusted)->index() < row->index())))) {
-				rows.push_back(*nextAdjusted++);
-			}
-			rows.push_back(row);
+		adjustByDate(not_null<Row *>(*pending.begin()));
+	} else if (pending.size() > 1) {
+		auto pendingRows = std::vector<not_null<Row *>>();
+		pendingRows.reserve(pending.size());
+		for (const auto row : pending) {
+			pendingRows.emplace_back(row);
 		}
-		rows.insert(rows.end(), nextAdjusted, adjusted.end());
-		_rows = std::move(rows);
-		auto top = 0;
-		for (auto i = 0, count = int(_rows.size()); i != count; ++i) {
-			const auto row = _rows[i];
-			row->_index = i;
-			row->_top = top;
-			top += row->height();
+		auto [rows, changedEnd] = details::ReorderChangedRows(
+			_rows, std::move(pendingRows),
+			[&](Row *row) { return row->sortKey(_filterId); },
+			[](Row *row) { return row->index(); });
+		if (!rows.empty()) {
+			Expects(int(rows.size()) == changedEnd);
+			std::copy(rows.begin(), rows.end(), _rows.begin());
+			auto top = 0;
+			for (auto i = 0; i != changedEnd; ++i) {
+				const auto row = _rows[i];
+				row->_index = i;
+				row->_top = top;
+				top += row->height();
+			}
 		}
 	}
 	auto moved = std::vector<MovedRow>();
@@ -198,17 +183,6 @@ std::vector<List::MovedRow> List::unfreeze() {
 	_pendingMoveFrom.clear();
 	_addedWhileFrozen.clear();
 	return moved;
-}
-
-bool List::sortedByDate() const {
-	Expects(_sortMode == SortMode::Date);
-
-	for (auto i = 1, count = int(_rows.size()); i != count; ++i) {
-		if (_rows[i - 1]->sortKey(_filterId) < _rows[i]->sortKey(_filterId)) {
-			return false;
-		}
-	}
-	return true;
 }
 
 bool List::updateHeight(Key key, float64 narrowRatio) {
@@ -278,7 +252,7 @@ bool List::remove(Key key, Row *replacedBy) {
 	}
 
 	const auto row = i->second.get();
-	_pendingAdjust.remove(row);
+	_pendingAdjust.erase(row);
 	_addedWhileFrozen.remove(row);
 	_pendingMoveFrom.erase(row);
 	row->entry()->owner().dialogsRowReplaced({ row, replacedBy });
