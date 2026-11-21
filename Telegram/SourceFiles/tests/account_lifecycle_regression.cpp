@@ -3855,18 +3855,24 @@ enum class WindowActivationForRegressionResult {
 	Failed,
 };
 
-[[nodiscard]] WindowActivationForRegressionResult
-ActivateWindowForRegression(Core::Application &app,
-							not_null<Window::Controller *> window,
-							bool requirePrimary = false) {
+[[nodiscard]] bool IsWindowActiveForRegression(
+	Core::Application &app, not_null<Window::Controller *> window,
+	bool requirePrimary = false, bool requireForeground = false) {
 	const auto widget = window->widget();
+	return (!requireForeground
+			|| (Platform::IsApplicationActiveForRegression()
+				&& widget->isActiveWindow() && widget->isVisible()
+				&& !(widget->windowState() & Qt::WindowMinimized)))
+		   && (app.activeWindow() == window.get())
+		   && (!requirePrimary || (app.activePrimaryWindow() == window.get()));
+}
+
+[[nodiscard]] WindowActivationForRegressionResult ActivateWindowForRegression(
+	Core::Application &app, not_null<Window::Controller *> window,
+	bool requirePrimary = false, bool requireForeground = false) {
 	const auto isActive = [&] {
-		return Platform::IsApplicationActiveForRegression()
-			   && widget->isActiveWindow() && widget->isVisible()
-			   && !(widget->windowState() & Qt::WindowMinimized)
-			   && (app.activeWindow() == window.get())
-			   && (!requirePrimary
-				   || (app.activePrimaryWindow() == window.get()));
+		return IsWindowActiveForRegression(app, window, requirePrimary,
+										   requireForeground);
 	};
 	auto retry = QTimer();
 	retry.setInterval(100);
@@ -3877,6 +3883,13 @@ ActivateWindowForRegression(Core::Application &app,
 	});
 	retry.start();
 	window->activate();
+	if (!requireForeground && !Platform::IsApplicationActiveForRegression()) {
+		LogWindowActivationForRegression(app, window);
+		std::fprintf(stderr,
+					 "Settings deep link activation unavailable: "
+					 "AppKit app is inactive before focus verification.\n");
+		return WindowActivationForRegressionResult::AppInactive;
+	}
 	const auto activated = WaitForRegressionCondition(isActive);
 	retry.stop();
 	if (!activated) {
@@ -12353,6 +12366,7 @@ struct CacheChatSwitchRegressionResult final {
 	int attachMenuUncachedBuildCountFailures = 0;
 	bool minimizedRestore = false;
 	bool initialHistoryWindowActivated = false;
+	bool chatSwitchWindowsActivated = true;
 	bool historyScaleInvalidationRebuilt = false;
 	bool historyChatModeInvalidationRebuilt = false;
 	bool chatSwitchComposeUiReused = false;
@@ -12809,6 +12823,22 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 			controller->showPeerHistory(history);
 			return qint64(-1);
 		}
+		if ((index > 0) && result.chatSwitchWindowsActivated
+			&& !IsWindowActiveForRegression(Core::App(), window, false, true)) {
+			const auto activation
+				= ActivateWindowForRegression(Core::App(), window, false, true);
+			if (activation != WindowActivationForRegressionResult::Activated
+				|| !IsWindowActiveForRegression(Core::App(), window, false,
+												true)) {
+				result.chatSwitchWindowsActivated = false;
+				controller->showPeerHistory(history);
+				return qint64(-1);
+			}
+		}
+		if ((index > 0) && !result.chatSwitchWindowsActivated) {
+			controller->showPeerHistory(history);
+			return qint64(-1);
+		}
 		const auto peerId = qint64(history->peer->id.value);
 		const auto startedAt = QDateTime::currentDateTime();
 		const auto mainThreadBefore = MainThreadCpuTimeNanoseconds();
@@ -12882,7 +12912,7 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 	settleHistoryUnfocused();
 	Platform::ActivateThisProcess(window->widget());
 	result.initialHistoryWindowActivated
-		= (ActivateWindowForRegression(Core::App(), window)
+		= (ActivateWindowForRegression(Core::App(), window, false, true)
 		   == WindowActivationForRegressionResult::Activated);
 	showPeerHistoryMeasured(emptyFirstHistory);
 	settleHistoryUnfocused();
@@ -14178,6 +14208,7 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		  && result.pendingRevealStartedAfterControlsGeometry
 		  && result.minimizedRestore && hydrationCpuClockAvailable
 		  && result.initialHistoryWindowActivated
+		  && result.chatSwitchWindowsActivated
 		  && (result.maxHydrationMainThreadWorkNanoseconds >= 0)
 		  && MainThreadCpuWorkWithinBudget(
 			  result.maxHydrationMainThreadWorkNanoseconds,
@@ -15122,6 +15153,7 @@ void RunAuthenticatedCacheSymlinkCases(
 					"attach_menu_bot_count=%d "
 					"minimized_restore=%d "
 					"initial_history_window_activated=%d "
+					"all_chat_switch_windows_activated=%d "
 					"minimized_switch_ns=%lld "
 					"minimized_restore_budget_ns=%lld "
 					"max_hydration_ns=%lld "
@@ -15177,6 +15209,7 @@ void RunAuthenticatedCacheSymlinkCases(
 					chatSwitch.chatSwitches, chatSwitch.attachMenuBotCount,
 					chatSwitch.minimizedRestore,
 					chatSwitch.initialHistoryWindowActivated,
+					chatSwitch.chatSwitchWindowsActivated,
 					static_cast<long long>(
 						chatSwitch.minimizedSwitchNanoseconds),
 					static_cast<long long>(kMaxMinimizedRestoreNanoseconds),

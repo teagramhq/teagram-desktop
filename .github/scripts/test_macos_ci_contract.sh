@@ -1360,7 +1360,7 @@ Cache startup watchdog stall: cache=cache started_at=2026-11-06T00:47:53.000Z du
 Cache access latency regression: cache=media_cache seeded_directories=125 seeded_files=169 closed_clear_missing_active=1 cache_initialization_ns=120678959 initialization_allowed=1 queued_ops_before_ready=1 queued_ops_passed=1 cache_usable_ns=120763125 under_10s=1 max_main_thread_work_ns=48247625 max_startup_estimated_work_ns=48247625 max_heartbeat_gap_ns=48247625 max_heartbeat_gap_work_ns=48247625 heartbeat_gap_process_work_ns=25000000 heartbeat_gap_started_at=2026-11-06T00:47:53.000Z startup_heartbeat_gap_count=0 startup_uncovered_heartbeat_gaps=0 startup_heartbeat_gap_coverage_proven=1 startup_stall_count=0 max_startup_stall_ns=0 startup_stall_main_thread_work_ns=0 startup_stall_process_work_ns=0 startup_stall_started_at=none startup_stall_heartbeat_gap_started_at=none startup_stall_scheduler_samples=0 startup_stall_scheduler_running=0 startup_stall_scheduler_waiting=0 startup_stall_scheduler_uninterruptible=0 startup_stall_scheduler_other=0 startup_stall_scheduler_trace=none startup_stall_stack_captured=0 startup_stall_evidence_matched=0 startup_stall_scheduler_preemption_proven=0 under_100ms=1 first_access_ns=83292 under_50ms=1 root_swap_refused=1 direct_fallback_closed=1 root_restored=1 startup_walks=2 main_thread_walks=0.
 First messages.getDialogs handler latency regression: seeded_directories=125 seeded_files=169 requests=1 parsed=1 chats=2 dialogs=1 messages=73 documents=73 cache_walks=2 max_handler_ns=9893666 main_thread_cpu_ns=9893666 blocked_estimate_ns=0 estimated_work_ns=9893666 trace=R under_50ms=1.
 Initial history selection: peer_id=281474977760707 wall_ns=135344750 main_thread_work_ns=40000000 blocked_estimate_ns=0 estimated_work_ns=40000000 budget_ns=50000000 trace=R scheduler_preemption_proven=0.
-Cache chat switch latency regression: seeded_directories=125 seeded_files=169 reactions=73 hydrated_documents=292 chat_switches=73 attach_menu_bot_count=20 minimized_restore=1 initial_history_window_activated=1 minimized_switch_ns=45000000 minimized_restore_budget_ns=50000000 max_hydration_ns=5210625 max_hydration_work_ns=4000000 hydration_scheduler_preemption_proven=0 max_switch_ns=45000000 max_switch_work_ns=40000000 max_recurring_switch_work_ns=40000000 max_switch_estimated_work_ns=40000000 max_recurring_switch_estimated_work_ns=40000000 max_switch_index=3 max_switch_peer_id=281474976711707 switch_scheduler_preemption_proven=0 attach_menu_first_hover_ns=12000000 attach_menu_hover_ns=92000000 attach_menu_update_hover_ns=11000000 attach_menu_uncached_peer_ns=20000000 attach_menu_first_hover_callback_cpu_ns=12000000 attach_menu_update_hover_callback_cpu_ns=1000000 attach_menu_uncached_peer_callback_cpu_ns=20000000 attach_menu_first_hover_callback_wall_ns=92000000 attach_menu_update_hover_callback_wall_ns=92000000 attach_menu_uncached_peer_callback_wall_ns=92000000 attach_menu_scheduler_preemption_proven=0 attach_menu_cached=1 attach_menu_invalidated=1 attach_menu_build_deferred=1 attach_menu_uncached_ready=1 attach_menu_uncached_deferred_failures=0 attach_menu_uncached_missing_bot_failures=0 attach_menu_uncached_build_count_failures=0 attach_menu_cache_bound=1 pending_reveal_after_controls_geometry=1 chat_switch_compose_ui_reused=1 field_autocomplete_suggestions_ready=1 menu_commands_unfocused=1 bot_commands_unfocused=1 history_chat_mode_invalidation_rebuilt=1 dialog_histories_ready=1 synthetic_histories_ready=1 max_stall_ns=40000000 within_budgets=1.
+Cache chat switch latency regression: seeded_directories=125 seeded_files=169 reactions=73 hydrated_documents=292 chat_switches=73 attach_menu_bot_count=20 minimized_restore=1 initial_history_window_activated=1 all_chat_switch_windows_activated=1 minimized_switch_ns=45000000 minimized_restore_budget_ns=50000000 max_hydration_ns=5210625 max_hydration_work_ns=4000000 hydration_scheduler_preemption_proven=0 max_switch_ns=45000000 max_switch_work_ns=40000000 max_recurring_switch_work_ns=40000000 max_switch_estimated_work_ns=40000000 max_recurring_switch_estimated_work_ns=40000000 max_switch_index=3 max_switch_peer_id=281474976711707 switch_scheduler_preemption_proven=0 attach_menu_first_hover_ns=12000000 attach_menu_hover_ns=92000000 attach_menu_update_hover_ns=11000000 attach_menu_uncached_peer_ns=20000000 attach_menu_first_hover_callback_cpu_ns=12000000 attach_menu_update_hover_callback_cpu_ns=1000000 attach_menu_uncached_peer_callback_cpu_ns=20000000 attach_menu_first_hover_callback_wall_ns=92000000 attach_menu_update_hover_callback_wall_ns=92000000 attach_menu_uncached_peer_callback_wall_ns=92000000 attach_menu_scheduler_preemption_proven=0 attach_menu_cached=1 attach_menu_invalidated=1 attach_menu_build_deferred=1 attach_menu_uncached_ready=1 attach_menu_uncached_deferred_failures=0 attach_menu_uncached_missing_bot_failures=0 attach_menu_uncached_build_count_failures=0 attach_menu_cache_bound=1 pending_reveal_after_controls_geometry=1 chat_switch_compose_ui_reused=1 field_autocomplete_suggestions_ready=1 menu_commands_unfocused=1 bot_commands_unfocused=1 history_chat_mode_invalidation_rebuilt=1 dialog_histories_ready=1 synthetic_histories_ready=1 max_stall_ns=40000000 within_budgets=1.
 Attach-menu callback work: cached_hover_wall_ns=92000000 cached_hover_estimated_work_ns=12000000 first_hover_estimated_work_ns=12000000 invalidation_estimated_work_ns=1000000 uncached_peer_estimated_work_ns=20000000 budget_ns=50000000.
 EOF
 check_cache_latency_evidence() (
@@ -2189,7 +2189,8 @@ grep -Fq 'WindowActivationForRegressionResult::AppInactive' "$native_harness" \
 grep -Fq 'AppKit app became inactive before focus verification.' "$native_harness" \
   || contract_fail "$native_harness must use timeout AppKit state to decide whether focus could be verified."
 awk '
-  /ActivateWindowForRegression\(Core::Application/ { in_activation = 1 }
+  /ActivateWindowForRegression\(/ { activation_signature = 1 }
+  activation_signature && /Core::Application &app/ { in_activation = 1 }
   in_activation && /if \(!activated\)/ { activation_timeout = NR }
   in_activation && /window->activate\(\)/ && !activation_call { activation_call = NR }
   in_activation && /if \(!Platform::IsApplicationActiveForRegression\(\)\)/ {
@@ -2211,21 +2212,73 @@ awk '
 ' "$native_harness" \
   || contract_fail "$native_harness must issue activation before classifying AppKit inactivity at timeout."
 awk '
-  /ActivateWindowForRegression\(Core::Application/ { in_activation = 1 }
-  in_activation && /const auto isActive =/ { in_predicate = 1 }
-  in_predicate && /Platform::IsApplicationActiveForRegression\(\)/ { requires_foreground = 1 }
-  in_predicate && /widget->isActiveWindow\(\)/ { checks_active_widget = 1 }
-  in_predicate && /widget->isVisible\(\)/ { checks_visible_widget = 1 }
-  in_predicate && /Qt::WindowMinimized/ { checks_unminimized_widget = 1 }
-  in_predicate && /^[[:space:]]*};/ { in_predicate = 0 }
-  in_activation && /WaitForRegressionCondition\(isActive\)/ { waits_for_predicate = 1 }
-  in_activation && /^}/ { exit }
+  /bool IsWindowActiveForRegression\(/ { in_check = 1 }
+  in_check && /bool requireForeground = false/ { foreground_option = 1 }
+  in_check && /!requireForeground/ { foreground_gated = 1 }
+  in_check && /Platform::IsApplicationActiveForRegression\(\)/ { requires_foreground = 1 }
+  in_check && /widget->isActiveWindow\(\)/ { checks_active_widget = 1 }
+  in_check && /widget->isVisible\(\)/ { checks_visible_widget = 1 }
+  in_check && /Qt::WindowMinimized/ { checks_unminimized_widget = 1 }
+  in_check && /^}/ { exit }
   END {
-    exit !(requires_foreground && checks_active_widget && checks_visible_widget &&
-      checks_unminimized_widget && waits_for_predicate)
+    exit !(foreground_option && foreground_gated && requires_foreground &&
+      checks_active_widget && checks_visible_widget && checks_unminimized_widget)
   }
 ' "$native_harness" \
-  || contract_fail "$native_harness must require the foreground app and active, visible, unminimized target in the activation predicate passed to WaitForRegressionCondition."
+  || contract_fail "$native_harness must gate foreground, active, visible, unminimized checks behind an opt-in window activity predicate."
+awk '
+  /ActivateWindowForRegression\(/ { activation_signature = 1 }
+  activation_signature && /Core::Application &app/ { in_activation = 1 }
+  in_activation && /window->activate\(\)/ { activation_call = NR }
+  in_activation && /if \(!requireForeground && !Platform::IsApplicationActiveForRegression\(\)\)/ {
+    inactive_gate = NR
+  }
+  in_activation && /return WindowActivationForRegressionResult::AppInactive/ {
+    if (inactive_gate && NR > inactive_gate && !inactive_return) {
+      inactive_return = NR
+    }
+  }
+  in_activation && /^}/ { exit }
+  END {
+    exit !(activation_call && inactive_gate > activation_call &&
+      inactive_return > inactive_gate)
+  }
+' "$native_harness" \
+  || contract_fail "$native_harness must stop retrying focus checks when the app is inactive after a non-foreground activation attempt."
+awk '
+  /ActivateWindowForRegression\(/ { activation_signature = 1 }
+  activation_signature && /Core::Application &app/ { in_activation = 1 }
+  in_activation && /const auto isActive =/ { in_predicate = 1 }
+  in_predicate && /IsWindowActiveForRegression\(/ { uses_window_predicate = 1 }
+  in_predicate && /app, window, requirePrimary,/ { saw_options_prefix = 1 }
+  in_predicate && /requireForeground\)/ { saw_foreground_option = 1 }
+  in_predicate && saw_options_prefix && saw_foreground_option { passes_options = 1 }
+  in_activation && /WaitForRegressionCondition\(isActive\)/ { waits_for_predicate = 1 }
+  in_activation && /^}/ { exit }
+  END { exit !(uses_window_predicate && passes_options && waits_for_predicate) }
+' "$native_harness" \
+  || contract_fail "$native_harness must wait on the shared window activity predicate before reporting activation."
+awk '
+  /const auto showPeerHistoryMeasured =/ { in_measurement = 1 }
+  in_measurement && /IsWindowActiveForRegression\(Core::App\(\), window, false, true\)/ {
+    active_check = NR
+  }
+  in_measurement && /ActivateWindowForRegression\(/ { activation = NR }
+  in_measurement && /Core::App\(\), window, false, true/ && activation {
+    activation_options = NR
+  }
+  in_measurement && /chatSwitchWindowsActivated/ { activation_result = NR }
+  in_measurement && /timer.start\(\)/ { timer_start = NR; exit }
+  END {
+    exit !(active_check && activation > active_check &&
+      activation_options >= activation && activation_result > activation_options &&
+      timer_start > activation_result)
+  }
+' "$native_harness" \
+  || contract_fail "$native_harness must confirm or restore foreground activation for every measured chat switch before starting its timer."
+grep -Fq 'result.chatSwitchWindowsActivated = false;' "$native_harness" \
+  && grep -Fq '&& result.chatSwitchWindowsActivated' "$native_harness" \
+  || contract_fail "$native_harness must fail the chat-switch regression if a foreground window cannot be established for every sample."
 awk '
   /const auto showPeerHistoryMeasured =/ { in_measurement = 1 }
   in_measurement && /index == 0.*&& !result.initialHistoryWindowActivated/ { no_activation_guard = NR }
@@ -2281,7 +2334,8 @@ awk '
 ' "$native_harness" \
   || contract_fail 'Settings deep-link checks must keep the base activation check and run the custom-active URL matrix once.'
 awk '
-  /ActivateWindowForRegression\(Core::Application/ { in_activation = 1 }
+  /ActivateWindowForRegression\(/ { activation_signature = 1 }
+  activation_signature && /Core::Application &app/ { in_activation = 1 }
   in_activation && /if \(!activated\)/ { activation_timeout = NR }
   in_activation && /LogWindowActivationForRegression\(app, window\)/ {
     activation_diagnostics = NR
