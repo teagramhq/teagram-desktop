@@ -85,9 +85,24 @@ TEST_CASE(LinuxSingleInstanceSocketPrefersStableRuntimeDirectory) {
 }
 
 TEST_CASE(LinuxSingleInstanceProductionSocketPathIsPrivateAndAbsolute) {
+	auto homeDirectory = QTemporaryDir();
+	CHECK(homeDirectory.isValid());
+	if (!homeDirectory.isValid()) {
+		return;
+	}
+	const auto previousHome = qgetenv("HOME");
+	CHECK(qputenv("HOME", QFile::encodeName(homeDirectory.path())));
+	const auto restoreHome = [&] {
+		if (previousHome.isEmpty()) {
+			qunsetenv("HOME");
+		} else {
+			qputenv("HOME", previousHome);
+		}
+	};
 	auto error = QString();
 	const auto path = Platform::SingleInstanceLocalServerName(
 		u"test-profile-hash"_q, &error);
+	restoreHome();
 	CHECK(!path.isEmpty());
 	CHECK(QDir::isAbsolutePath(path));
 	CHECK(error.isEmpty());
@@ -747,7 +762,7 @@ TEST_CASE(LinuxSingleInstanceSocketRetriesContendedElectionWithoutBlocking) {
 	CHECK(error.contains(u"election lock"_q));
 	CHECK(error != server.errorString());
 	CHECK(error.contains(socketPath + u".lock"_q));
-	CHECK(error.contains(u"close any stuck Telegram process and retry"_q));
+	CHECK(error.contains(u"Close any stuck Telegram process and retry"_q));
 }
 
 TEST_CASE(LinuxSingleInstanceSocketHandsOffCommandAfterConcurrentLaunches) {
