@@ -12910,9 +12910,10 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 	result.initialHistoryWindowActivated
 		= (ActivateWindowForRegression(Core::App(), window, false)
 		   == WindowActivationForRegressionResult::Activated);
-	// Activation can enqueue native focus and layout events after the initial
-	// hidden-window settle. Drain those before the cold first history selection
-	// so its measurement covers showing history, not finishing window activation.
+	// Activation can enqueue native focus and layout events after the
+	// initial hidden-window settle. Drain those before the cold first
+	// history selection so its measurement covers showing history, not
+	// finishing window activation.
 	settleHistoryUnfocused();
 	showPeerHistoryMeasured(emptyFirstHistory);
 	settleHistoryUnfocused();
