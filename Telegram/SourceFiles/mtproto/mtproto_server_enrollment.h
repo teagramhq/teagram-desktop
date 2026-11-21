@@ -117,6 +117,10 @@ CanRefreshServerEndpoint(const ServerEndpointRefreshEligibility &eligibility,
 [[nodiscard]] int ServerEndpointRefreshRetryDelayMs(int failures);
 [[nodiscard]] bool ShouldScheduleServerEndpointRefreshRetry(bool eligible,
 															bool timerActive);
+[[nodiscard]] inline bool
+ShouldKeepServerEndpointRefreshPausedOnConnected(bool hasCandidate) {
+	return hasCandidate;
+}
 
 class ServerEndpointRefreshTransaction final {
   public:

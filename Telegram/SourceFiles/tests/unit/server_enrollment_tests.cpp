@@ -1098,6 +1098,34 @@ TEST_CASE(EndpointRefreshRetryUsesBoundedBackoff) {
 	CHECK(!ShouldScheduleServerEndpointRefreshRetry(false, false));
 }
 
+TEST_CASE(EndpointRefreshKeepsRequestsPausedOnConnectedStateUntilProof) {
+	const auto original = MakeEndpointRefreshPin("100.124.236.66");
+	auto candidate = MakeEndpointRefreshPin("100.112.103.90");
+	auto transaction = ServerEndpointRefreshTransaction();
+	CHECK(transaction.begin(
+		{
+			.restoredSession = true,
+			.pinAuthorized = true,
+			.canResume = true,
+			.hasStoredAuthKey = true,
+		},
+		original));
+	CHECK(transaction.setCandidate(candidate)
+		  == CustomServerEndpointRefreshIdentityFailure::None);
+	auto requestsPaused = true;
+	if (!ShouldKeepServerEndpointRefreshPausedOnConnected(
+			transaction.hasCandidate())) {
+		requestsPaused = false;
+	}
+	CHECK(requestsPaused);
+	CHECK(!ShouldKeepServerEndpointRefreshPausedOnConnected(false));
+
+	CHECK(transaction.commit(
+		true, [] { return true; }, [] { return true; },
+		[&] { requestsPaused = false; }));
+	CHECK(!requestsPaused);
+}
+
 TEST_CASE(EndpointVerifierRefusesConfigThatDoesNotConfirmPinnedDc) {
 	auto options = DcOptions(Environment::Production);
 	const auto pin = MakeEndpointRefreshPin("100.124.236.66");
@@ -1107,6 +1135,8 @@ TEST_CASE(EndpointVerifierRefusesConfigThatDoesNotConfirmPinnedDc) {
 	CHECK(!changedDc.authenticated);
 	CHECK(changedDc.failure
 		  && *changedDc.failure == PinnedServerFailure::DcIdMismatch);
+	CHECK(changedDc.reason
+		  == EndpointVerificationFailureReason::PinnedServerConfigMismatch);
 	CHECK(SameCustomServerPin(options.customServer(), pin));
 
 	const auto missingAdvertisement = CheckEndpointVerificationConfig(
@@ -1116,6 +1146,21 @@ TEST_CASE(EndpointVerifierRefusesConfigThatDoesNotConfirmPinnedDc) {
 		  && *missingAdvertisement.failure
 				 == PinnedServerFailure::DcIdMismatch);
 	CHECK(SameCustomServerPin(options.customServer(), pin));
+
+	const auto missingMainDc = CheckEndpointVerificationConfig(
+		false, false, false, pin.dcId, {pin.dcId}, pin);
+	CHECK(!missingMainDc.authenticated);
+	CHECK(missingMainDc.reason
+		  == EndpointVerificationFailureReason::MissingMainDcId);
+
+	const auto wrongMode = CheckEndpointVerificationConfig(
+		true, false, true, pin.dcId, {pin.dcId}, pin);
+	CHECK(!wrongMode.authenticated);
+	CHECK(wrongMode.reason
+		  == EndpointVerificationFailureReason::TestModeMismatch);
+	CHECK_EQ(QString::fromLatin1(
+				 EndpointVerificationFailureReasonName(wrongMode.reason)),
+			 u"test-mode mismatch"_q);
 }
 
 TEST_CASE(RefusedServerReplacementPersistsAdvertisedDcBeforeResume) {

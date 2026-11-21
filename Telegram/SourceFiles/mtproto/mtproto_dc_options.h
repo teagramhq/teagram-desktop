@@ -62,13 +62,31 @@ ClassifyCustomServerEndpointRefreshIdentityFailure(
 SameCustomServerEndpointRefreshIdentity(const CustomServer &left,
 										const CustomServer &right);
 
+enum class CustomServerDiscoveryFailure {
+	None,
+	InvalidSelection,
+	InvalidResponse,
+	PolicyMismatch,
+	UnsupportedPolicy,
+	InvalidOrigin,
+	InvalidDcId,
+	InvalidWebSocketEndpoint,
+	InvalidEndpoint,
+	UnsafeEndpoint,
+	InvalidResolvedAddress,
+};
+
+[[nodiscard]] const char *
+CustomServerDiscoveryFailureName(CustomServerDiscoveryFailure failure);
+
 [[nodiscard]] std::optional<CustomServer> BuildCustomServerFromDiscovery(
 	const ServerSelectionCheck &selection,
 	const ServerDiscoveryResult &result);
 [[nodiscard]] std::optional<CustomServer>
 BuildCustomServerFromDiscovery(const ServerSelectionCheck &selection,
 							   const ServerDiscoveryResult &result,
-							   const QString &expectedOrigin);
+							   const QString &expectedOrigin,
+							   CustomServerDiscoveryFailure *failure = nullptr);
 
 // Authorization state is scoped to the complete verified pin, not merely to
 // an address or a DC id. Callers use this before reusing deferred key state.

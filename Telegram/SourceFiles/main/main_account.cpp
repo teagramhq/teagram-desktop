@@ -164,7 +164,9 @@ Account::Account(not_null<Domain *> domain, const QString &dataName, int index)
 		_serverEndpointVerificationTimer.get(), &QTimer::timeout, [=] {
 			LOG(("MTP Error: endpoint verification timed out for dc %1.")
 					.arg(_serverEndpointRefreshDcId));
-			serverEndpointVerificationFinished(false);
+			serverEndpointVerificationFinished({
+				.reason = MTP::EndpointVerificationFailureReason::TimedOut,
+			});
 		});
 }
 
@@ -900,15 +902,12 @@ bool Account::startMtp(
 			_mtp->dcstate(_mtp->mainDcId()) == MTP::ConnectedState);
 	_mtp->setStateChangedHandler([=](MTP::ShiftedDcId dc, int32 state) {
 		if (dc == _mtp->mainDcId()) {
-			if (state == MTP::ConnectedState) {
+			if (state == MTP::ConnectedState
+				&& !MTP::ShouldKeepServerEndpointRefreshPausedOnConnected(
+					_endpointRefresh.hasCandidate())) {
 				_serverEndpointRefreshFailures = 0;
 				_serverEndpointRefreshIdentityFailure = false;
-				const auto resumePausedRequests
-					= _endpointRefresh.hasCandidate();
 				cancelServerEndpointRefresh();
-				if (resumePausedRequests) {
-					_mtp->resume();
-				}
 			}
 			Core::App().settings().proxy().connectionTypeChangesNotify();
 			Core::App().checkProxyRotation(this, state);
@@ -1234,13 +1233,20 @@ void Account::requestServerEndpointRefresh(MTP::ShiftedDcId shiftedDcId) {
 						= failure.httpStatusCode
 							  ? QString::number(failure.httpStatusCode)
 							  : u"n/a"_q;
+					const auto responseStatus
+						= failure.responseStatus
+							  ? QString::fromLatin1(
+									MTP::ServerDiscoveryResponseStatusName(
+										*failure.responseStatus))
+							  : u"n/a"_q;
 					LOG(("MTP Error: server endpoint discovery at %1 for dc %2 "
-						 "failed: %3, HTTP status %4.")
+						 "failed: %3, response status %4, HTTP status %5.")
 							.arg(QString::fromStdString(pin.discoveryOrigin))
 							.arg(pin.dcId)
 							.arg(Intro::details::
 									 ServerEndpointRefreshFailureName(
 										 failure.status))
+							.arg(responseStatus)
 							.arg(statusCode));
 					_endpointRefresh.reset();
 					++_serverEndpointRefreshFailures;
@@ -1256,6 +1262,9 @@ void Account::serverEndpointRefreshDiscovered(
 	MTP::ServerDiscoveryResult result) {
 	if (!canRefreshServerEndpoint() || !_endpointRefresh.hasOriginal()
 		|| !_mtp) {
+		LOG(("MTP Error: endpoint refresh discovery result for dc %1 was "
+			 "discarded because eligibility or account state changed.")
+				.arg(_serverEndpointRefreshDcId));
 		if (_serverEndpointRefreshDiscovery) {
 			_serverEndpointRefreshDiscovery->cancel();
 		}
@@ -1271,12 +1280,15 @@ void Account::serverEndpointRefreshDiscovered(
 	}
 	const auto selection = MTP::CheckServerSelection(
 		QString::fromStdString(original.serverSelection));
+	auto buildFailure = MTP::CustomServerDiscoveryFailure::None;
 	const auto candidate = MTP::BuildCustomServerFromDiscovery(
-		selection, result, QString::fromStdString(original.discoveryOrigin));
+		selection, result, QString::fromStdString(original.discoveryOrigin),
+		&buildFailure);
 	if (!candidate) {
 		LOG(("MTP Error: server endpoint discovery returned an unusable "
-			 "endpoint for dc %1.")
-				.arg(original.dcId));
+			 "endpoint for dc %1: %2.")
+				.arg(original.dcId)
+				.arg(MTP::CustomServerDiscoveryFailureName(buildFailure)));
 		_serverEndpointRefreshDiscovery->cancel();
 		_endpointRefresh.reset();
 		++_serverEndpointRefreshFailures;
@@ -1374,10 +1386,10 @@ void Account::serverEndpointRefreshDiscovered(
 			verifier->lifetime());
 	verifier->endpointVerificationResult()
 		| rpl::on_next(
-			[=](bool authenticated) {
+			[=](MTP::EndpointVerificationConfigResult verification) {
 				crl::on_main(this, [=] {
 					if (_mtpForEndpointVerification.get() == verifier) {
-						serverEndpointVerificationFinished(authenticated);
+						serverEndpointVerificationFinished(verification);
 					}
 				});
 			},
@@ -1386,7 +1398,8 @@ void Account::serverEndpointRefreshDiscovered(
 	verifier->resume();
 }
 
-void Account::serverEndpointVerificationFinished(bool authenticated) {
+void Account::serverEndpointVerificationFinished(
+	MTP::EndpointVerificationConfigResult verification) {
 	_serverEndpointVerificationTimer->stop();
 	if (_serverEndpointRefreshDiscovery) {
 		_serverEndpointRefreshDiscovery->cancel();
@@ -1396,6 +1409,7 @@ void Account::serverEndpointVerificationFinished(bool authenticated) {
 		_endpointRefreshProofKey = nullptr;
 		return;
 	}
+	const auto authenticated = verification.authenticated;
 	auto verifier = std::move(_mtpForEndpointVerification);
 	Expects(verifier != nullptr);
 	const auto proofKey = base::take(_endpointRefreshProofKey);
@@ -1452,8 +1466,11 @@ void Account::serverEndpointVerificationFinished(bool authenticated) {
 			});
 		committed = committedRefresh;
 	} else if (!authenticated) {
-		LOG(("MTP Error: refreshed endpoint failed auth-key proof for dc %1.")
-				.arg(_endpointRefresh.original().dcId));
+		LOG(("MTP Error: refreshed endpoint verification refused for dc %1: "
+			 "%2.")
+				.arg(original.dcId)
+				.arg(MTP::EndpointVerificationFailureReasonName(
+					verification.reason)));
 	} else {
 		LOG(("MTP Error: pin or auth key changed before endpoint verification "
 			 "committed "
@@ -1471,6 +1488,15 @@ void Account::serverEndpointVerificationFinished(bool authenticated) {
 }
 
 void Account::scheduleServerEndpointRefreshRetry() {
+	if (!canRefreshServerEndpoint()) {
+		LOG(("MTP Error: endpoint refresh retry stopped because the pin for "
+			 "dc %1 is no longer eligible.")
+				.arg(_serverEndpointRefreshDcId));
+		return;
+	}
+	if (_serverEndpointRefreshRetryTimer->isActive()) {
+		return;
+	}
 	if (!MTP::ShouldScheduleServerEndpointRefreshRetry(
 			canRefreshServerEndpoint(),
 			_serverEndpointRefreshRetryTimer->isActive())) {

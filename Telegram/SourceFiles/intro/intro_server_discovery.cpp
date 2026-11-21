@@ -770,6 +770,14 @@ void ServerWidgetDiscovery::finish(MTP::ServerDiscoveryResult result) {
 		return;
 	}
 	if (!result) {
+		if (_callbacks.invalid) {
+			_running = false;
+			stopSocket();
+			auto callback = std::move(_callbacks.invalid);
+			_callbacks = {};
+			callback(result.status);
+			return;
+		}
 		fail(false);
 		return;
 	}
@@ -800,6 +808,8 @@ ServerEndpointRefreshFailureName(ServerEndpointRefreshFailureStatus status) {
 		return "discovery concurrency limit";
 	case ServerEndpointRefreshFailureStatus::ResponseTooLarge:
 		return "response too large";
+	case ServerEndpointRefreshFailureStatus::ContentEncodingRefused:
+		return "content encoding refused";
 	case ServerEndpointRefreshFailureStatus::TlsFailure:
 		return "TLS failure";
 	case ServerEndpointRefreshFailureStatus::Redirect:
@@ -857,6 +867,28 @@ ServerEndpointRefreshNetworkFailureStatus(QNetworkReply::NetworkError error,
 	default:
 		return ServerEndpointRefreshFailureStatus::NetworkFailure;
 	}
+}
+
+std::optional<ServerEndpointRefreshFailureStatus>
+ServerEndpointRefreshHttpResponseFailure(bool redirected, int httpStatusCode,
+										 const QString &contentType,
+										 const QByteArray &contentEncoding,
+										 qint64 headerSize, qint64 bodySize) {
+	if (redirected) {
+		return ServerEndpointRefreshFailureStatus::Redirect;
+	}
+	if (headerSize > kMaxDiscoveryHeaders || bodySize > kMaxDiscoveryBody) {
+		return ServerEndpointRefreshFailureStatus::ResponseTooLarge;
+	}
+	if (!contentEncoding.isEmpty()) {
+		return ServerEndpointRefreshFailureStatus::ContentEncodingRefused;
+	}
+	if (httpStatusCode != 200
+		|| contentType.compare(u"application/json"_q, Qt::CaseInsensitive)
+			   != 0) {
+		return ServerEndpointRefreshFailureStatus::HttpFailure;
+	}
+	return std::nullopt;
 }
 
 ServerEndpointRefreshDiscovery::ServerEndpointRefreshDiscovery(QObject *parent)
@@ -939,20 +971,31 @@ void ServerEndpointRefreshDiscovery::beginPublicDiscovery() {
 		auto headerSize = 0;
 		for (const auto &header : reply->rawHeaderPairs()) {
 			headerSize += header.first.size() + header.second.size() + 4;
-			if (headerSize > kMaxDiscoveryHeaders) {
-				fail(ServerEndpointRefreshFailureStatus::ResponseTooLarge);
+			if (const auto failure = ServerEndpointRefreshHttpResponseFailure(
+					false, 200, u"application/json"_q, {}, headerSize, 0)) {
+				fail(*failure);
 				return;
 			}
 		}
 		const auto contentLength
 			= reply->header(QNetworkRequest::ContentLengthHeader).toLongLong();
-		if (contentLength > kMaxDiscoveryBody) {
-			fail(ServerEndpointRefreshFailureStatus::ResponseTooLarge);
-			return;
+		if (const auto failure = ServerEndpointRefreshHttpResponseFailure(
+				false, 200, u"application/json"_q, {}, headerSize,
+				contentLength)) {
+			if (*failure
+				== ServerEndpointRefreshFailureStatus::ResponseTooLarge) {
+				fail(*failure);
+				return;
+			}
 		}
 		_publicResponse += reply->readAll();
-		if (_publicResponse.size() > kMaxDiscoveryBody) {
-			fail(ServerEndpointRefreshFailureStatus::ResponseTooLarge);
+		if (const auto failure = ServerEndpointRefreshHttpResponseFailure(
+				false, 200, u"application/json"_q, {}, headerSize,
+				_publicResponse.size());
+			failure
+			&& *failure
+				   == ServerEndpointRefreshFailureStatus::ResponseTooLarge) {
+			fail(*failure);
 		}
 	});
 	connect(reply, &QNetworkReply::sslErrors, this, [=](const auto &) {
@@ -962,9 +1005,13 @@ void ServerEndpointRefreshDiscovery::beginPublicDiscovery() {
 	});
 	connect(reply, &QNetworkReply::redirected, this, [=](const QUrl &) {
 		if (_running && _reply == reply) {
-			fail(ServerEndpointRefreshFailureStatus::Redirect,
-				 reply->attribute(QNetworkRequest::HttpStatusCodeAttribute)
-					 .toInt());
+			const auto status
+				= reply->attribute(QNetworkRequest::HttpStatusCodeAttribute)
+					  .toInt();
+			const auto failure = ServerEndpointRefreshHttpResponseFailure(
+				true, status, QString(), {}, 0, 0);
+			Expects(failure.has_value());
+			fail(*failure, status);
 		}
 	});
 	connect(reply, &QNetworkReply::finished, this, [=] {
@@ -1022,6 +1069,14 @@ void ServerEndpointRefreshDiscovery::startLocalDiscovery(
 									   InvalidResponse);
 					}
 				},
+			.invalid =
+				[=](MTP::ServerDiscoveryResponseStatus status) {
+					if (_running) {
+						fail(
+							ServerEndpointRefreshFailureStatus::InvalidResponse,
+							0, status);
+					}
+				},
 		});
 }
 
@@ -1045,9 +1100,13 @@ void ServerEndpointRefreshDiscovery::publicDiscoveryFinished() {
 	auto headerSize = 0;
 	for (const auto &header : reply->rawHeaderPairs()) {
 		headerSize += header.first.size() + header.second.size() + 4;
-		if (headerSize > kMaxDiscoveryHeaders) {
+		if (const auto failure = ServerEndpointRefreshHttpResponseFailure(
+				false, 200, u"application/json"_q, {}, headerSize, 0);
+			failure
+			&& *failure
+				   == ServerEndpointRefreshFailureStatus::ResponseTooLarge) {
 			reply->deleteLater();
-			fail(ServerEndpointRefreshFailureStatus::ResponseTooLarge);
+			fail(*failure);
 			return;
 		}
 	}
@@ -1060,20 +1119,17 @@ void ServerEndpointRefreshDiscovery::publicDiscoveryFinished() {
 	_publicResponse += reply->readAll();
 	const auto contentEncoding = reply->rawHeader("Content-Encoding");
 	reply->deleteLater();
-	if (_publicResponse.size() > kMaxDiscoveryBody) {
-		fail(ServerEndpointRefreshFailureStatus::ResponseTooLarge, status);
-		return;
-	}
-	if (status != 200
-		|| contentType.compare(u"application/json"_q, Qt::CaseInsensitive) != 0
-		|| !contentEncoding.isEmpty()) {
-		fail(ServerEndpointRefreshFailureStatus::HttpFailure, status);
+	if (const auto failure = ServerEndpointRefreshHttpResponseFailure(
+			false, status, contentType, contentEncoding, headerSize,
+			_publicResponse.size())) {
+		fail(*failure, status);
 		return;
 	}
 	const auto result = MTP::ParsePublicDiscoveryResponse(_selection, _origin,
 														  _publicResponse);
 	if (!result) {
-		fail(ServerEndpointRefreshFailureStatus::InvalidResponse);
+		fail(ServerEndpointRefreshFailureStatus::InvalidResponse, 0,
+			 result.status);
 		return;
 	}
 	resolvePublicEndpoint(result);
@@ -1110,6 +1166,9 @@ void ServerEndpointRefreshDiscovery::resolvePublicEndpoint(
 		});
 	if (_hostLookupId < 0) {
 		if (result.webSocketOnly) {
+			LOG(("MTP Info: MTProto endpoint DNS lookup failed at %1; "
+				 "trying the advertised WebSocket endpoint.")
+					.arg(_origin));
 			resolvePublicWebSocketEndpoint(std::move(result));
 		} else {
 			fail(ServerEndpointRefreshFailureStatus::DnsFailure);
@@ -1123,6 +1182,9 @@ void ServerEndpointRefreshDiscovery::publicEndpointResolved(
 		if (Intro::details::ResolvePublicDiscoveryAddresses(
 				_selection, result, PublicDiscoveryAddressRole::Mtproto, {})
 			== PublicDiscoveryAddressResolution::NeedsWebSocket) {
+			LOG(("MTP Info: MTProto endpoint DNS lookup failed at %1; "
+				 "trying the advertised WebSocket endpoint.")
+					.arg(_origin));
 			resolvePublicWebSocketEndpoint(std::move(result));
 		} else {
 			fail(ServerEndpointRefreshFailureStatus::DnsFailure);
@@ -1206,22 +1268,35 @@ void ServerEndpointRefreshDiscovery::discoveryTimeout() {
 }
 
 void ServerEndpointRefreshDiscovery::fail(
-	ServerEndpointRefreshFailureStatus status, int httpStatusCode) {
+	ServerEndpointRefreshFailureStatus status, int httpStatusCode,
+	std::optional<MTP::ServerDiscoveryResponseStatus> responseStatus) {
 	if (!_running) {
 		return;
 	}
 	_running = false;
 	stop();
 	_attemptToken.reset();
-	LOG(("MTP Error: server endpoint discovery at %1 failed: %2%3.")
+	const auto responseStatusName
+		= responseStatus
+			  ? QString::fromLatin1(
+					MTP::ServerDiscoveryResponseStatusName(*responseStatus))
+			  : QString();
+	LOG(("MTP Error: server endpoint discovery at %1 failed: %2%3%4.")
 			.arg(_origin)
 			.arg(ServerEndpointRefreshFailureName(status))
+			.arg(responseStatusName.isEmpty()
+					 ? QString()
+					 : (u" ("_q + responseStatusName + u")"_q))
 			.arg(httpStatusCode ? (u" (HTTP %1)"_q.arg(httpStatusCode))
 								: QString()));
 	auto callback = std::move(_callbacks.failed);
 	_callbacks = {};
 	if (callback) {
-		callback({.status = status, .httpStatusCode = httpStatusCode});
+		callback({
+			.status = status,
+			.httpStatusCode = httpStatusCode,
+			.responseStatus = responseStatus,
+		});
 	}
 }
 
@@ -1230,7 +1305,8 @@ void ServerEndpointRefreshDiscovery::finish(MTP::ServerDiscoveryResult result) {
 		return;
 	}
 	if (!result) {
-		fail(ServerEndpointRefreshFailureStatus::InvalidResponse);
+		fail(ServerEndpointRefreshFailureStatus::InvalidResponse, 0,
+			 result.status);
 		return;
 	}
 	_running = false;

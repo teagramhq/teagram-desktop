@@ -58,6 +58,7 @@ enum class ServerEndpointRefreshFailureStatus {
 	InvalidOrigin,
 	DiscoveryBusy,
 	ResponseTooLarge,
+	ContentEncodingRefused,
 	TlsFailure,
 	Redirect,
 	NetworkFailure,
@@ -72,6 +73,7 @@ enum class ServerEndpointRefreshFailureStatus {
 struct ServerEndpointRefreshFailure {
 	ServerEndpointRefreshFailureStatus status;
 	int httpStatusCode = 0;
+	std::optional<MTP::ServerDiscoveryResponseStatus> responseStatus;
 };
 
 [[nodiscard]] const char *
@@ -84,6 +86,12 @@ ServerEndpointRefreshNetworkProxy(MTP::ProxyData::Settings settings,
 [[nodiscard]] ServerEndpointRefreshFailureStatus
 ServerEndpointRefreshNetworkFailureStatus(QNetworkReply::NetworkError error,
 										  int httpStatusCode);
+
+[[nodiscard]] std::optional<ServerEndpointRefreshFailureStatus>
+ServerEndpointRefreshHttpResponseFailure(bool redirected, int httpStatusCode,
+										 const QString &contentType,
+										 const QByteArray &contentEncoding,
+										 qint64 headerSize, qint64 bodySize);
 
 [[nodiscard]] PublicDiscoveryAddressResolution
 ResolvePublicDiscoveryAddresses(const MTP::ServerSelectionCheck &selection,
@@ -144,6 +152,7 @@ public:
 	struct Callbacks {
 		std::function<void(MTP::ServerDiscoveryResult)> finished;
 		std::function<void(bool)> failed;
+		std::function<void(MTP::ServerDiscoveryResponseStatus)> invalid;
 		std::function<void()> candidateStarted;
 		std::function<void()> beforeRequestSend;
 	};
@@ -222,8 +231,9 @@ class ServerEndpointRefreshDiscovery final : public QObject {
 	void publicWebSocketEndpointResolved(MTP::ServerDiscoveryResult result,
 										 const QHostInfo &info);
 	void discoveryTimeout();
-	void fail(ServerEndpointRefreshFailureStatus status,
-			  int httpStatusCode = 0);
+	void fail(ServerEndpointRefreshFailureStatus status, int httpStatusCode = 0,
+			  std::optional<MTP::ServerDiscoveryResponseStatus> responseStatus
+			  = std::nullopt);
 	void finish(MTP::ServerDiscoveryResult result);
 	void stop();
 

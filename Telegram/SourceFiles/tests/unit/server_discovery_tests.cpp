@@ -258,6 +258,61 @@ TEST_CASE(LocalSelectionRequiresExplicitPort) {
 	CHECK_EQ(withPort.normalizedSelection, u"localhost:443"_q);
 }
 
+TEST_CASE(EndpointRefreshDiscoveryPreservesTheInvalidResponseStatus) {
+	using Intro::details::ServerEndpointRefreshDiscovery;
+	QTcpServer server;
+	CHECK(server.listen(QHostAddress::LocalHost));
+	if (!server.isListening()) {
+		return;
+	}
+	const auto selection = CheckServerSelection(
+		u"127.0.0.1:"_q + QString::number(server.serverPort()));
+	const auto wrongNonce = QByteArray(32, '\x09');
+	auto failure
+		= std::optional<Intro::details::ServerEndpointRefreshFailure>();
+	QEventLoop loop;
+	QTimer::singleShot(5000, &loop, &QEventLoop::quit);
+	QObject::connect(&server, &QTcpServer::newConnection, &server, [&] {
+		while (server.hasPendingConnections()) {
+			auto socket = server.nextPendingConnection();
+			auto request = std::make_shared<QByteArray>();
+			auto responded = std::make_shared<bool>(false);
+			QObject::connect(socket, &QTcpSocket::readyRead, socket,
+							 [socket, request, responded, wrongNonce] {
+								 *request += socket->readAll();
+								 if (*responded || request->size() < 48) {
+									 return;
+								 }
+								 *responded = true;
+								 socket->write(LocalResponse(wrongNonce));
+								 socket->disconnectFromHost();
+							 });
+		}
+	});
+	ServerEndpointRefreshDiscovery discovery;
+	const auto origin = u"local:"_q + selection.normalizedSelection;
+	CHECK(discovery.start(
+		selection, origin, std::nullopt,
+		{
+			.failed =
+				[&](Intro::details::ServerEndpointRefreshFailure value) {
+					failure = value;
+					loop.quit();
+				},
+		}));
+	loop.exec();
+	CHECK(failure.has_value());
+	if (failure) {
+		CHECK(failure->responseStatus
+			  && *failure->responseStatus
+					 == ServerDiscoveryResponseStatus::NonceMismatch);
+		CHECK_EQ(QString::fromLatin1(ServerDiscoveryResponseStatusName(
+					 failure->responseStatus.value_or(
+						 ServerDiscoveryResponseStatus::Valid))),
+				 u"nonce mismatch"_q);
+	}
+}
+
 TEST_CASE(LocalNameDiscoveryBindsToItsResolvedSpecialUseAddress) {
 	const auto selection = CheckServerSelection(u"printer.local:2443"_q);
 	const auto nonce = QByteArray(32, '\x08');
@@ -1545,6 +1600,54 @@ TEST_CASE(PublicDiscoveryRequestsAskForAnUncompressedResponse) {
 			 QByteArrayLiteral("identity"));
 }
 
+TEST_CASE(PublicDiscoveryRefreshRejectsRedirectsOversizeAndEncodedResponses) {
+	using Intro::details::ServerEndpointRefreshFailureName;
+	using Intro::details::ServerEndpointRefreshFailureStatus;
+	using Intro::details::ServerEndpointRefreshHttpResponseFailure;
+	const auto json = u"application/json"_q;
+	const auto none = QByteArray();
+	const auto redirect
+		= ServerEndpointRefreshHttpResponseFailure(true, 302, json, none, 0, 0);
+	CHECK(redirect == ServerEndpointRefreshFailureStatus::Redirect);
+	if (redirect) {
+		CHECK_EQ(
+			QString::fromLatin1(ServerEndpointRefreshFailureName(*redirect)),
+			u"redirect refused"_q);
+	}
+	CHECK(!ServerEndpointRefreshHttpResponseFailure(false, 200, json, none,
+													16 * 1024, 16 * 1024));
+	const auto oversizedHeaders = ServerEndpointRefreshHttpResponseFailure(
+		false, 200, json, none, 16 * 1024 + 1, 0);
+	CHECK(oversizedHeaders
+		  == ServerEndpointRefreshFailureStatus::ResponseTooLarge);
+	const auto oversizedBody = ServerEndpointRefreshHttpResponseFailure(
+		false, 200, json, none, 0, 16 * 1024 + 1);
+	CHECK(oversizedBody
+		  == ServerEndpointRefreshFailureStatus::ResponseTooLarge);
+	if (oversizedHeaders) {
+		CHECK_EQ(QString::fromLatin1(
+					 ServerEndpointRefreshFailureName(*oversizedHeaders)),
+				 u"response too large"_q);
+	}
+	if (oversizedBody) {
+		CHECK_EQ(QString::fromLatin1(
+					 ServerEndpointRefreshFailureName(*oversizedBody)),
+				 u"response too large"_q);
+	}
+	const auto encoded = ServerEndpointRefreshHttpResponseFailure(
+		false, 200, json, QByteArrayLiteral("gzip"), 0, 0);
+	CHECK(encoded
+		  == ServerEndpointRefreshFailureStatus::ContentEncodingRefused);
+	if (encoded) {
+		CHECK_EQ(
+			QString::fromLatin1(ServerEndpointRefreshFailureName(*encoded)),
+			u"content encoding refused"_q);
+	}
+	CHECK_EQ(QString::fromLatin1(ServerDiscoveryResponseStatusName(
+				 MTP::ServerDiscoveryResponseStatus::UnsafeEndpoint)),
+			 u"unsafe endpoint"_q);
+}
+
 TEST_CASE(PublicDiscoveryUsesTeagramdClientPath) {
 	const auto selection = CheckServerSelection(u"server.example.com"_q);
 	CHECK_EQ(PublicDiscoveryUrl(selection),
@@ -1575,6 +1678,14 @@ TEST_CASE(PublicDiscoveryRefreshRetainsTheStoredOriginPath) {
 	if (pin) {
 		CHECK_EQ(pin->discoveryOrigin, legacy.toStdString());
 	}
+	auto failure = CustomServerDiscoveryFailure::None;
+	const auto mismatchedOrigin = BuildCustomServerFromDiscovery(
+		selection, resolved,
+		u"https://server.example.com/.well-known/teagramd/client"_q, &failure);
+	CHECK(!mismatchedOrigin.has_value());
+	CHECK(failure == CustomServerDiscoveryFailure::InvalidOrigin);
+	CHECK_EQ(QString::fromLatin1(CustomServerDiscoveryFailureName(failure)),
+			 u"discovery origin mismatch"_q);
 }
 
 TEST_CASE(DiscoveryAttemptsAreLimitedAndReleased) {

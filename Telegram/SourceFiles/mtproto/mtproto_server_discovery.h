@@ -144,6 +144,9 @@ enum class ServerDiscoveryResponseStatus {
 	BrowserOnly,
 };
 
+[[nodiscard]] const char *
+ServerDiscoveryResponseStatusName(ServerDiscoveryResponseStatus status);
+
 struct ServerDiscoveryResult {
 	ServerDiscoveryResponseStatus status
 		= ServerDiscoveryResponseStatus::InvalidJson;

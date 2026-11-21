@@ -206,7 +206,8 @@ private:
 	[[nodiscard]] bool canRefreshServerEndpoint() const;
 	void requestServerEndpointRefresh(MTP::ShiftedDcId shiftedDcId);
 	void serverEndpointRefreshDiscovered(MTP::ServerDiscoveryResult result);
-	void serverEndpointVerificationFinished(bool authenticated);
+	void serverEndpointVerificationFinished(
+		MTP::EndpointVerificationConfigResult verification);
 	void scheduleServerEndpointRefreshRetry();
 	void cancelServerEndpointRefresh();
 

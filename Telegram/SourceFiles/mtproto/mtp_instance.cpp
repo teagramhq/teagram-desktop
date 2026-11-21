@@ -89,7 +89,8 @@ public:
 
 	[[nodiscard]] rpl::producer<> writeKeysRequests() const;
 	[[nodiscard]] rpl::producer<> resumed() const;
-	[[nodiscard]] rpl::producer<bool> endpointVerificationResult() const;
+	[[nodiscard]] rpl::producer<EndpointVerificationConfigResult>
+	endpointVerificationResult() const;
 	[[nodiscard]] rpl::producer<ShiftedDcId>
 	serverEndpointRefreshRequested() const;
 
@@ -344,7 +345,8 @@ private:
 	Fn<void(ShiftedDcId shiftedDcId)> _sessionResetHandler;
 
 	PinnedServerFailureChannel _pinnedServerFailure;
-	rpl::event_stream<bool> _endpointVerificationResult;
+	rpl::event_stream<EndpointVerificationConfigResult>
+		_endpointVerificationResult;
 	rpl::event_stream<> _browserOnlyServerRefused;
 
 	rpl::event_stream<mtpRequestId> _nonPremiumDelayedRequests;
@@ -1104,7 +1106,8 @@ rpl::producer<> Instance::Private::resumed() const {
 	return _serverEnrollmentGate.resumed();
 }
 
-rpl::producer<bool> Instance::Private::endpointVerificationResult() const {
+rpl::producer<EndpointVerificationConfigResult>
+Instance::Private::endpointVerificationResult() const {
 	return _endpointVerificationResult.events();
 }
 
@@ -1180,7 +1183,7 @@ void Instance::Private::configLoadDone(const MTPConfig &result) {
 			onPinnedServerFailure(mainDcId(), *verification.failure);
 		}
 		stopForServerEnrollment();
-		_endpointVerificationResult.fire_copy(verification.authenticated);
+		_endpointVerificationResult.fire_copy(verification);
 		return;
 	}
 	_config->apply(data);
@@ -2355,7 +2358,8 @@ rpl::producer<ShiftedDcId> Instance::serverEndpointRefreshRequested() const {
 	return _private->serverEndpointRefreshRequested();
 }
 
-rpl::producer<bool> Instance::endpointVerificationResult() const {
+rpl::producer<EndpointVerificationConfigResult>
+Instance::endpointVerificationResult() const {
 	return _private->endpointVerificationResult();
 }
 

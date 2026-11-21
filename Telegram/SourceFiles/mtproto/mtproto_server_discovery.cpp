@@ -608,6 +608,33 @@ private:
 
 } // namespace
 
+const char *
+ServerDiscoveryResponseStatusName(ServerDiscoveryResponseStatus status) {
+	switch (status) {
+	case ServerDiscoveryResponseStatus::Valid:
+		return "valid";
+	case ServerDiscoveryResponseStatus::InvalidJson:
+		return "invalid JSON";
+	case ServerDiscoveryResponseStatus::InvalidSchema:
+		return "invalid schema";
+	case ServerDiscoveryResponseStatus::InvalidKey:
+		return "invalid key";
+	case ServerDiscoveryResponseStatus::InvalidDcId:
+		return "invalid DC id";
+	case ServerDiscoveryResponseStatus::EndpointMismatch:
+		return "endpoint mismatch";
+	case ServerDiscoveryResponseStatus::UnsafeEndpoint:
+		return "unsafe endpoint";
+	case ServerDiscoveryResponseStatus::BadFrame:
+		return "bad frame";
+	case ServerDiscoveryResponseStatus::NonceMismatch:
+		return "nonce mismatch";
+	case ServerDiscoveryResponseStatus::BrowserOnly:
+		return "browser only";
+	}
+	Unexpected("ServerDiscoveryResponseStatus value.");
+}
+
 std::optional<ServerDiscoveryAttempt> ServerDiscoveryAttempt::Acquire() {
 	auto current = ServerDiscoveryAttempts.load(std::memory_order_relaxed);
 	while (current < kMaxServerDiscoveryAttempts

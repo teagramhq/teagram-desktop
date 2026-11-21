@@ -64,6 +64,7 @@ namespace MTP {
 namespace {
 
 const Instance *UnitBlockedServerEnrollmentInstance = nullptr;
+const Instance *UnitEndpointVerifierInstance = nullptr;
 std::vector<ShiftedDcId> UnitServerEndpointRefreshRequests;
 
 } // namespace
@@ -90,7 +91,9 @@ bool Instance::hasCallback(mtpRequestId requestId) const { return true; }
 
 bool Instance::isKeysDestroyer() const { return false; }
 
-bool Instance::isEndpointVerifier() const { return false; }
+bool Instance::isEndpointVerifier() const {
+	return this == UnitEndpointVerifierInstance;
+}
 
 void Instance::keyWasPossiblyDestroyed(ShiftedDcId shiftedDcId) {}
 
@@ -121,6 +124,7 @@ namespace {
 
 bool UnitConnectionInited = false;
 int UnitBrowserOnlyServerRefusals = 0;
+int UnitKeyCreationAcquisitions = 0;
 Fn<void()> UnitNeedToResumeAndSend;
 
 } // namespace
@@ -204,10 +208,12 @@ AuthKeyPtr SessionData::getTemporaryKey(TemporaryKeyType type) const {
 }
 
 CreatingKeyType SessionData::acquireKeyCreation(DcType type) {
+	++UnitKeyCreationAcquisitions;
 	return CreatingKeyType::None;
 }
 
 CreatingKeyType SessionData::acquirePersistentKeyCreation() {
+	++UnitKeyCreationAcquisitions;
 	return CreatingKeyType::None;
 }
 
@@ -247,6 +253,10 @@ class SessionPrivateTestAccess final {
 
 	static void SetTestFixture(SessionPrivate &session, bool value) {
 		session._testFixture = value;
+	}
+
+	static DcType TryAcquireKeyCreation(SessionPrivate &session) {
+		return session.tryAcquireKeyCreation();
 	}
 
 	static void StartConnected(SessionPrivate &session,
@@ -384,6 +394,27 @@ class SessionPrivateTestAccess final {
 };
 
 } // namespace MTP::details
+
+TEST_CASE(EndpointVerifierNeverAcquiresAuthKeyCreation) {
+	auto verifierInstance = std::make_unique<MTP::Instance>(
+		MTP::Instance::Mode::EndpointVerifier, MTP::Instance::Fields());
+	MTP::UnitEndpointVerifierInstance = verifierInstance.get();
+	MTP::details::UnitKeyCreationAcquisitions = 0;
+	const auto reset = gsl::finally([] {
+		MTP::UnitEndpointVerifierInstance = nullptr;
+		MTP::details::UnitKeyCreationAcquisitions = 0;
+	});
+	auto data = std::make_shared<MTP::details::SessionData>(
+		not_null<MTP::details::Session *>(
+			reinterpret_cast<MTP::details::Session *>(quintptr(1))));
+	auto session = MTP::details::SessionPrivateTestAccess::Create(
+		data, verifierInstance.get());
+
+	CHECK(
+		MTP::details::SessionPrivateTestAccess::TryAcquireKeyCreation(*session)
+		== MTP::DcType::Regular);
+	CHECK_EQ(MTP::details::UnitKeyCreationAcquisitions, 0);
+}
 
 namespace {
 

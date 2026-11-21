@@ -78,9 +78,36 @@ struct PinnedServerFailureReport {
 	}
 };
 
+enum class EndpointVerificationFailureReason {
+	None,
+	TestModeMismatch,
+	MissingMainDcId,
+	PinnedServerConfigMismatch,
+	TimedOut,
+};
+
+[[nodiscard]] inline const char *EndpointVerificationFailureReasonName(
+	EndpointVerificationFailureReason reason) {
+	switch (reason) {
+	case EndpointVerificationFailureReason::None:
+		return "none";
+	case EndpointVerificationFailureReason::TestModeMismatch:
+		return "test-mode mismatch";
+	case EndpointVerificationFailureReason::MissingMainDcId:
+		return "missing main DC id";
+	case EndpointVerificationFailureReason::PinnedServerConfigMismatch:
+		return "pinned server config mismatch";
+	case EndpointVerificationFailureReason::TimedOut:
+		return "verification timed out";
+	}
+	Unexpected("EndpointVerificationFailureReason value.");
+}
+
 struct EndpointVerificationConfigResult {
 	bool authenticated = false;
 	std::optional<PinnedServerFailure> failure;
+	EndpointVerificationFailureReason reason
+		= EndpointVerificationFailureReason::None;
 };
 
 [[nodiscard]] inline EndpointVerificationConfigResult
@@ -90,12 +117,22 @@ CheckEndpointVerificationConfig(bool responseTestMode, bool expectedTestMode,
 								const CustomServer &pin) {
 	const auto matchingMode = responseTestMode == expectedTestMode;
 	auto failure = std::optional<PinnedServerFailure>();
-	if (matchingMode && hasMainDcId) {
+	auto reason = EndpointVerificationFailureReason::None;
+	if (!matchingMode) {
+		reason = EndpointVerificationFailureReason::TestModeMismatch;
+	} else if (!hasMainDcId) {
+		reason = EndpointVerificationFailureReason::MissingMainDcId;
+	} else {
 		failure = CheckPinnedServerConfig(thisDc, advertisedDcIds, pin);
+		if (failure) {
+			reason
+				= EndpointVerificationFailureReason::PinnedServerConfigMismatch;
+		}
 	}
 	return {
-		.authenticated = matchingMode && !failure.has_value(),
+		.authenticated = matchingMode && hasMainDcId && !failure.has_value(),
 		.failure = failure,
+		.reason = reason,
 	};
 }
 
@@ -371,7 +408,8 @@ public:
 		const QString &dialledAddress = {});
 	[[nodiscard]] auto pinnedServerFailure() const
 		-> rpl::producer<std::optional<PinnedServerFailureReport>>;
-	[[nodiscard]] rpl::producer<bool> endpointVerificationResult() const;
+	[[nodiscard]] rpl::producer<EndpointVerificationConfigResult>
+	endpointVerificationResult() const;
 	void onBrowserOnlyServerRefused();
 	[[nodiscard]] rpl::producer<> browserOnlyServerRefused() const;
 	[[nodiscard]] bool hasBrowserOnlyServerRefusal() const;
