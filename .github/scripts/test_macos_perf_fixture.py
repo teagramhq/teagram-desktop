@@ -158,7 +158,7 @@ class FixtureReleaseTests(unittest.TestCase):
                 fixture.exercise(self.root, report)
         self.assertIn('Could not read PostgreSQL log: log unreadable', output.getvalue())
 
-    def test_cleanup_preserves_failure_and_interruption(self):
+    def test_fixture_run_reports_success_and_preserves_failures(self):
         migration_sum = 'h1:top\n20261026000006_last.sql h1:last\n'
 
         def checkout(directory):
@@ -169,13 +169,19 @@ class FixtureReleaseTests(unittest.TestCase):
             helper.parent.mkdir(parents=True)
             helper.write_text('func EncKey() []byte { return bytes.Repeat([]byte{0x2a}, 32) }')
 
-        for name, restore_fails, outer_error, server_stop_fails, interrupted, stop_fails in (
-                ('restore', True, False, False, None, True), ('cleanup', False, False, False, None, True),
-                ('cleanup-in-except', False, True, False, None, True), ('server-stop', False, False, True, None, True),
-                ('interrupt-restore', False, False, False, 'restore 1x', False),
-                ('interrupt-restore-stop-failure', False, False, False, 'restore 1x', True),
-                ('interrupt-migrations', False, False, False, 'migrations', False),
-                ('interrupt-migrations-stop-failure', False, False, False, 'migrations', True)):
+        for (name, restore_fails, outer_error, server_stop_fails, interrupted, stop_fails,
+             revision_mismatch, migrate_fails) in (
+                ('clean-stop', False, False, False, None, False, False, False),
+                ('restore', True, False, False, None, True, False, False),
+                ('cleanup', False, False, False, None, True, False, False),
+                ('cleanup-in-except', False, True, False, None, True, False, False),
+                ('server-stop', False, False, True, None, True, False, False),
+                ('wrong-revision', False, False, False, None, False, True, False),
+                ('migration-fails', False, False, False, None, False, False, True),
+                ('interrupt-restore', False, False, False, 'restore 1x', False, False, False),
+                ('interrupt-restore-stop-failure', False, False, False, 'restore 1x', True, False, False),
+                ('interrupt-migrations', False, False, False, 'migrations', False, False, False),
+                ('interrupt-migrations-stop-failure', False, False, False, 'migrations', True, False, False)):
             with self.subTest(name=name):
                 case = self.root / name
                 case.mkdir()
@@ -187,6 +193,7 @@ class FixtureReleaseTests(unittest.TestCase):
                            PERF_FIXTURE_SUMMARY_FILE=str(case / 'summary-written'),
                            GITHUB_STEP_SUMMARY=str(summary))
                 stopped = []
+                migration_calls = []
 
                 def run(command, **kwargs):
                     name = Path(command[0]).name
@@ -202,7 +209,9 @@ class FixtureReleaseTests(unittest.TestCase):
                         signal.raise_signal(signal.SIGINT)
                     if name == 'pg_restore' and restore_fails:
                         raise RuntimeError('restore failed first')
-                    output = self.manifest['migration_revision'] if '-XAt' in command else ''
+                    revision = ('20261026000005' if revision_mismatch and '-XAt' in command
+                                else self.manifest['migration_revision'])
+                    output = revision if '-XAt' in command else ''
                     return subprocess.CompletedProcess(command, 0, stdout=output)
 
                 error_output = io.StringIO()
@@ -212,8 +221,11 @@ class FixtureReleaseTests(unittest.TestCase):
                     process.terminate.side_effect = OSError('server stop failed')
 
                 def migrate(*args, **kwargs):
+                    migration_calls.append(args[0][0])
                     if interrupted == 'migrations':
                         signal.raise_signal(signal.SIGINT)
+                    if migrate_fails:
+                        raise subprocess.CalledProcessError(1, args[0])
                     return subprocess.CompletedProcess(args[0], 0)
 
                 with patch.dict(os.environ, env), \
@@ -238,7 +250,7 @@ class FixtureReleaseTests(unittest.TestCase):
                     else:
                         result = fixture.main()
                     if not interrupted:
-                        self.assertEqual(result, 1)
+                        self.assertEqual(result, 0 if name == 'clean-stop' else 1)
                 if interrupted:
                     self.assertEqual((case / 'phase').read_text(), interrupted)
                     self.assertIn('cleanup|', (case / 'times').read_text())
@@ -250,7 +262,25 @@ class FixtureReleaseTests(unittest.TestCase):
                         self.assertNotIn('Fixture cleanup failed:', error_output.getvalue())
                     continue
                 text = summary.read_text()
-                if restore_fails:
+                if name == 'clean-stop':
+                    self.assertIn('Status: **passed**', text)
+                    self.assertIn('- 1x: TCP ready on loopback; server RSA key fingerprint `123`', text)
+                    self.assertIn('- 100x: TCP ready on loopback; server RSA key fingerprint `123`', text)
+                    self.assertEqual(stopped, [True])
+                    self.assertEqual(migration_calls, ['atlas', 'atlas'])
+                elif revision_mismatch:
+                    self.assertIn(
+                        'Failed phase: **restore 1x**. 1x database migration revision 20261026000005 '
+                        'does not match manifest 20261026000006', text,
+                    )
+                    self.assertEqual(migration_calls, [])
+                    self.assertEqual(stopped, [True])
+                elif migrate_fails:
+                    self.assertIn('Failed phase: **migrations**.', text)
+                    self.assertIn('returned non-zero exit status 1', text)
+                    self.assertEqual(migration_calls, ['atlas'])
+                    self.assertEqual(stopped, [True])
+                elif restore_fails:
                     self.assertIn('Failed phase: **restore 1x**. restore failed first', text)
                     self.assertNotIn('pg_ctl', text)
                     self.assertIn('pg_ctl', error_output.getvalue())
