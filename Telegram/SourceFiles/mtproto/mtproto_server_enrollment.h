@@ -9,6 +9,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "mtproto/core_types.h"
 #include "mtproto/details/mtproto_rsa_public_key.h"
+#include "mtproto/mtproto_dc_options.h"
 
 #include <QtCore/QString>
 
@@ -92,6 +93,56 @@ struct ServerEnrollmentCheck {
 	const std::function<bool()> &persistPin,
 	const std::function<void()> &resume,
 	const std::function<void()> &rollbackPin = {});
+
+[[nodiscard]] bool CommitServerEndpointRefresh(
+	const CustomServer &original, const CustomServer &candidate,
+	bool authenticatedProof, const std::function<bool()> &setPin,
+	const std::function<bool()> &persistPin,
+	const std::function<void()> &resume,
+	const std::function<void()> &rollbackPin = {});
+
+struct ServerEndpointRefreshEligibility {
+	bool restoredSession = false;
+	bool pinAuthorized = false;
+	bool canResume = false;
+	bool cacheBindingMismatch = false;
+	bool hasStoredAuthKey = false;
+	bool identityFailure = false;
+};
+
+[[nodiscard]] bool
+CanRefreshServerEndpoint(const ServerEndpointRefreshEligibility &eligibility,
+						 const CustomServer &pin);
+
+[[nodiscard]] int ServerEndpointRefreshRetryDelayMs(int failures);
+[[nodiscard]] bool ShouldScheduleServerEndpointRefreshRetry(bool eligible,
+															bool timerActive);
+
+class ServerEndpointRefreshTransaction final {
+  public:
+	[[nodiscard]] bool
+	begin(const ServerEndpointRefreshEligibility &eligibility,
+		  const CustomServer &original);
+	[[nodiscard]] CustomServerEndpointRefreshIdentityFailure
+	setCandidate(const CustomServer &candidate);
+	[[nodiscard]] bool hasOriginal() const;
+	[[nodiscard]] bool hasCandidate() const;
+	[[nodiscard]] const CustomServer &original() const;
+	[[nodiscard]] const CustomServer &candidate() const;
+	[[nodiscard]] bool
+	commit(bool authenticatedProof, const std::function<bool()> &setPin,
+		   const std::function<bool()> &persistPin,
+		   const std::function<void()> &resume,
+		   const std::function<void()> &rollbackPin = {}) const;
+	void reset();
+
+  private:
+	struct State {
+		CustomServer original;
+		std::optional<CustomServer> candidate;
+	};
+	std::optional<State> _state;
+};
 
 struct ServerReplacementState {
 	bool browserOnlyServerRefused = false;

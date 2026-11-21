@@ -28,6 +28,7 @@ class AbstractConnection;
 
 inline constexpr auto kTestModeDcIdShift = 10000;
 inline constexpr auto kErrorCodeBrowserOnly = -498;
+inline constexpr auto kErrorCodeBrowserOnlyResponse = -500;
 
 class ConnectionPointer {
 public:
@@ -174,9 +175,8 @@ private:
 };
 
 [[nodiscard]] inline qint32 ServerErrorCode(qint32 errorCode) {
-	return (errorCode == kErrorCodeBrowserOnly)
-			   ? AbstractConnection::kErrorCodeOther
-			   : errorCode;
+	return (errorCode == kErrorCodeBrowserOnly) ? kErrorCodeBrowserOnlyResponse
+												: errorCode;
 }
 
 [[nodiscard]] inline qint32 ServerErrorFromPacket(const mtpBuffer &packet) {
