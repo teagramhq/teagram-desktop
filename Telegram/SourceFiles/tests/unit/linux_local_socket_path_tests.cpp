@@ -86,8 +86,8 @@ TEST_CASE(LinuxSingleInstanceSocketPrefersStableRuntimeDirectory) {
 
 TEST_CASE(LinuxSingleInstanceProductionSocketPathIsPrivateAndAbsolute) {
 	auto error = QString();
-	const auto path
-		= Platform::SingleInstanceLocalServerName(u"test-profile-hash"_q, &error);
+	const auto path = Platform::SingleInstanceLocalServerName(
+		u"test-profile-hash"_q, &error);
 	CHECK(!path.isEmpty());
 	CHECK(QDir::isAbsolutePath(path));
 	CHECK(error.isEmpty());
@@ -448,7 +448,8 @@ TEST_CASE(LinuxSingleInstanceProbeTimeoutReleasesElectionLock) {
 		},
 		1'000, 5, 50,
 		[](QLocalSocket &, const QString &) {
-			// Keep the probe pending so the production deadline is deterministic.
+			// Keep the probe pending so the production deadline is
+			// deterministic.
 		});
 	QTimer::singleShot(1'000, &loop, &QEventLoop::quit);
 	loop.exec();
@@ -544,7 +545,8 @@ TEST_CASE(LinuxSingleInstanceSocketReportsUnsafeHomeDirectory) {
 		  == Platform::Linux::SingleInstanceSocketPathFailure::
 			  HomeDirectoryCheckFailed);
 	const auto message
-		= Platform::Linux::SingleInstanceSocketPathFailureMessage(failure, detail);
+		= Platform::Linux::SingleInstanceSocketPathFailureMessage(failure,
+																  detail);
 	CHECK(message.contains(rejectedRuntimeDirectory));
 	CHECK(message.contains(homeDirectory.path()));
 	CHECK(!message.contains(u"XDG_RUNTIME_DIR"_q));
@@ -573,7 +575,8 @@ TEST_CASE(LinuxSingleInstanceSocketReportsFallbackCreationSystemError) {
 		  == Platform::Linux::SingleInstanceSocketPathFailure::
 			  FallbackDirectoryCheckFailed);
 	const auto message
-		= Platform::Linux::SingleInstanceSocketPathFailureMessage(failure, detail);
+		= Platform::Linux::SingleInstanceSocketPathFailureMessage(failure,
+																  detail);
 	CHECK(message.contains(QString::fromLocal8Bit(strerror(EACCES))));
 }
 
@@ -694,9 +697,8 @@ TEST_CASE(LinuxSingleInstanceServerRecoversAfterPrimaryCrashes) {
 		return;
 	}
 	const auto bound
-		= ::bind(abandonedPrimary,
-				reinterpret_cast<const sockaddr *>(&address),
-				socklen_t(sizeof(address)));
+		= ::bind(abandonedPrimary, reinterpret_cast<const sockaddr *>(&address),
+				 socklen_t(sizeof(address)));
 	CHECK_EQ(bound, 0);
 	if (bound != 0) {
 		::close(abandonedPrimary);
