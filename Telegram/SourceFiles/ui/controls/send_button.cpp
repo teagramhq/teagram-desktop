@@ -7,6 +7,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "ui/controls/send_button.h"
 
+#include "base/call_delayed.h"
+#include "base/debug_log.h"
 #include "lang/lang_tag.h"
 #include "lottie/lottie_icon.h"
 #include "ui/effects/ripple_animation.h"
@@ -18,6 +20,13 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "lang/lang_keys.h"
 #include "ui/text/format_values.h"
 
+#include <crl/crl_on_main.h>
+#include <QtCore/QPointer>
+
+#include <system_error>
+#include <thread>
+#include <utility>
+
 namespace Ui {
 namespace {
 
@@ -25,6 +34,7 @@ constexpr auto kWideScale = 5;
 constexpr auto kVoiceToRoundIndex = 0;
 constexpr auto kRoundToVoiceIndex = 1;
 constexpr auto kForbiddenOpacity = 0.5;
+constexpr auto kVoiceRoundRetryDelay = crl::time(500);
 
 } // namespace
 
@@ -118,12 +128,9 @@ void SendButton::setState(State state) {
 		if (!icon) {
 			initVoiceRoundIcon(index);
 		}
-		icon->animate([=, raw = icon.get()] {
-			update();
-			if (!raw->animating()) {
-				_voiceRoundAnimating = false;
-			}
-		}, 0, icon->framesCount() - 1);
+		if (icon) {
+			animateVoiceRoundIcon(index, icon->framesCount());
+		}
 		auto &after = _voiceRoundIcons[1 - index];
 		if (!after) {
 			initVoiceRoundIcon(1 - index);
@@ -162,7 +169,7 @@ void SendButton::paintEvent(QPaintEvent *e) {
 		return;
 	}
 
-	auto changed = _stateChangeAnimation.value(1.);
+	auto changed = _grabCurrentContent ? 1. : _stateChangeAnimation.value(1.);
 	if (changed < 1.) {
 		PainterHighQualityEnabler hq(p);
 		const auto ratio = style::DevicePixelRatio();
@@ -258,7 +265,9 @@ void SendButton::paintLottieIcon(QPainter &p, int index, bool over) {
 	auto &icon = _voiceRoundIcons[index];
 	if (!icon) {
 		initVoiceRoundIcon(index);
-	} else if (!_voiceRoundAnimating && icon->frameIndex() != 0) {
+		return;
+	}
+	if (!_voiceRoundAnimating && icon->frameIndex() != 0) {
 		icon->jumpTo(0, [=] { update(); });
 	}
 	const auto color = (isDisabled() || !over)
@@ -462,7 +471,9 @@ void SendButton::updateSize() {
 		_st.inner.height);
 }
 
-QPixmap SendButton::grabContent() {
+QPixmap SendButton::grabContent(bool currentStateOnly) {
+	const auto previous = std::exchange(_grabCurrentContent, currentStateOnly);
+	const auto guard = gsl::finally([&] { _grabCurrentContent = previous; });
 	auto result = QImage(
 		kWideScale * size() * style::DevicePixelRatio(),
 		QImage::Format_ARGB32_Premultiplied);
@@ -522,13 +533,83 @@ QPoint SendButton::prepareRippleStartPosition() const {
 void SendButton::initVoiceRoundIcon(int index) {
 	Expects(index >= 0 && index < 2);
 
-	_voiceRoundIcons[index] = Lottie::MakeIcon({
+	if (_voiceRoundPreparing[index] || _voiceRoundRetryScheduled[index]) {
+		return;
+	}
+	_voiceRoundPreparing[index] = true;
+	auto icon = Lottie::MakeIcon({
 		.path = ((index == kVoiceToRoundIndex)
-			? u":/animations/chat/voice_to_video.tgs"_q
-			: u":/animations/chat/video_to_voice.tgs"_q),
+					 ? u":/animations/chat/voice_to_video.tgs"_q
+					 : u":/animations/chat/video_to_voice.tgs"_q),
 		.sizeOverride = _st.recordSize,
 		.colorizeUsingAlpha = true,
 	});
+	const auto weak = QPointer<SendButton>(this);
+	// The icon prepares on the shared executor and its accessors block
+	// until preparation completes. A waiter on that executor could occupy
+	// all its workers before their preparation tasks run. Wait separately
+	// and transfer the icon to the widget only after preparation completes.
+	try {
+		std::thread([weak, index, icon = std::move(icon)]() mutable {
+			const auto framesCount = icon->framesCount();
+			crl::on_main(weak, [weak, index, framesCount,
+								icon = std::move(icon)]() mutable {
+				const auto button = weak.data();
+				button->_voiceRoundPreparing[index] = false;
+				button->_voiceRoundIcons[index] = std::move(icon);
+				const auto type = button->_state.type;
+				const auto transitionIndex = (type == Type::Round)
+												 ? kVoiceToRoundIndex
+												 : kRoundToVoiceIndex;
+				const auto restingIndex = (type == Type::Record)
+											  ? kVoiceToRoundIndex
+											  : kRoundToVoiceIndex;
+				if (button->_voiceRoundAnimating
+					&& (type == Type::Record || type == Type::Round)
+					&& transitionIndex == index) {
+					button->animateVoiceRoundIcon(index, framesCount);
+				} else if (!button->_voiceRoundAnimating
+						   && (type == Type::Record || type == Type::Round)
+						   && restingIndex == index
+						   && button->_stateChangeAnimation.animating()) {
+					button->_contentTo = button->grabContent(true);
+				}
+				button->update();
+			});
+		}).detach();
+	} catch (const std::system_error &error) {
+		_voiceRoundPreparing[index] = false;
+		_voiceRoundRetryScheduled[index] = true;
+		LOG(("Send button icon preparation could not start: %1")
+				.arg(QString::fromLocal8Bit(error.what())));
+		base::call_delayed(kVoiceRoundRetryDelay, this, [this, index] {
+			_voiceRoundRetryScheduled[index] = false;
+			if (!_voiceRoundIcons[index]
+				&& (_state.type == Type::Record
+					|| _state.type == Type::Round)) {
+				initVoiceRoundIcon(index);
+			}
+		});
+	}
+}
+
+void SendButton::animateVoiceRoundIcon(int index, int framesCount) {
+	const auto icon = _voiceRoundIcons[index].get();
+	Expects(icon != nullptr);
+	if (framesCount <= 1) {
+		_voiceRoundAnimating = false;
+		return;
+	}
+	icon->animate(
+		[this, index, icon] {
+			update();
+			const auto type
+				= (index == kVoiceToRoundIndex) ? Type::Round : Type::Record;
+			if (_state.type == type && !icon->animating()) {
+				_voiceRoundAnimating = false;
+			}
+		},
+		0, framesCount - 1);
 }
 
 void SendButton::paintVoiceRoundIcon(QPainter &p, bool over) {
@@ -547,7 +628,9 @@ void SendButton::paintVoiceRoundIcon(QPainter &p, bool over) {
 		: st::historyRecordVoiceFgOver->c;
 	const auto toVideo = (_state.type == Type::Round);
 	const auto index = toVideo ? kVoiceToRoundIndex : kRoundToVoiceIndex;
-	_voiceRoundIcons[index]->paintInCenter(p, rect(), color);
+	if (const auto icon = _voiceRoundIcons[index].get()) {
+		icon->paintInCenter(p, rect(), color);
+	}
 	if (_state.forbidden) {
 		p.setOpacity(1.);
 	}
