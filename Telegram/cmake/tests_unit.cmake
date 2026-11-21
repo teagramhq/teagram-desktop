@@ -95,6 +95,9 @@ target_precompile_headers(test_unit PRIVATE
 
 nice_target_sources(test_unit ${src_loc}
 PRIVATE
+    core/shutdown_loop.cpp
+    core/single_instance_lock.cpp
+    core/single_instance_lock.h
     core/teagram_icon_choice.cpp
     core/url_scheme_policy.cpp
     core/teagram_update_verification.cpp
@@ -140,6 +143,7 @@ PRIVATE
     tests/unit/debug_mode_tests.cpp
     tests/unit/edit_admin_rights_save_tests.cpp
     tests/unit/edit_peer_permissions_save_tests.cpp
+    tests/unit/emoji_background_tasks_tests.cpp
     tests/unit/export_output_string_tests.cpp
     tests/unit/ffmpeg_frame_generator_tests.cpp
     tests/unit/ffmpeg_frame_storage_tests.cpp
@@ -166,6 +170,7 @@ PRIVATE
     tests/unit/server_enrollment_tests.cpp
     tests/unit/server_endpoint_refresh_test_support.h
     tests/unit/session_private_tests.cpp
+    tests/unit/single_instance_takeover_tests.cpp
     tests/unit/settings_active_sessions_tests.cpp
     tests/unit/settings_invite_state_tests.cpp
     tests/unit/settings_privacy_policy_tests.cpp
@@ -249,6 +254,7 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
     nice_target_sources(test_unit ${src_loc}
     PRIVATE
         platform/linux/app_data_path.cpp
+        tests/unit/emoji_cache_shutdown_tests.cpp
         tests/unit/linux_data_path_tests.cpp
         tests/unit/linux_desktop_identity_tests.cpp
         tests/unit/username_input_tests.cpp

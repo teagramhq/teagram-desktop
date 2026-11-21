@@ -648,7 +648,11 @@ PRIVATE
     core/phone_click_handler.cpp
     core/phone_click_handler.h
     core/sandbox.cpp
+    core/shutdown_loop.cpp
+    core/shutdown_loop.h
     core/sandbox.h
+    core/single_instance_lock.cpp
+    core/single_instance_lock.h
     core/ui_stall_watchdog.cpp
     core/ui_stall_watchdog.h
     core/ui_stall_log_writer.cpp
@@ -1528,6 +1532,7 @@ PRIVATE
     tests/signup_controls_regression.h
     tests/font_startup_regression.cpp
     tests/font_startup_regression.h
+    tests/font_shutdown_probe.h
     tests/account_lifecycle_regression.cpp
     tests/account_lifecycle_regression.h
     media/audio/media_audio.cpp
@@ -2246,6 +2251,20 @@ else()
     )
 endif()
 
+if (APPLE AND TDESKTOP_TEAGRAM AND TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST)
+    add_library(TeagramFontShutdownProbe SHARED
+        "${src_loc}/tests/font_shutdown_probe.mm"
+    )
+    init_non_host_target(TeagramFontShutdownProbe)
+    target_include_directories(TeagramFontShutdownProbe PRIVATE ${src_loc})
+    target_compile_definitions(TeagramFontShutdownProbe PRIVATE
+        TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST
+    )
+    target_compile_options(TeagramFontShutdownProbe PRIVATE -fno-omit-frame-pointer)
+    target_link_frameworks(TeagramFontShutdownProbe PRIVATE CoreText)
+    target_link_libraries(Telegram PRIVATE TeagramFontShutdownProbe)
+endif()
+
 if (NOT build_winstore)
     remove_target_sources(Telegram ${src_loc}
         platform/win/windows_start_task.cpp
@@ -2495,6 +2514,7 @@ if (TDESKTOP_TEAGRAM)
         set_property(SOURCE
             "${src_loc}/main.cpp"
             "${src_loc}/data/data_session.cpp"
+            "${src_loc}/core/sandbox.cpp"
             "${src_loc}/core/mac_protected_path_runtime.mm"
             "${src_loc}/tests/account_lifecycle_regression.cpp"
             APPEND PROPERTY COMPILE_DEFINITIONS

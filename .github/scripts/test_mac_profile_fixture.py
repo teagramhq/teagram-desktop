@@ -7,7 +7,9 @@ import subprocess
 import tempfile
 
 
-for preexisting_lock, create_lock in ((False, False), (False, True), (True, False)):
+for preexisting_lock, create_lock, inherited_mode in (
+        (False, False, ''), (False, True, ''), (True, False, ''),
+        (False, False, 'emoji-relaunch-double-start')):
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
         executable = root / 'Teagram.app/Contents/MacOS/Teagram'
@@ -22,6 +24,97 @@ if [[ "$HOME" == *'Group Containers'* ]]; then
         printf 'synthetic refused-process lock' > "$TDESKTOP_MAC_PROFILE_TEST_IPC/$TEST_LOCK_NAME"
     fi
     exit 1
+fi
+if [[ -n "${TDESKTOP_PROFILE_LOCK_REFUSAL_REGRESSION:-}" ]]; then
+    refusal_window=1
+    refusal_path="$HOME/Library/Group Containers/6N38VWS5BX.ru.keepcoder.Telegram/refused-profile.lock"
+    if [[ "${TDESKTOP_FONT_TEST_MODE:-${FONT_TEST_MODE:-}}" == lock-refusal-no-window ]]; then refusal_window=0; fi
+    if [[ "${TDESKTOP_FONT_TEST_MODE:-${FONT_TEST_MODE:-}}" == lock-refusal-no-path ]]; then refusal_path='missing'; fi
+    policy_operation=stat
+    reported_operation=stat
+    window_contains_error=1
+    if [[ "${TDESKTOP_FONT_TEST_MODE:-${FONT_TEST_MODE:-}}" == lock-refusal-wrong-policy ]]; then policy_operation=write; fi
+    if [[ "${TDESKTOP_FONT_TEST_MODE:-${FONT_TEST_MODE:-}}" == lock-refusal-wrong-reported ]]; then reported_operation=write; fi
+    if [[ "${TDESKTOP_FONT_TEST_MODE:-${FONT_TEST_MODE:-}}" == lock-refusal-wrong-window ]]; then window_contains_error=0; fi
+    printf 'Mac protected path refusal: operation=%s class=group-container callsite=int Core::Sandbox::start()\\n' "$policy_operation"
+    printf 'Profile lock refusal regression: failure_window=%s window_contains_error=%s operation=%s path=%s\\n' "$refusal_window" "$window_contains_error" "$reported_operation" "$refusal_path"
+    exit 1
+fi
+if [[ -n "${TDESKTOP_PROFILE_LOCK_REGRESSION:-}" ]]; then
+    lock_window=1
+    lock_reason='open failed'
+    if [[ "${TDESKTOP_FONT_TEST_MODE:-${FONT_TEST_MODE:-}}" == lock-error-no-window ]]; then lock_window=0; fi
+    if [[ "${TDESKTOP_FONT_TEST_MODE:-${FONT_TEST_MODE:-}}" == lock-error-no-reason ]]; then lock_reason=''; fi
+    printf 'Profile lock regression: failure_window=%s window_contains_error=1 reason=%s\\n' "$lock_window" "$lock_reason"
+    exit 0
+fi
+if [[ -n "${TDESKTOP_SOCKET_ERROR_REGRESSION:-}" ]]; then
+    printf 'Socket error regression: injected=1\\n'
+    if [[ "$TDESKTOP_SOCKET_ERROR_REGRESSION" == ipc-collision ]]; then
+        collision_path="$HOME/fixture-ipc"
+        printf 'Teagram IPC collision fixture' > "$collision_path"
+        printf 'Socket error regression: collision_window=1 path_visible=1 entry_preserved=1 path=%s\\n' "$collision_path"
+        exit 0
+    fi
+    if [[ "$TDESKTOP_SOCKET_ERROR_REGRESSION" == persistent ]]; then
+        printf 'Single instance retry regression: delay_ms=50\\n'
+        if [[ "${TDESKTOP_FONT_TEST_MODE:-${FONT_TEST_MODE:-}}" != socket-error-no-window ]]; then
+            printf 'Socket error regression: failure_window=1\\n'
+        fi
+        exit 0
+    fi
+    if [[ "${TDESKTOP_FONT_TEST_MODE:-${FONT_TEST_MODE:-}}" == socket-error-no-retry ]]; then exit 1; fi
+fi
+if [[ -n "${TDESKTOP_INSTANCE_RECHECK_HOLD_FILE:-}" ]]; then
+    printf 'Single instance recheck regression: initial_failure=1 socket=%s\\n' "$TDESKTOP_INSTANCE_RECHECK_TEST_SOCKET"
+    while [[ ! -e "$TDESKTOP_INSTANCE_RECHECK_HOLD_FILE" ]]; do sleep 0.02; done
+    if [[ "${TDESKTOP_FONT_TEST_MODE:-${FONT_TEST_MODE:-}}" == emoji-relaunch-skip-recheck ]]; then exit 1; fi
+    printf 'Single instance retry regression: delay_ms=0\\n'
+    python3 -c 'import socket,sys; s=socket.socket(socket.AF_UNIX); s.connect(sys.argv[1]); s.sendall(b"CMD:show;"); s.recv(128)' "$TDESKTOP_INSTANCE_RECHECK_TEST_SOCKET"
+    printf 'Emoji cache relaunch: forwarded=1\\n'
+    exit 0
+fi
+if [[ -n "${TDESKTOP_EMOJI_SHUTDOWN_RELEASE_FILE:-}" ]]; then
+    printf 'Emoji cache shutdown regression: drain_active=1\\n'
+    if [[ "${TDESKTOP_EMOJI_RELAUNCH_COMPETING:-}" == 1 ]]; then
+        for index in 1 2; do
+            while [[ ! -e "$TDESKTOP_EMOJI_SHUTDOWN_RELEASE_FILE.peer.$index" ]]; do sleep 0.02; done
+            printf 'Emoji cache shutdown regression: peer_waiting=1\\n'
+        done
+    else
+        while [[ ! -e "$TDESKTOP_EMOJI_SHUTDOWN_RELEASE_FILE.peer" ]]; do sleep 0.02; done
+        printf 'Emoji cache shutdown regression: peer_waiting=1\\n'
+    fi
+    while [[ ! -e "$TDESKTOP_EMOJI_SHUTDOWN_RELEASE_FILE" ]]; do sleep 0.02; done
+    exit 0
+fi
+if [[ "${TDESKTOP_EMOJI_RELAUNCH_SECONDARY_TEST:-}" == 1 ]]; then
+    if [[ -n "${TDESKTOP_EMOJI_RELAUNCH_HOLD_FILE:-}" ]]; then
+        touch "$TDESKTOP_EMOJI_RELAUNCH_TEST_FILE.peer.$TDESKTOP_EMOJI_RELAUNCH_INDEX"
+    else
+        touch "$TDESKTOP_EMOJI_RELAUNCH_TEST_FILE.peer"
+    fi
+    if [[ "${TDESKTOP_FONT_TEST_MODE:-${FONT_TEST_MODE:-}}" == emoji-relaunch-early ]]; then exit 0; fi
+    while [[ ! -e "$TDESKTOP_EMOJI_RELAUNCH_TEST_FILE" ]]; do sleep 0.02; done
+    if [[ -n "${TDESKTOP_EMOJI_RELAUNCH_HOLD_FILE:-}" ]]; then
+        if [[ "${TDESKTOP_FONT_TEST_MODE:-${FONT_TEST_MODE:-}}" == emoji-relaunch-double-start ]] \\
+            || [[ "${TDESKTOP_FONT_TEST_MODE:-${FONT_TEST_MODE:-}}" == emoji-relaunch-second-wins && "$TDESKTOP_EMOJI_RELAUNCH_INDEX" == 2 ]] \\
+            || [[ "${TDESKTOP_FONT_TEST_MODE:-${FONT_TEST_MODE:-}}" != emoji-relaunch-second-wins && "$TDESKTOP_EMOJI_RELAUNCH_INDEX" == 1 ]]; then
+            printf 'Emoji cache relaunch: application_started=1\\n'
+            while [[ ! -e "$TDESKTOP_EMOJI_RELAUNCH_HOLD_FILE" ]]; do sleep 0.02; done
+        else
+            printf 'Emoji cache relaunch: forwarded=1\\n'
+        fi
+        exit 0
+    fi
+    printf 'Font database warmup regression: ready=1 custom-fonts=1\\n'
+    exit 0
+fi
+if [[ "${TDESKTOP_EMOJI_CACHE_SHUTDOWN_REGRESSION:-}" == 1 ]]; then
+    printf 'Emoji cache shutdown regression: worker_blocked=1\\n'
+    printf 'Emoji cache shutdown regression: repeat_quit=1\\n'
+    printf 'Emoji cache shutdown regression: gui_responsive=1 integration_alive=1 worker_returned=1 wait_timed_out=0\\n'
+    exit 0
 fi
 if [[ "${TDESKTOP_FONT_STARTUP_REGRESSION:-}" == 1 ]]; then
     if [[ "${TDESKTOP_FONT_STARTUP_TEST_FAILURE:-}" == thread-start ]]; then
@@ -59,6 +152,32 @@ if [[ "${TDESKTOP_FONT_STARTUP_QUIT_REGRESSION:-}" == 1 ]]; then
         printf 'Font shutdown regression: quit_observed=1 font_work=active enumeration_overlapped=0\\n'
         exit 0
     fi
+    if [[ "${TDESKTOP_FONT_STARTUP_TEST_FAILURE:-}" == probe-timeout-retry ]]; then
+        printf 'Font shutdown regression: retry_checkpoint=1\\n'
+        printf 'Font shutdown regression: retry_timeout=1\\n'
+        printf 'Font shutdown regression: retry_gui_event=1\\n'
+        printf 'Font shutdown regression: retry_worker_done=1\\n'
+        printf 'Font shutdown regression: worker_joined=1 application_created=0 teardown=complete\\n'
+        exit 0
+    fi
+    if [[ "${TDESKTOP_FONT_STARTUP_TEST_FAILURE:-}" == probe-release-before-arm ]]; then
+        if [[ "$FONT_SHUTDOWN_TEST_MODE" != probe-release-before-arm-unpreserved ]]; then
+            printf 'Font shutdown regression: probe_release_preserved=1\\n'
+        fi
+        printf 'Font shutdown regression: quit_observed=0 font_work=active enumeration_overlapped=0\\n'
+        printf 'Font shutdown regression: worker_joined=1 application_created=0 teardown=complete\\n'
+        exit 0
+    fi
+    if [[ "${TDESKTOP_FONT_STARTUP_TEST_FAILURE:-}" == shutdown-remove-pending ]]; then
+        printf 'Font shutdown regression: quit_observed=1 font_work=active remove_pending_at_quit=1 removal_completed=1\\n'
+        printf 'Font shutdown regression: worker_joined=1 application_created=0 teardown=complete\\n'
+        exit 0
+    fi
+    if [[ "${TDESKTOP_FONT_STARTUP_TEST_FAILURE:-}" == probe-missed-first ]]; then
+        printf 'Font shutdown regression: enumeration_retry=1\\n'
+    fi
+    printf 'Font shutdown regression: probe_interposer=active\\n'
+    printf 'Font shutdown regression: qt_font_database_hold=1\\n'
     printf 'Font shutdown regression: quit_observed=1 font_work=active enumeration_overlapped=1\\n'
     printf 'Font shutdown regression: worker_joined=1 application_created=0 teardown=complete\\n'
     exit 0
@@ -91,6 +210,9 @@ printf '%s\n' "$directory"
                            CREATE_REFUSAL_LOCK=str(int(create_lock)), TEST_LOCK_NAME=lock_name,
                            PREEXISTING_LOCK=str(int(preexisting_lock)),
                            PATH=str(binaries) + ':' + os.environ['PATH'])
+        environment.pop('TDESKTOP_FONT_TEST_MODE', None)
+        if inherited_mode:
+            environment['FONT_TEST_MODE'] = inherited_mode
         try:
             result = subprocess.run(['bash', 'Telegram/build/test_mac_profile_guard.sh', str(executable)],
                                     env=environment, capture_output=True, text=True, timeout=15)
@@ -124,7 +246,7 @@ def run_font_startup_fixture(
         executable.parent.mkdir(parents=True)
         executable.write_text('''#!/bin/bash
 count_file="$HOME/font-startup-count"
-mode="$FONT_TEST_MODE"
+mode="${TDESKTOP_FONT_TEST_MODE:-${FONT_TEST_MODE:-}}"
 if [[ "${TDESKTOP_FONT_STARTUP_QUIT_REGRESSION:-}" == 1 ]]; then
     if [[ ( "${TDESKTOP_FONT_STARTUP_TEST_FAILURE:-}" == signal-install \
         && "$FONT_SHUTDOWN_TEST_MODE" != probe-injection-ignored ) \
@@ -150,27 +272,170 @@ if [[ "${TDESKTOP_FONT_STARTUP_QUIT_REGRESSION:-}" == 1 ]]; then
         printf 'Font shutdown regression: last_other_work_frames=worker <- pthread_start\\n'
         printf 'Font shutdown regression: quit_observed=1 font_work=active enumeration_overlapped=0\\n'
         exit 0
-    elif [[ "$FONT_SHUTDOWN_TEST_MODE" == shutdown-not-in-flight ]]; then
+    elif [[ "${TDESKTOP_FONT_STARTUP_TEST_FAILURE:-}" == probe-timeout-retry ]]; then
+        printf 'Font shutdown regression: retry_checkpoint=1\\n'
+        printf 'Font shutdown regression: retry_timeout=1\\n'
+        if [[ "$FONT_SHUTDOWN_TEST_MODE" == retry-timeout-bad-order ]]; then
+            printf 'Font shutdown regression: retry_worker_done=1\\n'
+            printf 'Font shutdown regression: retry_gui_event=1\\n'
+        else
+            printf 'Font shutdown regression: retry_gui_event=1\\n'
+            printf 'Font shutdown regression: retry_worker_done=1\\n'
+        fi
+        printf 'Font shutdown regression: worker_joined=1 application_created=0 teardown=complete\\n'
+        exit 0
+    elif [[ "${TDESKTOP_FONT_STARTUP_TEST_FAILURE:-}" == probe-release-before-arm ]]; then
+        if [[ "$FONT_SHUTDOWN_TEST_MODE" == probe-release-before-arm-joined-before-release ]]; then
+            printf 'Font shutdown regression: quit_observed=0 font_work=active enumeration_overlapped=0\\n'
+            printf 'Font shutdown regression: worker_joined=1 application_created=0 teardown=complete\\n'
+            printf 'Font shutdown regression: probe_release_preserved=1\\n'
+            exit 0
+        fi
+        if [[ "$FONT_SHUTDOWN_TEST_MODE" != probe-release-before-arm-unpreserved ]]; then
+            printf 'Font shutdown regression: probe_release_preserved=1\\n'
+        fi
         printf 'Font shutdown regression: quit_observed=0 font_work=active enumeration_overlapped=0\\n'
         printf 'Font shutdown regression: worker_joined=1 application_created=0 teardown=complete\\n'
-    elif [[ "$FONT_SHUTDOWN_TEST_MODE" == shutdown-no-overlap ]]; then
+        exit 0
+    elif [[ "${TDESKTOP_FONT_STARTUP_TEST_FAILURE:-}" == shutdown-remove-pending \
+        && "$FONT_SHUTDOWN_TEST_MODE" != shutdown-not-in-flight \
+        && "$FONT_SHUTDOWN_TEST_MODE" != shutdown-no-overlap \
+        && "$FONT_SHUTDOWN_TEST_MODE" != shutdown-order \
+        && "$FONT_SHUTDOWN_TEST_MODE" != shutdown-application-created \
+        && "$FONT_SHUTDOWN_TEST_MODE" != shutdown-missing-teardown \
+        && "$FONT_SHUTDOWN_TEST_MODE" != shutdown-crash ]]; then
+        printf 'Font shutdown regression: quit_observed=1 font_work=active remove_pending_at_quit=1 removal_completed=1\\n'
+        printf 'Font shutdown regression: worker_joined=1 application_created=0 teardown=complete\\n'
+    elif [[ "$FONT_SHUTDOWN_TEST_MODE" == shutdown-not-in-flight \
+        && "${TDESKTOP_FONT_STARTUP_TEST_FAILURE:-}" == shutdown-remove-pending ]]; then
+        printf 'Font shutdown regression: quit_observed=0 font_work=active remove_pending_at_quit=0 removal_completed=1\\n'
+        printf 'Font shutdown regression: worker_joined=1 application_created=0 teardown=complete\\n'
+    elif [[ "$FONT_SHUTDOWN_TEST_MODE" == shutdown-no-overlap \
+        && "${TDESKTOP_FONT_STARTUP_TEST_FAILURE:-}" == shutdown-remove-pending ]]; then
         printf 'Font shutdown regression: last_other_work_frames=frame0 <- frame1 <- frame2 <- frame3 <- frame4 <- frame5 <- frame6 <- frame7\\n'
-        printf 'Font shutdown regression: quit_observed=1 font_work=active enumeration_overlapped=0\\n'
+        printf 'Font shutdown regression: quit_observed=1 font_work=active remove_pending_at_quit=0 removal_completed=1\\n'
         printf 'Font shutdown regression: worker_joined=1 application_created=0 teardown=complete\\n'
-    elif [[ "$FONT_SHUTDOWN_TEST_MODE" == shutdown-order ]]; then
+    elif [[ "$FONT_SHUTDOWN_TEST_MODE" == shutdown-order \
+        && "${TDESKTOP_FONT_STARTUP_TEST_FAILURE:-}" == shutdown-remove-pending ]]; then
         printf 'Font shutdown regression: worker_joined=1 application_created=0 teardown=complete\\n'
-        printf 'Font shutdown regression: quit_observed=1 font_work=active enumeration_overlapped=1\\n'
-    elif [[ "$FONT_SHUTDOWN_TEST_MODE" == shutdown-application-created ]]; then
-        printf 'Font shutdown regression: quit_observed=1 font_work=active enumeration_overlapped=1\\n'
+        printf 'Font shutdown regression: quit_observed=1 font_work=active remove_pending_at_quit=1 removal_completed=1\\n'
+    elif [[ "$FONT_SHUTDOWN_TEST_MODE" == shutdown-application-created \
+        && "${TDESKTOP_FONT_STARTUP_TEST_FAILURE:-}" == shutdown-remove-pending ]]; then
+        printf 'Font shutdown regression: quit_observed=1 font_work=active remove_pending_at_quit=1 removal_completed=1\\n'
         printf 'Font shutdown regression: worker_joined=1 application_created=1 teardown=complete\\n'
-    elif [[ "$FONT_SHUTDOWN_TEST_MODE" == shutdown-missing-teardown ]]; then
-        printf 'Font shutdown regression: quit_observed=1 font_work=active enumeration_overlapped=1\\n'
-    elif [[ "$FONT_SHUTDOWN_TEST_MODE" == shutdown-crash ]]; then
-        printf 'Font shutdown regression: quit_observed=1 font_work=active enumeration_overlapped=1\\n'
+    elif [[ "$FONT_SHUTDOWN_TEST_MODE" == shutdown-missing-teardown \
+        && "${TDESKTOP_FONT_STARTUP_TEST_FAILURE:-}" == shutdown-remove-pending ]]; then
+        printf 'Font shutdown regression: quit_observed=1 font_work=active remove_pending_at_quit=1 removal_completed=1\\n'
+    elif [[ "$FONT_SHUTDOWN_TEST_MODE" == shutdown-crash \
+        && "${TDESKTOP_FONT_STARTUP_TEST_FAILURE:-}" == shutdown-remove-pending ]]; then
+        printf 'Font shutdown regression: quit_observed=1 font_work=active remove_pending_at_quit=1 removal_completed=1\\n'
         exit 139
     else
+        if [[ "${TDESKTOP_FONT_STARTUP_TEST_FAILURE:-}" == probe-missed-first \\
+            && "$FONT_SHUTDOWN_TEST_MODE" != retry-injection-ignored ]]; then
+            printf 'Font shutdown regression: enumeration_retry=1\\n'
+        fi
+        printf 'Font shutdown regression: probe_interposer=active\\n'
+        printf 'Font shutdown regression: qt_font_database_hold=1\\n'
         printf 'Font shutdown regression: quit_observed=1 font_work=active enumeration_overlapped=1\\n'
         printf 'Font shutdown regression: worker_joined=1 application_created=0 teardown=complete\\n'
+    fi
+    exit 0
+fi
+if [[ -n "${TDESKTOP_PROFILE_LOCK_REFUSAL_REGRESSION:-}" ]]; then
+    refusal_window=1
+    refusal_path="$HOME/Library/Group Containers/6N38VWS5BX.ru.keepcoder.Telegram/refused-profile.lock"
+    if [[ "${TDESKTOP_FONT_TEST_MODE:-${FONT_TEST_MODE:-}}" == lock-refusal-no-window ]]; then refusal_window=0; fi
+    if [[ "${TDESKTOP_FONT_TEST_MODE:-${FONT_TEST_MODE:-}}" == lock-refusal-no-path ]]; then refusal_path='missing'; fi
+    policy_operation=stat
+    reported_operation=stat
+    window_contains_error=1
+    if [[ "${TDESKTOP_FONT_TEST_MODE:-${FONT_TEST_MODE:-}}" == lock-refusal-wrong-policy ]]; then policy_operation=write; fi
+    if [[ "${TDESKTOP_FONT_TEST_MODE:-${FONT_TEST_MODE:-}}" == lock-refusal-wrong-reported ]]; then reported_operation=write; fi
+    if [[ "${TDESKTOP_FONT_TEST_MODE:-${FONT_TEST_MODE:-}}" == lock-refusal-wrong-window ]]; then window_contains_error=0; fi
+    printf 'Mac protected path refusal: operation=%s class=group-container callsite=int Core::Sandbox::start()\\n' "$policy_operation"
+    printf 'Profile lock refusal regression: failure_window=%s window_contains_error=%s operation=%s path=%s\\n' "$refusal_window" "$window_contains_error" "$reported_operation" "$refusal_path"
+    exit 1
+fi
+if [[ -n "${TDESKTOP_PROFILE_LOCK_REGRESSION:-}" ]]; then
+    lock_window=1
+    lock_reason='open failed'
+    if [[ "${TDESKTOP_FONT_TEST_MODE:-${FONT_TEST_MODE:-}}" == lock-error-no-window ]]; then lock_window=0; fi
+    if [[ "${TDESKTOP_FONT_TEST_MODE:-${FONT_TEST_MODE:-}}" == lock-error-no-reason ]]; then lock_reason=''; fi
+    printf 'Profile lock regression: failure_window=%s window_contains_error=1 reason=%s\\n' "$lock_window" "$lock_reason"
+    exit 0
+fi
+if [[ -n "${TDESKTOP_SOCKET_ERROR_REGRESSION:-}" ]]; then
+    printf 'Socket error regression: injected=1\\n'
+    if [[ "$TDESKTOP_SOCKET_ERROR_REGRESSION" == ipc-collision ]]; then
+        collision_path="$HOME/fixture-ipc"
+        printf 'Teagram IPC collision fixture' > "$collision_path"
+        printf 'Socket error regression: collision_window=1 path_visible=1 entry_preserved=1 path=%s\\n' "$collision_path"
+        exit 0
+    fi
+    if [[ "$TDESKTOP_SOCKET_ERROR_REGRESSION" == persistent ]]; then
+        printf 'Single instance retry regression: delay_ms=50\\n'
+        if [[ "${TDESKTOP_FONT_TEST_MODE:-${FONT_TEST_MODE:-}}" != socket-error-no-window ]]; then
+            printf 'Socket error regression: failure_window=1\\n'
+        fi
+        exit 0
+    fi
+    if [[ "${TDESKTOP_FONT_TEST_MODE:-${FONT_TEST_MODE:-}}" == socket-error-no-retry ]]; then exit 1; fi
+fi
+if [[ -n "${TDESKTOP_INSTANCE_RECHECK_HOLD_FILE:-}" ]]; then
+    printf 'Single instance recheck regression: initial_failure=1 socket=%s\\n' "$TDESKTOP_INSTANCE_RECHECK_TEST_SOCKET"
+    while [[ ! -e "$TDESKTOP_INSTANCE_RECHECK_HOLD_FILE" ]]; do sleep 0.02; done
+    if [[ "${TDESKTOP_FONT_TEST_MODE:-${FONT_TEST_MODE:-}}" == emoji-relaunch-skip-recheck ]]; then exit 1; fi
+    printf 'Single instance retry regression: delay_ms=0\\n'
+    python3 -c 'import socket,sys; s=socket.socket(socket.AF_UNIX); s.connect(sys.argv[1]); s.sendall(b"CMD:show;"); s.recv(128)' "$TDESKTOP_INSTANCE_RECHECK_TEST_SOCKET"
+    printf 'Emoji cache relaunch: forwarded=1\\n'
+    exit 0
+fi
+if [[ -n "${TDESKTOP_EMOJI_SHUTDOWN_RELEASE_FILE:-}" ]]; then
+    printf 'Emoji cache shutdown regression: drain_active=1\\n'
+    if [[ "${TDESKTOP_EMOJI_RELAUNCH_COMPETING:-}" == 1 ]]; then
+        for index in 1 2; do
+            while [[ ! -e "$TDESKTOP_EMOJI_SHUTDOWN_RELEASE_FILE.peer.$index" ]]; do sleep 0.02; done
+            printf 'Emoji cache shutdown regression: peer_waiting=1\\n'
+        done
+    else
+        while [[ ! -e "$TDESKTOP_EMOJI_SHUTDOWN_RELEASE_FILE.peer" ]]; do sleep 0.02; done
+        printf 'Emoji cache shutdown regression: peer_waiting=1\\n'
+    fi
+    while [[ ! -e "$TDESKTOP_EMOJI_SHUTDOWN_RELEASE_FILE" ]]; do sleep 0.02; done
+    exit 0
+fi
+if [[ "${TDESKTOP_EMOJI_RELAUNCH_SECONDARY_TEST:-}" == 1 ]]; then
+    if [[ -n "${TDESKTOP_EMOJI_RELAUNCH_HOLD_FILE:-}" ]]; then
+        touch "$TDESKTOP_EMOJI_RELAUNCH_TEST_FILE.peer.$TDESKTOP_EMOJI_RELAUNCH_INDEX"
+    else
+        touch "$TDESKTOP_EMOJI_RELAUNCH_TEST_FILE.peer"
+    fi
+    if [[ "${TDESKTOP_FONT_TEST_MODE:-${FONT_TEST_MODE:-}}" == emoji-relaunch-early ]]; then exit 0; fi
+    while [[ ! -e "$TDESKTOP_EMOJI_RELAUNCH_TEST_FILE" ]]; do sleep 0.02; done
+    if [[ -n "${TDESKTOP_EMOJI_RELAUNCH_HOLD_FILE:-}" ]]; then
+        if [[ "${TDESKTOP_FONT_TEST_MODE:-${FONT_TEST_MODE:-}}" == emoji-relaunch-double-start ]] \\
+            || [[ "${TDESKTOP_FONT_TEST_MODE:-${FONT_TEST_MODE:-}}" == emoji-relaunch-second-wins && "$TDESKTOP_EMOJI_RELAUNCH_INDEX" == 2 ]] \\
+            || [[ "${TDESKTOP_FONT_TEST_MODE:-${FONT_TEST_MODE:-}}" != emoji-relaunch-second-wins && "$TDESKTOP_EMOJI_RELAUNCH_INDEX" == 1 ]]; then
+            printf 'Emoji cache relaunch: application_started=1\\n'
+            while [[ ! -e "$TDESKTOP_EMOJI_RELAUNCH_HOLD_FILE" ]]; do sleep 0.02; done
+        else
+            printf 'Emoji cache relaunch: forwarded=1\\n'
+        fi
+        exit 0
+    fi
+    printf 'Font database warmup regression: ready=1 custom-fonts=1\\n'
+    exit 0
+fi
+if [[ "${TDESKTOP_EMOJI_CACHE_SHUTDOWN_REGRESSION:-}" == 1 ]]; then
+    printf 'Emoji cache shutdown regression: worker_blocked=1\\n'
+    if [[ "$mode" != emoji-shutdown-no-repeat ]]; then
+        printf 'Emoji cache shutdown regression: repeat_quit=1\\n'
+    fi
+    if [[ "$mode" == emoji-shutdown-early ]]; then
+        printf 'Emoji cache shutdown regression: gui_responsive=0 integration_alive=0 worker_returned=0 wait_timed_out=0\\n'
+    else
+        printf 'Emoji cache shutdown regression: gui_responsive=1 integration_alive=1 worker_returned=1 wait_timed_out=0\\n'
     fi
     exit 0
 fi
@@ -190,6 +455,9 @@ else
     splash_wall_ns="$FONT_SPLASH_COLD_NS"
     sample='cold'
     printf 'started' > "$count_file"
+fi
+if [[ "$mode" == emoji-shutdown-invalid ]]; then
+    printf 'Mac protected path refusal: operation=read class=invalid callsite=emojiCacheFolder\\n'
 fi
 if [[ "$mode" == font-stall ]]; then
     printf 'UI stall 197 ms (started 2026-11-13T00:00:00): QFontDatabase::addApplicationFont <- CTFontManagerCopyAvailableFontFamilyNames\\n'
@@ -280,7 +548,7 @@ printf '%s\\n' "$directory"
             FONT_SPLASH_COLD_NS=str(splash_cold_ns),
             FONT_SPLASH_WARM_NS=str(splash_warm_ns),
             FONT_EXPOSURE_TIMEOUT_NS=str(exposure_timeout_ns),
-            FONT_TEST_MODE=mode,
+            TDESKTOP_FONT_TEST_MODE=mode,
             FONT_FALLBACK_WALL_NS=str(fallback_wall_ns),
             PATH=str(binaries) + ':' + os.environ['PATH'],
         )
@@ -312,13 +580,73 @@ assert 'fallback=PASS font_stall_gate=PASS' \
     in font_startup_output
 assert 'Font shutdown teardown=PASS font_work_active=1 application_created=0' \
     in font_startup_output
+assert 'Font shutdown retry after missed enumeration=PASS' in font_startup_output
 assert 'Font shutdown probe installation failure=PASS' in font_startup_output
 assert 'Font shutdown probe timeout diagnostics=PASS' in font_startup_output
+assert 'Font shutdown retry timeout ordering=PASS' in font_startup_output
 assert 'Font database warmup thread failure fallback=PASS' in font_startup_output
+assert 'Emoji cache shutdown lifetime and GUI responsiveness=PASS' in font_startup_output
+assert 'Emoji cache shutdown relaunch=normal PASS waited=1 new_application=1' in font_startup_output
+assert 'Emoji cache shutdown relaunch=crash PASS waited=1 new_application=1' in font_startup_output
+assert 'Emoji cache shutdown relaunch=competing PASS waited=1 new_application=1' in font_startup_output
+assert 'Single instance server recheck=PASS forwarded=1' in font_startup_output
+font_startup_second_wins = run_font_startup_fixture(
+    50_000_000, 50_000_000, 0, mode='emoji-relaunch-second-wins')
+assert 'Emoji cache shutdown relaunch=competing PASS' in font_startup_second_wins
+assert 'Socket error recovery=PASS mode=transient' in font_startup_output
+assert 'Socket error recovery=PASS mode=unknown' in font_startup_output
+assert 'Socket error recovery=PASS mode=persistent' in font_startup_output
+assert 'Socket error recovery=PASS mode=lock-error' in font_startup_output
+assert 'Socket error recovery=PASS mode=lock-refused' in font_startup_output
+font_startup_refusal_no_window = run_font_startup_fixture(
+    50_000_000, 50_000_000, 1, mode='lock-refusal-no-window')
+assert 'socket error regression failed: mode=lock-refused' in font_startup_refusal_no_window
+font_startup_refusal_no_path = run_font_startup_fixture(
+    50_000_000, 50_000_000, 1, mode='lock-refusal-no-path')
+assert 'socket error regression failed: mode=lock-refused' in font_startup_refusal_no_path
+font_startup_refusal_wrong_policy = run_font_startup_fixture(
+    50_000_000, 50_000_000, 1, mode='lock-refusal-wrong-policy')
+assert 'socket error regression failed: mode=lock-refused' in font_startup_refusal_wrong_policy
+for mode in ('lock-refusal-wrong-reported', 'lock-refusal-wrong-window'):
+    output = run_font_startup_fixture(50_000_000, 50_000_000, 1, mode=mode)
+    assert 'socket error regression failed: mode=lock-refused' in output
+font_startup_lock_no_window = run_font_startup_fixture(
+    50_000_000, 50_000_000, 1, mode='lock-error-no-window')
+assert 'socket error regression failed: mode=lock-error' in font_startup_lock_no_window
+font_startup_lock_no_reason = run_font_startup_fixture(
+    50_000_000, 50_000_000, 1, mode='lock-error-no-reason')
+assert 'socket error regression failed: mode=lock-error' in font_startup_lock_no_reason
+font_startup_socket_no_retry = run_font_startup_fixture(
+    50_000_000, 50_000_000, 1, mode='socket-error-no-retry')
+assert 'socket error regression failed: mode=transient' in font_startup_socket_no_retry
+font_startup_socket_no_window = run_font_startup_fixture(
+    50_000_000, 50_000_000, 1, mode='socket-error-no-window')
+assert 'socket error regression failed: mode=persistent' in font_startup_socket_no_window
+font_startup_no_recheck = run_font_startup_fixture(
+    50_000_000, 50_000_000, 1, mode='emoji-relaunch-skip-recheck')
+assert 'relaunch exited without rechecking the server' in font_startup_no_recheck
+font_startup_double_relaunch = run_font_startup_fixture(
+    50_000_000, 50_000_000, 1, mode='emoji-relaunch-double-start')
+assert 'competing launches chose multiple winners' in font_startup_double_relaunch
+font_startup_early_relaunch = run_font_startup_fixture(
+    50_000_000, 50_000_000, 1, mode='emoji-relaunch-early')
+assert 'emoji cache shutdown relaunch failed' in font_startup_early_relaunch
 font_startup_failure = run_font_startup_fixture(50_000_000, 100_000_000, 1)
 assert 'StartFonts warm exceeded the 100ms budget' in font_startup_failure
 font_startup_cold_failure = run_font_startup_fixture(100_000_000, 50_000_000, 1)
 assert 'StartFonts cold exceeded the 100ms budget' in font_startup_cold_failure
+font_startup_emoji_shutdown = run_font_startup_fixture(
+    50_000_000, 50_000_000, 1, mode='emoji-shutdown-invalid')
+assert 'emoji cache accessed an invalid profile during shutdown' \
+    in font_startup_emoji_shutdown
+font_startup_emoji_missing_repeat = run_font_startup_fixture(
+    50_000_000, 50_000_000, 1, mode='emoji-shutdown-no-repeat')
+assert 'emoji cache shutdown ordering was not observed' \
+    in font_startup_emoji_missing_repeat
+font_startup_emoji_early_shutdown = run_font_startup_fixture(
+    50_000_000, 50_000_000, 1, mode='emoji-shutdown-early')
+assert 'emoji cache shutdown ordering was not observed' \
+    in font_startup_emoji_early_shutdown
 font_startup_font_stall = run_font_startup_fixture(
     50_000_000, 50_000_000, 1, mode='font-stall')
 assert 'Font-code startup cold produced a main-thread stall' in font_startup_font_stall
@@ -410,11 +738,11 @@ assert 'bundled fonts were not preloaded before app initialization' \
     in font_startup_missing_custom_fonts
 font_startup_shutdown_not_in_flight = run_font_startup_fixture(
     50_000_000, 50_000_000, 1, mode='shutdown-not-in-flight')
-assert 'font shutdown regression did not quit during an active system font enumeration' \
+assert 'font shutdown did not complete the pending removal after quit' \
     in font_startup_shutdown_not_in_flight
 font_startup_shutdown_no_overlap = run_font_startup_fixture(
     50_000_000, 50_000_000, 1, mode='shutdown-no-overlap')
-assert 'font shutdown regression did not quit during an active system font enumeration' \
+assert 'font shutdown did not complete the pending removal after quit' \
     in font_startup_shutdown_no_overlap
 assert 'last_other_work_frames=frame0 <- frame1 <- frame2 <- frame3 <- frame4 <- frame5 <- frame6 <- frame7' \
     in font_startup_shutdown_no_overlap
@@ -446,6 +774,10 @@ font_probe_injection_ignored = run_font_startup_fixture(
     50_000_000, 50_000_000, 1, mode='probe-injection-ignored')
 assert 'font shutdown regression accepted a failed probe installation' \
     in font_probe_injection_ignored
+font_retry_injection_ignored = run_font_startup_fixture(
+    50_000_000, 50_000_000, 1, mode='retry-injection-ignored')
+assert 'font shutdown enumeration retry was not observed' \
+    in font_retry_injection_ignored
 font_timeout_injection_ignored = run_font_startup_fixture(
     50_000_000, 50_000_000, 1, mode='timeout-injection-ignored')
 assert 'font shutdown regression accepted a probe timeout' in font_timeout_injection_ignored
@@ -453,6 +785,19 @@ font_timeout_no_frames = run_font_startup_fixture(
     50_000_000, 50_000_000, 1, mode='timeout-no-frames')
 assert 'font shutdown probe timeout did not report the sampled frames' \
     in font_timeout_no_frames
+font_retry_timeout_bad_order = run_font_startup_fixture(
+    50_000_000, 50_000_000, 1, mode='retry-timeout-bad-order')
+assert 'font shutdown retry timeout ordering was not observed' \
+    in font_retry_timeout_bad_order
+font_release_before_arm_unpreserved = run_font_startup_fixture(
+    50_000_000, 50_000_000, 1, mode='probe-release-before-arm-unpreserved')
+assert 'font shutdown cancellation before probe arm was not observed' \
+    in font_release_before_arm_unpreserved
+font_release_before_arm_joined_before_release = run_font_startup_fixture(
+    50_000_000, 50_000_000, 1,
+    mode='probe-release-before-arm-joined-before-release')
+assert 'font shutdown cancellation before probe arm was not followed by worker join' \
+    in font_release_before_arm_joined_before_release
 print('macOS font startup timing and failure guards: PASS')
 
 
@@ -485,8 +830,15 @@ case "$TRAY_TEST_MODE" in
         for ((i = 0; i < 20; ++i)); do sleep 0.1 & wait "$!" || :; done
         exit 0
         ;;
+    delayed-visible)
+        printf 'Mac start-in-tray regression: startup=complete start_intray=1 window_and_tray=1 hidden=1 splash_visible=1 splash_destroyed=1\\n'
+        sleep 0.6
+        printf 'Mac start-in-tray regression: delayed_activation_check hidden=0\\n'
+        ;;
     *)
         printf 'Mac start-in-tray regression: startup=complete start_intray=1 window_and_tray=1 hidden=1 splash_visible=1 splash_destroyed=1\\n'
+        sleep 0.6
+        printf 'Mac start-in-tray regression: delayed_activation_check hidden=1\\n'
         ;;
 esac
 if [[ "$TRAY_TEST_MODE" == exit-after-startup ]]; then
@@ -529,6 +881,9 @@ tray_visible = run_start_in_tray_fixture('visible', 1)
 assert 'start-in-tray process exited before startup completed' in tray_visible
 tray_wrong_mode = run_start_in_tray_fixture('wrong-mode', 1)
 assert 'start-in-tray process exited before startup completed' in tray_wrong_mode
+tray_delayed_visible = run_start_in_tray_fixture('delayed-visible', 1)
+assert 'start-in-tray window reopened after the 500 ms visibility checkpoint' \
+    in tray_delayed_visible
 tray_late_exit = run_start_in_tray_fixture('exit-after-startup', 1)
 assert 'start-in-tray process exited after startup' in tray_late_exit
 print('macOS start-in-tray lifecycle guard: PASS')
