@@ -2301,6 +2301,26 @@ awk '
   }
 ' "$native_harness" \
   || contract_fail "$native_harness must not time the initial history selection unless its window was activated."
+awk '
+  /Platform::ActivateThisProcess\(window->widget\(\)\)/ { process_activation = NR }
+  process_activation && NR > process_activation && /result.initialHistoryWindowActivated/ {
+    activation_result = NR
+  }
+  activation_result && /WindowActivationForRegressionResult::Activated/ {
+    activation_complete = NR
+  }
+  activation_complete && /settleHistoryUnfocused\(\)/ { settled = NR }
+  /showPeerHistoryMeasured\(emptyFirstHistory\)/ {
+    cold_selection = NR
+    exit
+  }
+  END {
+    exit !(process_activation && activation_result > process_activation &&
+      activation_complete > activation_result && settled > activation_complete &&
+      cold_selection > settled)
+  }
+' "$native_harness" \
+  || contract_fail "$native_harness must settle the activated window before timing its cold first history selection."
 grep -Fq 'Settings deep link native focus assertion skipped:' "$native_harness" \
   || contract_fail "$native_harness must report when the synthetic macOS replay cannot assert native focus."
 grep -Fq 'ordinaryFocusBehaviorMatches' "$native_harness" \
