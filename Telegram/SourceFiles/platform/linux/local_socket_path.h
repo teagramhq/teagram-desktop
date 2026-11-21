@@ -22,6 +22,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <QtNetwork/QLocalSocket>
 
 #include <cerrno>
+#include <cstring>
+#include <functional>
 #include <pwd.h>
 #include <utility>
 #include <sys/stat.h>
@@ -31,55 +33,114 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 namespace Platform::Linux {
 namespace SingleInstanceSocketPathDetails {
 
+inline void SetFailureDetail(QString *detail, QString message) {
+	if (detail) {
+		*detail = std::move(message);
+	}
+}
+
+inline void SetSystemCallFailure(QString *detail, const char *operation,
+								 const QString &path, int errorNumber) {
+	if (detail) {
+		*detail = u"%1('%2') failed: %3 (errno %4)."_q
+				  .arg(QString::fromLatin1(operation), path,
+					   QString::fromLocal8Bit(strerror(errorNumber)))
+				  .arg(errorNumber);
+	}
+}
+
 [[nodiscard]] inline QString
 CanonicalExistingDirectory(const QString &path, struct stat *status,
-						   bool rejectFinalSymlink) {
+						   bool rejectFinalSymlink,
+						   QString *failureDetail = nullptr) {
+	SetFailureDetail(failureDetail, QString());
 	if (path.isEmpty() || !QDir::isAbsolutePath(path)) {
+		SetFailureDetail(
+			failureDetail,
+			u"directory path '%1' is empty or not absolute."_q.arg(path));
 		return QString();
 	}
 	const auto cleanPath = QDir::cleanPath(path);
 	struct stat pathStatus = {};
 	if (rejectFinalSymlink) {
 		const auto encodedPath = QFile::encodeName(cleanPath);
-		if ((lstat(encodedPath.constData(), &pathStatus) != 0)
-			|| !S_ISDIR(pathStatus.st_mode)) {
+		if (lstat(encodedPath.constData(), &pathStatus) != 0) {
+			const auto errorNumber = errno;
+			SetSystemCallFailure(failureDetail, "lstat", cleanPath,
+								 errorNumber);
+			return QString();
+		}
+		if (!S_ISDIR(pathStatus.st_mode)) {
+			SetFailureDetail(failureDetail,
+							u"directory path '%1' is not a directory or is a symlink."_q
+								.arg(cleanPath));
 			return QString();
 		}
 	}
 	const auto canonicalPath = QFileInfo(cleanPath).canonicalFilePath();
 	if (canonicalPath.isEmpty()) {
+		SetFailureDetail(
+			failureDetail,
+			u"directory path '%1' could not be canonicalized."_q.arg(cleanPath));
 		return QString();
 	}
 	const auto encodedCanonicalPath = QFile::encodeName(canonicalPath);
 	struct stat canonicalStatus = {};
-	if ((lstat(encodedCanonicalPath.constData(), &canonicalStatus) != 0)
-		|| !S_ISDIR(canonicalStatus.st_mode)
+	if (lstat(encodedCanonicalPath.constData(), &canonicalStatus) != 0) {
+		const auto errorNumber = errno;
+		SetSystemCallFailure(failureDetail, "lstat", canonicalPath,
+							 errorNumber);
+		return QString();
+	}
+	if (!S_ISDIR(canonicalStatus.st_mode)
 		|| (rejectFinalSymlink
 			&& ((pathStatus.st_dev != canonicalStatus.st_dev)
 				|| (pathStatus.st_ino != canonicalStatus.st_ino)))) {
+		SetFailureDetail(failureDetail,
+						u"directory path '%1' failed the directory or symlink check."_q
+							.arg(canonicalPath));
 		return QString();
 	}
 	*status = canonicalStatus;
 	return canonicalPath;
 }
 
-[[nodiscard]] inline QString
-VerifiedPrivateRuntimeDirectory(const QString &path, uid_t effectiveUid) {
+[[nodiscard]] inline QString VerifiedPrivateRuntimeDirectory(
+	const QString &path, uid_t effectiveUid,
+	QString *failureDetail = nullptr) {
 	struct stat status = {};
-	const auto canonicalPath = CanonicalExistingDirectory(path, &status, true);
-	if (canonicalPath.isEmpty() || (status.st_uid != effectiveUid)
-		|| ((status.st_mode & 07777) != 0700)) {
+	const auto canonicalPath
+		= CanonicalExistingDirectory(path, &status, true, failureDetail);
+	if (canonicalPath.isEmpty()) {
+		return QString();
+	}
+	if ((status.st_uid != effectiveUid) || ((status.st_mode & 07777) != 0700)) {
+		SetFailureDetail(
+			failureDetail,
+			u"directory '%1' is not owned by uid %2 with mode 0700."_q
+				.arg(canonicalPath)
+				.arg(qulonglong(effectiveUid)));
 		return QString();
 	}
 	return canonicalPath;
 }
 
 [[nodiscard]] inline QString VerifiedUserHomeDirectory(const QString &path,
-													   uid_t effectiveUid) {
+													   uid_t effectiveUid,
+													   QString *failureDetail = nullptr) {
 	struct stat status = {};
-	const auto canonicalPath = CanonicalExistingDirectory(path, &status, true);
-	if (canonicalPath.isEmpty() || (status.st_uid != effectiveUid)
+	const auto canonicalPath
+		= CanonicalExistingDirectory(path, &status, true, failureDetail);
+	if (canonicalPath.isEmpty()) {
+		return QString();
+	}
+	if ((status.st_uid != effectiveUid)
 		|| (status.st_mode & (S_IWGRP | S_IWOTH))) {
+		SetFailureDetail(
+			failureDetail,
+			u"home directory '%1' is not owned by uid %2 or is group/world writable."_q
+				.arg(canonicalPath)
+				.arg(qulonglong(effectiveUid)));
 		return QString();
 	}
 	return canonicalPath;
@@ -92,9 +153,10 @@ VerifiedPrivateRuntimeDirectory(const QString &path, uid_t effectiveUid) {
 
 [[nodiscard]] inline QString
 CreateFallbackRuntimeDirectory(const QString &homeDirectory,
-							   uid_t effectiveUid) {
-	const auto canonicalHomeDirectory
-		= VerifiedUserHomeDirectory(homeDirectory, effectiveUid);
+							   uid_t effectiveUid,
+							   QString *failureDetail = nullptr) {
+	const auto canonicalHomeDirectory = VerifiedUserHomeDirectory(
+		homeDirectory, effectiveUid, failureDetail);
 	if (canonicalHomeDirectory.isEmpty()) {
 		return QString();
 	}
@@ -103,20 +165,39 @@ CreateFallbackRuntimeDirectory(const QString &homeDirectory,
 	const auto runtimeDirectory
 		= QDir(canonicalHomeDirectory).filePath(runtimeName);
 	const auto encodedRuntimeDirectory = QFile::encodeName(runtimeDirectory);
-	const auto created
-		= (mkdir(encodedRuntimeDirectory.constData(), 0700) == 0);
-	if (!created && (errno != EEXIST)) {
-		return QString();
-	}
-	if (created) {
-		struct stat status = {};
-		if ((lstat(encodedRuntimeDirectory.constData(), &status) != 0)
-			|| !S_ISDIR(status.st_mode) || (status.st_uid != effectiveUid)
-			|| (chmod(encodedRuntimeDirectory.constData(), 0700) != 0)) {
+	const auto created = (mkdir(encodedRuntimeDirectory.constData(), 0700) == 0);
+	if (!created) {
+		const auto errorNumber = errno;
+		if (errorNumber != EEXIST) {
+			SetSystemCallFailure(failureDetail, "mkdir", runtimeDirectory,
+								 errorNumber);
 			return QString();
 		}
 	}
-	return VerifiedPrivateRuntimeDirectory(runtimeDirectory, effectiveUid);
+	if (created) {
+		struct stat status = {};
+		if (lstat(encodedRuntimeDirectory.constData(), &status) != 0) {
+			const auto errorNumber = errno;
+			SetSystemCallFailure(failureDetail, "lstat", runtimeDirectory,
+								 errorNumber);
+			return QString();
+		}
+		if (!S_ISDIR(status.st_mode) || (status.st_uid != effectiveUid)) {
+			SetFailureDetail(
+				failureDetail,
+				u"new runtime directory '%1' is not a user-owned directory."_q
+					.arg(runtimeDirectory));
+			return QString();
+		}
+		if (chmod(encodedRuntimeDirectory.constData(), 0700) != 0) {
+			const auto errorNumber = errno;
+			SetSystemCallFailure(failureDetail, "chmod", runtimeDirectory,
+								 errorNumber);
+			return QString();
+		}
+	}
+	return VerifiedPrivateRuntimeDirectory(runtimeDirectory, effectiveUid,
+										   failureDetail);
 }
 
 [[nodiscard]] inline QString
@@ -152,18 +233,23 @@ enum class SingleInstanceSocketPathFailure {
 };
 
 [[nodiscard]] inline QString SingleInstanceSocketPathFailureMessage(
-	SingleInstanceSocketPathFailure failure) {
+	SingleInstanceSocketPathFailure failure,
+	const QString &failureDetail = QString()) {
+	if (!failureDetail.isEmpty()) {
+		return u"Could not create the single-instance IPC socket: %1"_q.arg(
+			failureDetail);
+	}
 	switch (failure) {
 	case SingleInstanceSocketPathFailure::InvalidServerName:
 		return u"Could not create the single-instance IPC socket: invalid server name."_q;
 	case SingleInstanceSocketPathFailure::XdgRuntimeDirectoryCheckFailed:
 		return u"Could not create the single-instance IPC socket: the Snap XDG_RUNTIME_DIR failed its owner, mode, or path-length check."_q;
 	case SingleInstanceSocketPathFailure::HomeDirectoryCheckFailed:
-		return u"Could not create the single-instance IPC socket. XDG_RUNTIME_DIR is unset, unsafe, too long, or unavailable, and HOME failed the owner or mode check."_q;
+		return u"Could not create the single-instance IPC socket: /run/user/<uid> is unavailable or too long, and the passwd home directory failed its owner or mode check."_q;
 	case SingleInstanceSocketPathFailure::FallbackDirectoryCheckFailed:
-		return u"Could not create the single-instance IPC socket. XDG_RUNTIME_DIR is unset, unsafe, too long, or unavailable, and the private HOME runtime directory failed its owner, mode, or symlink check."_q;
+		return u"Could not create the single-instance IPC socket: /run/user/<uid> is unavailable or too long, and the private .teagram-runtime-<uid> directory under the passwd home failed its owner, mode, or symlink check."_q;
 	case SingleInstanceSocketPathFailure::SocketPathTooLong:
-		return u"Could not create the single-instance IPC socket. XDG_RUNTIME_DIR is unset, unsafe, too long, or unavailable, and the HOME fallback exceeds Linux's 106-byte AF_UNIX socket path limit."_q;
+		return u"Could not create the single-instance IPC socket: /run/user/<uid> is unavailable or too long, and the .teagram-runtime-<uid> fallback under the passwd home exceeds Linux's 106-byte AF_UNIX socket path limit."_q;
 	case SingleInstanceSocketPathFailure::None:
 		break;
 	}
@@ -173,13 +259,16 @@ enum class SingleInstanceSocketPathFailure {
 [[nodiscard]] inline QString
 SingleInstanceSocketPathInDirectory(const QString &runtimeDirectory,
 									const QString &serverName,
-									uid_t effectiveUid) {
+									uid_t effectiveUid,
+									QString *failureDetail = nullptr) {
 	if (!SingleInstanceSocketPathDetails::IsValidServerName(serverName)) {
+		SingleInstanceSocketPathDetails::SetFailureDetail(
+			failureDetail, u"server name is invalid."_q);
 		return QString();
 	}
 	const auto canonicalDirectory
 		= SingleInstanceSocketPathDetails::VerifiedPrivateRuntimeDirectory(
-			runtimeDirectory, effectiveUid);
+			runtimeDirectory, effectiveUid, failureDetail);
 	if (canonicalDirectory.isEmpty()) {
 		return QString();
 	}
@@ -187,27 +276,42 @@ SingleInstanceSocketPathInDirectory(const QString &runtimeDirectory,
 	const auto encodedSocketPath = QFile::encodeName(socketPath);
 	auto socketAddress = sockaddr_un();
 	const auto socketPathLimit = sizeof(socketAddress.sun_path) - 2;
-	return size_t(encodedSocketPath.size()) > socketPathLimit ? QString()
-															  : socketPath;
+	if (size_t(encodedSocketPath.size()) > socketPathLimit) {
+		SingleInstanceSocketPathDetails::SetFailureDetail(
+			failureDetail,
+			u"encoded socket path '%1' is %2 bytes; the Linux limit is %3 bytes."_q
+				.arg(socketPath)
+				.arg(encodedSocketPath.size())
+				.arg(socketPathLimit));
+		return QString();
+	}
+	return socketPath;
 }
 
 [[nodiscard]] inline QString SingleInstanceSocketPathForLaunch(
 	const QString &xdgRuntimeDirectory, const QString &stableRuntimeDirectory,
 	const QString &serverName, uid_t effectiveUid, const QString &homeDirectory,
 	SingleInstanceSocketPathFailure *failure = nullptr,
-	bool useXdgRuntimeForSingleInstance = false) {
+	bool useXdgRuntimeForSingleInstance = false,
+	QString *failureDetail = nullptr,
+	QString *selectionWarning = nullptr) {
 	if (failure) {
 		*failure = SingleInstanceSocketPathFailure::None;
 	}
+	SingleInstanceSocketPathDetails::SetFailureDetail(failureDetail, QString());
+	SingleInstanceSocketPathDetails::SetFailureDetail(selectionWarning, QString());
 	if (!SingleInstanceSocketPathDetails::IsValidServerName(serverName)) {
 		if (failure) {
 			*failure = SingleInstanceSocketPathFailure::InvalidServerName;
 		}
+		SingleInstanceSocketPathDetails::SetFailureDetail(
+			failureDetail, u"the requested server name is invalid."_q);
 		return QString();
 	}
 	if (useXdgRuntimeForSingleInstance) {
+		auto xdgFailureDetail = QString();
 		const auto xdgRuntimePath = SingleInstanceSocketPathInDirectory(
-			xdgRuntimeDirectory, serverName, effectiveUid);
+			xdgRuntimeDirectory, serverName, effectiveUid, &xdgFailureDetail);
 		if (!xdgRuntimePath.isEmpty()) {
 			return xdgRuntimePath;
 		}
@@ -215,40 +319,76 @@ SingleInstanceSocketPathInDirectory(const QString &runtimeDirectory,
 			*failure = SingleInstanceSocketPathFailure::
 				XdgRuntimeDirectoryCheckFailed;
 		}
+		SingleInstanceSocketPathDetails::SetFailureDetail(
+			failureDetail,
+			u"Snap XDG_RUNTIME_DIR '%1' failed verification: %2"_q
+				.arg(xdgRuntimeDirectory.isEmpty()
+						 ? u"<unset>"_q
+						 : xdgRuntimeDirectory,
+					 xdgFailureDetail));
 		return QString();
 	}
+	auto stableFailureDetail = QString();
 	const auto stableRuntimePath = SingleInstanceSocketPathInDirectory(
-		stableRuntimeDirectory, serverName, effectiveUid);
-	const auto xdgRuntimePath = SingleInstanceSocketPathInDirectory(
-		xdgRuntimeDirectory, serverName, effectiveUid);
+		stableRuntimeDirectory, serverName, effectiveUid,
+		&stableFailureDetail);
 	if (!stableRuntimePath.isEmpty()) {
-		return (xdgRuntimePath == stableRuntimePath) ? xdgRuntimePath
-													 : stableRuntimePath;
+		return stableRuntimePath;
 	}
-	if (SingleInstanceSocketPathDetails::VerifiedUserHomeDirectory(
-			homeDirectory, effectiveUid)
-			.isEmpty()) {
+	auto homeFailureDetail = QString();
+	const auto verifiedHomeDirectory
+		= SingleInstanceSocketPathDetails::VerifiedUserHomeDirectory(
+			homeDirectory, effectiveUid, &homeFailureDetail);
+	if (verifiedHomeDirectory.isEmpty()) {
 		if (failure) {
 			*failure
 				= SingleInstanceSocketPathFailure::HomeDirectoryCheckFailed;
 		}
+		SingleInstanceSocketPathDetails::SetFailureDetail(
+			failureDetail,
+			u"runtime candidate '%1' was rejected (%2); passwd home '%3' failed validation (%4)."_q
+				.arg(stableRuntimeDirectory, stableFailureDetail,
+					 homeDirectory, homeFailureDetail));
 		return QString();
 	}
+	const auto fallbackCandidate = QDir(verifiedHomeDirectory).filePath(
+		u".teagram-runtime-%1"_q.arg(qulonglong(effectiveUid)));
+	auto fallbackFailureDetail = QString();
 	const auto fallbackDirectory
 		= SingleInstanceSocketPathDetails::CreateFallbackRuntimeDirectory(
-			homeDirectory, effectiveUid);
+			verifiedHomeDirectory, effectiveUid, &fallbackFailureDetail);
 	if (fallbackDirectory.isEmpty()) {
 		if (failure) {
 			*failure
 				= SingleInstanceSocketPathFailure::FallbackDirectoryCheckFailed;
 		}
+		SingleInstanceSocketPathDetails::SetFailureDetail(
+			failureDetail,
+			u"runtime candidate '%1' was rejected (%2); private fallback '%3' under passwd home '%4' failed (%5)."_q
+				.arg(stableRuntimeDirectory, stableFailureDetail,
+					 fallbackCandidate, verifiedHomeDirectory,
+					 fallbackFailureDetail));
 		return QString();
 	}
+	auto fallbackPathFailureDetail = QString();
 	const auto fallbackPath = SingleInstanceSocketPathInDirectory(
-		fallbackDirectory, serverName, effectiveUid);
+		fallbackDirectory, serverName, effectiveUid, &fallbackPathFailureDetail);
 	if (fallbackPath.isEmpty() && failure) {
 		*failure = SingleInstanceSocketPathFailure::SocketPathTooLong;
 	}
+	if (fallbackPath.isEmpty()) {
+		SingleInstanceSocketPathDetails::SetFailureDetail(
+			failureDetail,
+			u"runtime candidate '%1' was rejected (%2); private fallback '%3' under passwd home '%4' is unusable (%5)."_q
+				.arg(stableRuntimeDirectory, stableFailureDetail,
+					 fallbackDirectory, verifiedHomeDirectory,
+					 fallbackPathFailureDetail));
+		return QString();
+	}
+	SingleInstanceSocketPathDetails::SetFailureDetail(
+		selectionWarning,
+		u"Linux single-instance runtime candidate '%1' was rejected (%2); using private fallback '%3'."_q
+			.arg(stableRuntimeDirectory, stableFailureDetail, fallbackPath));
 	return fallbackPath;
 }
 
@@ -257,22 +397,15 @@ SingleInstanceSocketPath(const QString &xdgRuntimeDirectory,
 						 const QString &serverName, uid_t effectiveUid,
 						 const QString &homeDirectory,
 						 SingleInstanceSocketPathFailure *failure = nullptr,
-						 bool useXdgRuntimeForSingleInstance = false) {
+						 bool useXdgRuntimeForSingleInstance = false,
+						 QString *failureDetail = nullptr,
+						 QString *selectionWarning = nullptr) {
 	return SingleInstanceSocketPathForLaunch(
 		xdgRuntimeDirectory,
 		SingleInstanceSocketPathDetails::SingleInstanceRuntimeDirectory(
 			effectiveUid),
 		serverName, effectiveUid, homeDirectory, failure,
-		useXdgRuntimeForSingleInstance);
-}
-
-[[nodiscard]] inline QString
-SingleInstanceSocketPath(const QString &xdgRuntimeDirectory,
-						 const QString &serverName, uid_t effectiveUid) {
-	return SingleInstanceSocketPath(
-		xdgRuntimeDirectory, serverName, effectiveUid,
-		SingleInstanceSocketPathDetails::UserHomeDirectory(
-			effectiveUid, qEnvironmentVariable("HOME")));
+		useXdgRuntimeForSingleInstance, failureDetail, selectionWarning);
 }
 
 enum class SingleInstanceServerResult {
@@ -296,18 +429,28 @@ inline void QueueSingleInstanceProbeCompletion(QObject *context,
 	QTimer::singleShot(0, context, std::move(callback));
 }
 
+using SingleInstanceProbeStart
+	= std::function<void(QLocalSocket &, const QString &)>;
+
 template <typename Cleanup, typename Finished>
 class SingleInstanceServerStarter final : public QObject {
   public:
 	SingleInstanceServerStarter(QLocalServer &server, QString serverPath,
 								Cleanup cleanup, Finished finished,
 								int lockTimeoutMs, int retryIntervalMs,
-								int probeTimeoutMs)
+								int probeTimeoutMs,
+								SingleInstanceProbeStart probeStart)
 		: QObject(&server), _server(server), _serverPath(std::move(serverPath)),
 		  _lock(_serverPath + u".lock"_q), _cleanup(std::move(cleanup)),
 		  _finished(std::move(finished)), _retryTimer(this), _probeTimer(this),
-		  _probeSocket(this), _lockTimeoutMs(lockTimeoutMs),
+		  _probeSocket(this), _probeStart(std::move(probeStart)),
+		  _lockTimeoutMs(lockTimeoutMs),
 		  _retryIntervalMs(retryIntervalMs), _probeTimeoutMs(probeTimeoutMs) {
+		if (!_probeStart) {
+			_probeStart = [](QLocalSocket &socket, const QString &path) {
+				socket.connectToServer(path);
+			};
+		}
 		_retryTimer.setSingleShot(true);
 		_probeTimer.setSingleShot(true);
 		connect(&_retryTimer, &QTimer::timeout, this,
@@ -374,14 +517,15 @@ class SingleInstanceServerStarter final : public QObject {
 			if (_lockTimer.elapsed() >= _lockTimeoutMs) {
 				return finish(
 					SingleInstanceServerResult::Failed,
-					QString::fromLatin1("Timed out waiting for the "
-										"single-instance election lock."));
+					u"Timed out waiting for the single-instance election lock '%1'. "
+					 "Close any stuck Telegram process and retry."_q
+						.arg(_serverPath + u".lock"_q));
 			}
 			_retryTimer.start(_retryIntervalMs);
 			return;
 		}
 		_probeTimer.start(_probeTimeoutMs);
-		_probeSocket.connectToServer(_serverPath);
+		_probeStart(_probeSocket, _serverPath);
 	}
 
 	void finish(SingleInstanceServerResult result, QString error) {
@@ -407,6 +551,7 @@ class SingleInstanceServerStarter final : public QObject {
 	QTimer _retryTimer;
 	QTimer _probeTimer;
 	QLocalSocket _probeSocket;
+	SingleInstanceProbeStart _probeStart;
 	const int _lockTimeoutMs = 30'000;
 	const int _retryIntervalMs = 50;
 	const int _probeTimeoutMs = 5'000;
@@ -418,10 +563,12 @@ void StartSingleInstanceServer(QLocalServer &server, const QString &serverPath,
 							   Cleanup cleanup, Finished finished,
 							   int lockTimeoutMs = 30'000,
 							   int retryIntervalMs = 50,
-							   int probeTimeoutMs = 5'000) {
+							   int probeTimeoutMs = 5'000,
+							   SingleInstanceProbeStart probeStart = {}) {
 	new SingleInstanceServerStarter<Cleanup, Finished>(
 		server, serverPath, std::move(cleanup), std::move(finished),
-		lockTimeoutMs, retryIntervalMs, probeTimeoutMs);
+		lockTimeoutMs, retryIntervalMs, probeTimeoutMs,
+		std::move(probeStart));
 }
 
 } // namespace Platform::Linux

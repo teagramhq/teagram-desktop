@@ -1750,6 +1750,7 @@ PRIVATE
     platform/linux/notifications_manager_linux.cpp
     platform/linux/notifications_manager_linux.h
     platform/linux/overlay_widget_linux.h
+    platform/linux/single_instance_local_server_name.cpp
     platform/linux/specific_linux.cpp
     platform/linux/specific_linux.h
     platform/linux/translate_provider_linux.cpp

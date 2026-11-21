@@ -134,12 +134,8 @@ run_scale_check() {
 		bash -lc '
 			cd /usr/src/tdesktop
 			scale_home=$(mktemp -d /tmp/tdesktop-scale-check.XXXXXX)
-			runtime_dir="$scale_home/runtime"
-			mkdir -m 700 "$runtime_dir"
-			chmod 700 "$runtime_dir"
 			mkdir -p "$scale_home/config" "$scale_home/data" "$scale_home/cache" "$scale_home/work"
 			export HOME="$scale_home"
-			export XDG_RUNTIME_DIR="$runtime_dir"
 			export XDG_CONFIG_HOME="$scale_home/config"
 			export XDG_DATA_HOME="$scale_home/data"
 			export XDG_CACHE_HOME="$scale_home/cache"

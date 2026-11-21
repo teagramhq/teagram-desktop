@@ -7,17 +7,18 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "platform/linux/local_socket_path.h"
 #include "platform/linux/desktop_identity.h"
+#include "platform/platform_specific.h"
 #include "tests/unit/unit_test.h"
 
 #include <QtCore/QDir>
 #include <QtCore/QEventLoop>
 #include <QtCore/QFile>
+#include <QtCore/QFileInfo>
 #include <QtCore/QTemporaryDir>
 #include <QtCore/QTimer>
 
 #include <cerrno>
 #include <cstring>
-#include <vector>
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <unistd.h>
@@ -64,6 +65,42 @@ TEST_CASE(LinuxSingleInstanceSocketUsesPrivateRuntimeDirectory) {
 	const auto path = Platform::Linux::SingleInstanceSocketPathInDirectory(
 		runtimeDirectory.path(), u"teagram-instance"_q, geteuid());
 	CHECK_EQ(path, runtimeDirectory.filePath(u"teagram-instance"_q));
+}
+
+TEST_CASE(LinuxSingleInstanceSocketPrefersStableRuntimeDirectory) {
+	auto runtimeDirectory = QTemporaryDir();
+	auto homeDirectory = QTemporaryDir();
+	CHECK(runtimeDirectory.isValid());
+	CHECK(homeDirectory.isValid());
+	if (!runtimeDirectory.isValid() || !homeDirectory.isValid()) {
+		return;
+	}
+	CHECK(SetPrivatePermissions(runtimeDirectory.path()));
+
+	const auto path = Platform::Linux::SingleInstanceSocketPathForLaunch(
+		QString(), runtimeDirectory.path(), u"teagram-instance"_q, geteuid(),
+		homeDirectory.path());
+	CHECK_EQ(path,
+			 QDir(runtimeDirectory.path()).filePath(u"teagram-instance"_q));
+}
+
+TEST_CASE(LinuxSingleInstanceProductionSocketPathIsPrivateAndAbsolute) {
+	auto error = QString();
+	const auto path
+		= Platform::SingleInstanceLocalServerName(u"test-profile-hash"_q, &error);
+	CHECK(!path.isEmpty());
+	CHECK(QDir::isAbsolutePath(path));
+	CHECK(error.isEmpty());
+	if (path.isEmpty()) {
+		return;
+	}
+	const auto directory = QFileInfo(path).absolutePath();
+	const auto encodedDirectory = QFile::encodeName(directory);
+	struct stat status = {};
+	CHECK_EQ(lstat(encodedDirectory.constData(), &status), 0);
+	CHECK(S_ISDIR(status.st_mode));
+	CHECK_EQ(status.st_uid, geteuid());
+	CHECK_EQ(status.st_mode & 07777, 0700);
 }
 
 TEST_CASE(LinuxSingleInstanceSocketRejectsRuntimeDirectoryOwnedByOtherUid) {
@@ -118,10 +155,15 @@ TEST_CASE(LinuxSingleInstanceSocketFallsBackWhenRuntimeDirectoryIsUnset) {
 	}
 	const auto fallbackDirectory = homeDirectory.filePath(
 		u".teagram-runtime-%1"_q.arg(qulonglong(geteuid())));
+	const auto rejectedRuntimeDirectory
+		= homeDirectory.filePath(u"missing-runtime"_q);
+	auto selectionWarning = QString();
 	const auto path = Platform::Linux::SingleInstanceSocketPathForLaunch(
-		QString(), homeDirectory.filePath(u"missing-runtime"_q),
-		u"teagram-instance"_q, geteuid(), homeDirectory.path());
+		QString(), rejectedRuntimeDirectory, u"teagram-instance"_q, geteuid(),
+		homeDirectory.path(), nullptr, false, nullptr, &selectionWarning);
 	CHECK_EQ(path, QDir(fallbackDirectory).filePath(u"teagram-instance"_q));
+	CHECK(selectionWarning.contains(rejectedRuntimeDirectory));
+	CHECK(selectionWarning.contains(path));
 
 	const auto encodedDirectory = QFile::encodeName(fallbackDirectory);
 	struct stat status = {};
@@ -168,10 +210,14 @@ TEST_CASE(LinuxSingleInstanceSocketFallsBackFromAnUntrustedRuntimeDirectory) {
 
 	const auto fallbackDirectory = homeDirectory.filePath(
 		u".teagram-runtime-%1"_q.arg(qulonglong(geteuid())));
+	auto selectionWarning = QString();
 	const auto path = Platform::Linux::SingleInstanceSocketPathForLaunch(
 		runtimeDirectory.path(), runtimeDirectory.path(), u"teagram-instance"_q,
-		geteuid(), homeDirectory.path());
+		geteuid(), homeDirectory.path(), nullptr, false, nullptr,
+		&selectionWarning);
 	CHECK_EQ(path, QDir(fallbackDirectory).filePath(u"teagram-instance"_q));
+	CHECK(selectionWarning.contains(runtimeDirectory.path()));
+	CHECK(selectionWarning.contains(path));
 }
 
 TEST_CASE(LinuxSingleInstanceSocketUsesOneEndpointWithMixedXdgRuntimeDirs) {
@@ -388,62 +434,6 @@ TEST_CASE(LinuxSingleInstanceProbeTimeoutReleasesElectionLock) {
 	CHECK(SetPrivatePermissions(runtimeDirectory.path()));
 	const auto socketPath
 		= QDir(runtimeDirectory.path()).filePath(u"teagram-instance"_q);
-	auto address = sockaddr_un();
-	address.sun_family = AF_UNIX;
-	const auto encodedPath = QFile::encodeName(socketPath);
-	CHECK(size_t(encodedPath.size()) < sizeof(address.sun_path));
-	memcpy(address.sun_path, encodedPath.constData(), encodedPath.size() + 1);
-	const auto listener = ::socket(AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK, 0);
-	CHECK(listener >= 0);
-	if (listener < 0) {
-		return;
-	}
-	const auto bound
-		= ::bind(listener, reinterpret_cast<const sockaddr *>(&address),
-				 socklen_t(sizeof(address)));
-	CHECK_EQ(bound, 0);
-	if (bound != 0) {
-		::close(listener);
-		return;
-	}
-	const auto listening = ::listen(listener, 1);
-	CHECK_EQ(listening, 0);
-	if (listening != 0) {
-		::close(listener);
-		return;
-	}
-	auto clients = std::vector<int>();
-	auto backlogFull = false;
-	for (auto i = 0; i != 64 && !backlogFull; ++i) {
-		const auto client = ::socket(AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK, 0);
-		CHECK(client >= 0);
-		if (client < 0) {
-			break;
-		}
-		if (::connect(client, reinterpret_cast<const sockaddr *>(&address),
-					  socklen_t(sizeof(address)))
-			== 0) {
-			clients.push_back(client);
-		} else if (errno == EINPROGRESS) {
-			clients.push_back(client);
-		} else if ((errno == EAGAIN) || (errno == EWOULDBLOCK)) {
-			::close(client);
-			backlogFull = true;
-		} else {
-			CHECK(false);
-			::close(client);
-			break;
-		}
-	}
-	CHECK(backlogFull);
-	if (!backlogFull) {
-		for (const auto client : clients) {
-			::close(client);
-		}
-		::close(listener);
-		return;
-	}
-
 	auto server = QLocalServer();
 	auto loop = QEventLoop();
 	auto result = Platform::Linux::SingleInstanceServerResult::Primary;
@@ -456,17 +446,16 @@ TEST_CASE(LinuxSingleInstanceProbeTimeoutReleasesElectionLock) {
 			error = message;
 			loop.quit();
 		},
-		1'000, 5, 50);
+		1'000, 5, 50,
+		[](QLocalSocket &, const QString &) {
+			// Keep the probe pending so the production deadline is deterministic.
+		});
 	QTimer::singleShot(1'000, &loop, &QEventLoop::quit);
 	loop.exec();
 	CHECK(result == Platform::Linux::SingleInstanceServerResult::Failed);
 	CHECK(error.contains(u"probing"_q));
 	auto lock = QLockFile(socketPath + u".lock"_q);
 	CHECK(lock.tryLock(0));
-	for (const auto client : clients) {
-		::close(client);
-	}
-	::close(listener);
 }
 
 TEST_CASE(
@@ -544,17 +533,48 @@ TEST_CASE(LinuxSingleInstanceSocketReportsUnsafeHomeDirectory) {
 	CHECK(QFile::setPermissions(homeDirectory.path(), unsafePermissions));
 
 	auto failure = Platform::Linux::SingleInstanceSocketPathFailure::None;
+	auto detail = QString();
+	const auto rejectedRuntimeDirectory
+		= homeDirectory.filePath(u"missing-runtime"_q);
 	const auto path = Platform::Linux::SingleInstanceSocketPathForLaunch(
-		QString(), homeDirectory.filePath(u"missing-runtime"_q),
-		u"teagram-instance"_q, geteuid(), homeDirectory.path(), &failure);
+		QString(), rejectedRuntimeDirectory, u"teagram-instance"_q, geteuid(),
+		homeDirectory.path(), &failure, false, &detail);
 	CHECK(path.isEmpty());
 	CHECK(failure
 		  == Platform::Linux::SingleInstanceSocketPathFailure::
 			  HomeDirectoryCheckFailed);
 	const auto message
-		= Platform::Linux::SingleInstanceSocketPathFailureMessage(failure);
-	CHECK(message.contains(u"XDG_RUNTIME_DIR"_q));
-	CHECK(message.contains(u"HOME"_q));
+		= Platform::Linux::SingleInstanceSocketPathFailureMessage(failure, detail);
+	CHECK(message.contains(rejectedRuntimeDirectory));
+	CHECK(message.contains(homeDirectory.path()));
+	CHECK(!message.contains(u"XDG_RUNTIME_DIR"_q));
+}
+
+TEST_CASE(LinuxSingleInstanceSocketReportsFallbackCreationSystemError) {
+	if (geteuid() == uid_t(0)) {
+		return;
+	}
+	auto homeDirectory = QTemporaryDir();
+	CHECK(homeDirectory.isValid());
+	if (!homeDirectory.isValid()) {
+		return;
+	}
+	const auto permissions = QFileDevice::ReadOwner | QFileDevice::ExeOwner;
+	CHECK(QFile::setPermissions(homeDirectory.path(), permissions));
+
+	auto failure = Platform::Linux::SingleInstanceSocketPathFailure::None;
+	auto detail = QString();
+	const auto path = Platform::Linux::SingleInstanceSocketPathForLaunch(
+		QString(), homeDirectory.filePath(u"missing-runtime"_q),
+		u"teagram-instance"_q, geteuid(), homeDirectory.path(), &failure, false,
+		&detail);
+	CHECK(path.isEmpty());
+	CHECK(failure
+		  == Platform::Linux::SingleInstanceSocketPathFailure::
+			  FallbackDirectoryCheckFailed);
+	const auto message
+		= Platform::Linux::SingleInstanceSocketPathFailureMessage(failure, detail);
+	CHECK(message.contains(QString::fromLocal8Bit(strerror(EACCES))));
 }
 
 TEST_CASE(LinuxSingleInstanceSocketReportsOverlongFallbackPath) {
@@ -654,6 +674,44 @@ TEST_CASE(LinuxSingleInstanceServerHandsOffToAnExistingPrimary) {
 		  == Platform::Linux::SingleInstanceServerResult::Secondary);
 }
 
+TEST_CASE(LinuxSingleInstanceServerRecoversAfterPrimaryCrashes) {
+	auto runtimeDirectory = QTemporaryDir();
+	CHECK(runtimeDirectory.isValid());
+	if (!runtimeDirectory.isValid()) {
+		return;
+	}
+	CHECK(SetPrivatePermissions(runtimeDirectory.path()));
+	const auto socketPath
+		= QDir(runtimeDirectory.path()).filePath(u"teagram-instance"_q);
+	auto address = sockaddr_un();
+	address.sun_family = AF_UNIX;
+	const auto encodedPath = QFile::encodeName(socketPath);
+	CHECK(size_t(encodedPath.size()) < sizeof(address.sun_path));
+	memcpy(address.sun_path, encodedPath.constData(), encodedPath.size() + 1);
+	const auto abandonedPrimary = ::socket(AF_UNIX, SOCK_STREAM, 0);
+	CHECK(abandonedPrimary >= 0);
+	if (abandonedPrimary < 0) {
+		return;
+	}
+	const auto bound
+		= ::bind(abandonedPrimary,
+				reinterpret_cast<const sockaddr *>(&address),
+				socklen_t(sizeof(address)));
+	CHECK_EQ(bound, 0);
+	if (bound != 0) {
+		::close(abandonedPrimary);
+		return;
+	}
+	::close(abandonedPrimary);
+	CHECK(QFileInfo::exists(socketPath));
+
+	auto recovered = QLocalServer();
+	recovered.setSocketOptions(QLocalServer::UserAccessOption);
+	CHECK(StartSingleInstanceServerAndWait(recovered, socketPath)
+		  == Platform::Linux::SingleInstanceServerResult::Primary);
+	CHECK(recovered.isListening());
+}
+
 TEST_CASE(LinuxSingleInstanceSocketRetriesContendedElectionWithoutBlocking) {
 	auto runtimeDirectory = QTemporaryDir();
 	CHECK(runtimeDirectory.isValid());
@@ -686,6 +744,8 @@ TEST_CASE(LinuxSingleInstanceSocketRetriesContendedElectionWithoutBlocking) {
 	CHECK(result == Platform::Linux::SingleInstanceServerResult::Failed);
 	CHECK(error.contains(u"election lock"_q));
 	CHECK(error != server.errorString());
+	CHECK(error.contains(socketPath + u".lock"_q));
+	CHECK(error.contains(u"close any stuck Telegram process and retry"_q));
 }
 
 TEST_CASE(LinuxSingleInstanceSocketHandsOffCommandAfterConcurrentLaunches) {

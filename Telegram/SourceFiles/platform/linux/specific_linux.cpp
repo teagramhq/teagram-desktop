@@ -7,7 +7,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "platform/linux/specific_linux.h"
 #include "platform/linux/desktop_identity.h"
-#include "platform/linux/local_socket_path.h"
 
 #include "base/openssl_help.h"
 #include "base/random.h"
@@ -594,24 +593,6 @@ namespace Platform {
 
 void SetApplicationIcon(const QIcon &icon) {
 	QApplication::setWindowIcon(icon);
-}
-
-QString SingleInstanceLocalServerName(const QString &hash,
-									  QString *errorMessage) {
-	const auto snap = KSandbox::isSnap();
-	const auto serverName = Platform::Linux::SingleInstanceLocalServerName(
-		hash, QCoreApplication::applicationName(), snap);
-	auto failure = Platform::Linux::SingleInstanceSocketPathFailure::None;
-	const auto result = Platform::Linux::SingleInstanceSocketPath(
-		qEnvironmentVariable("XDG_RUNTIME_DIR"), serverName, geteuid(),
-		Platform::Linux::SingleInstanceSocketPathDetails::UserHomeDirectory(
-			geteuid(), qEnvironmentVariable("HOME")),
-		&failure, snap);
-	if (errorMessage) {
-		*errorMessage
-			= Platform::Linux::SingleInstanceSocketPathFailureMessage(failure);
-	}
-	return result;
 }
 
 #if QT_VERSION < QT_VERSION_CHECK(6, 5, 0)
