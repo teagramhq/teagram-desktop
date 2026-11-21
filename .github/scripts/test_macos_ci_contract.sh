@@ -766,7 +766,7 @@ env PATH="$temp_dir/fixture-deadline/bin:$PATH" FIXTURE_TEST_NOW=112 \
   GITHUB_STEP_SUMMARY="$fixture_start_failure_dir/summary" \
   bash -c "$fixture_report_script"
 for expected in 'Failed phase: **fixture timing start**' '| tool setup | not reached |' \
-    '| Total added to job | 12 s |'; do
+    '| Total added to job | unknown |'; do
   grep -Fq "$expected" "$fixture_start_failure_dir/summary" \
     || contract_fail "Failed fixture start summary must contain $expected."
 done
