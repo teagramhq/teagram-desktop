@@ -1526,11 +1526,31 @@ jobs:
         run: python3 "$REPO_NAME/.github/scripts/macos_perf_fixture.py"
 
       - name: Report interrupted fixture setup.
-        if: ${{ !cancelled() && steps.perf-fixture-start.outcome == 'success' && steps.perf-fixture-start.outputs.run_fixture == 'true' && steps.perf-fixture.outcome != 'success' }}
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && (steps.perf-fixture-start.outcome == 'failure' || (steps.perf-fixture-start.outcome == 'success' && steps.perf-fixture-start.outputs.run_fixture == 'true' && steps.perf-fixture.outcome != 'success')) }}
         continue-on-error: true
+        env:
+          PERF_FIXTURE_START_OUTCOME: ${{ steps.perf-fixture-start.outcome }}
         run: |
           set -euo pipefail
-          if [ ! -f "$PERF_FIXTURE_SUMMARY_FILE" ]; then
+          if [ "$PERF_FIXTURE_START_OUTCOME" != "success" ]; then
+            finished_at="$(date -u +%s)"
+            elapsed_fixture='unknown'
+            job_started_at="${MACOS_JOB_STARTED_AT:-}"
+            if [[ "$job_started_at" =~ ^[0-9]+$ && "$finished_at" =~ ^[0-9]+$ ]] && ((finished_at >= job_started_at)); then
+              elapsed_fixture="$((finished_at - job_started_at)) s"
+            fi
+            {
+              echo '### macOS live performance fixture'
+              echo
+              echo 'Status: **failed**. Failed phase: **fixture timing start**.'
+              echo 'Start performance fixture timing did not complete.'
+              printf '\n| Phase | Wall time |\n| --- | ---: |\n'
+              for name in 'tool setup' download 'postgres setup' 'restore 1x' 'restore 100x' migrations 'server build' 'server ready' cleanup; do
+                printf '| %s | not reached |\n' "$name"
+              done
+              printf '| Total added to job | %s |\n' "$elapsed_fixture"
+            } >> "$GITHUB_STEP_SUMMARY"
+          elif [ ! -f "$PERF_FIXTURE_SUMMARY_FILE" ]; then
             finished_at="$(date -u +%s)"
             phase="$(cat "$PERF_FIXTURE_PHASE_FILE")"
             {

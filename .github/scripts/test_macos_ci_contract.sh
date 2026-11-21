@@ -711,7 +711,7 @@ assert_fixture_deadline() {
 assert_fixture_deadline sufficient 600 12300 true
 assert_fixture_deadline insufficient 600 12301 false
 assert_fixture_deadline invalid invalid 12300 false
-for fixture_step in 'Set up fixture server Go.' 'Restore and run performance fixtures (informational).' 'Report interrupted fixture setup.'; do
+for fixture_step in 'Set up fixture server Go.' 'Restore and run performance fixtures (informational).'; do
   expect_contains "$mac_workflow job $fixture_step if" \
     "$(step_field "$mac_workflow" build-macos "$fixture_step" '.if')" \
     "steps.perf-fixture-start.outputs.run_fixture == 'true'"
@@ -719,6 +719,13 @@ done
 expect_contains "$mac_workflow fixture migrations if" \
   "$(step_field "$mac_workflow" build-macos 'Set up fixture migrations.' '.if')" \
   "steps.perf-fixture-go.outcome == 'success'"
+fixture_report_if="$(step_field "$mac_workflow" build-macos 'Report interrupted fixture setup.' '.if')"
+expect_contains "$mac_workflow fixture start failure report if" "$fixture_report_if" \
+  "steps.perf-fixture-start.outcome == 'failure'"
+expect_contains "$mac_workflow fixture interruption report if" "$fixture_report_if" \
+  "steps.perf-fixture.outcome != 'success'"
+expect_contains "$mac_workflow fixture report build guard" "$fixture_report_if" \
+  "steps.build.outcome == 'success'"
 fixture_report_script="$(step_field "$mac_workflow" build-macos 'Report interrupted fixture setup.' '.run')"
 fixture_report_dir="$temp_dir/fixture-deadline/report"
 mkdir -p "$fixture_report_dir"
@@ -727,6 +734,7 @@ printf '%s\n' 'tool setup|1.0' 'download|2.0' 'restore 1x|3.5' > "$fixture_repor
 : > "$fixture_report_dir/summary"
 run_fixture_report() {
   env PATH="$temp_dir/fixture-deadline/bin:$PATH" FIXTURE_TEST_NOW=112 \
+    PERF_FIXTURE_START_OUTCOME=success \
     PERF_FIXTURE_STARTED_AT=100 PERF_FIXTURE_PHASE_FILE="$fixture_report_dir/phase" \
     PERF_FIXTURE_TIMES_FILE="$fixture_report_dir/times" \
     PERF_FIXTURE_SUMMARY_FILE="$fixture_report_dir/written" \
@@ -750,6 +758,18 @@ touch "$fixture_report_dir/written"
 run_fixture_report
 [[ "$(cat "$fixture_report_dir/summary")" == 'existing summary' ]] \
   || contract_fail 'Interrupted fixture reporting must not duplicate an existing summary.'
+fixture_start_failure_dir="$temp_dir/fixture-deadline/start-failure"
+mkdir -p "$fixture_start_failure_dir"
+: > "$fixture_start_failure_dir/summary"
+env PATH="$temp_dir/fixture-deadline/bin:$PATH" FIXTURE_TEST_NOW=112 \
+  PERF_FIXTURE_START_OUTCOME=failure MACOS_JOB_STARTED_AT=100 \
+  GITHUB_STEP_SUMMARY="$fixture_start_failure_dir/summary" \
+  bash -c "$fixture_report_script"
+for expected in 'Failed phase: **fixture timing start**' '| tool setup | not reached |' \
+    '| Total added to job | 12 s |'; do
+  grep -Fq "$expected" "$fixture_start_failure_dir/summary" \
+    || contract_fail "Failed fixture start summary must contain $expected."
+done
 
 require_step_field "$mac_workflow" build-macos 'Restore macOS libraries artifact.' '.run' \
   "bash \"\$REPO_NAME/$macos_libraries_image_script\" pull \"\$MACOS_LIBRARIES_IMAGE\" \"\$GITHUB_WORKSPACE\" \"\$GITHUB_OUTPUT\""
