@@ -120,34 +120,44 @@ bool SignalInstalled = false;
 
 static_assert(std::atomic_uint::is_always_lock_free);
 
-[[nodiscard]] char MainThreadSchedulerState() noexcept {
+struct MainThreadSchedulerSample final {
+	char state = '?';
+	qint64 cpuNanoseconds = -1;
+};
+
+[[nodiscard]] MainThreadSchedulerSample MainThreadSchedulerState() noexcept {
 #if defined(Q_OS_MAC)
 	if (MainMachThread == MACH_PORT_NULL) {
-		return '?';
+		return {};
 	}
 	auto info = thread_basic_info_data_t();
 	auto count = mach_msg_type_number_t(THREAD_BASIC_INFO_COUNT);
 	if (thread_info(MainMachThread, THREAD_BASIC_INFO,
 					reinterpret_cast<thread_info_t>(&info), &count)
 		!= KERN_SUCCESS) {
-		return '?';
+		return {};
 	}
+	const auto cpuNanoseconds = (qint64(info.user_time.seconds) * 1'000'000
+								 + info.user_time.microseconds
+								 + qint64(info.system_time.seconds) * 1'000'000
+								 + info.system_time.microseconds)
+								* 1'000;
 	switch (info.run_state) {
 	case TH_STATE_RUNNING:
-		return 'R';
+		return {'R', cpuNanoseconds};
 	case TH_STATE_WAITING:
-		return 'W';
+		return {'W', cpuNanoseconds};
 	case TH_STATE_UNINTERRUPTIBLE:
-		return 'U';
+		return {'U', cpuNanoseconds};
 	case TH_STATE_STOPPED:
-		return 'S';
+		return {'S', cpuNanoseconds};
 	case TH_STATE_HALTED:
-		return 'H';
+		return {'H', cpuNanoseconds};
 	default:
-		return '?';
+		return {'?', cpuNanoseconds};
 	}
 #else  // Q_OS_MAC
-	return '?';
+	return {};
 #endif // else for Q_OS_MAC
 }
 
@@ -515,6 +525,8 @@ UiStallWatchdog::BuildSchedulerTraceSnapshot(
 		result.trace.append(QChar::fromLatin1(sample.state));
 		result.sampleOffsetsNanoseconds.push_back(
 			sample.sampledAtSteadyNanoseconds - startSteadyNanoseconds);
+		result.sampleMainThreadCpuNanoseconds.push_back(
+			sample.mainThreadCpuNanoseconds);
 	}
 	if (result.trace.isEmpty()) {
 		result.trace = u"none"_q;
@@ -721,7 +733,7 @@ void UiStallWatchdog::run() {
 					if (stop.stop_requested()) {
 						break;
 					}
-					const auto state = MainThreadSchedulerState();
+					const auto sample = MainThreadSchedulerState();
 					const auto sampledAt = Clock::now();
 					const auto sampledAtNanoseconds
 						= std::chrono::duration_cast<std::chrono::nanoseconds>(
@@ -732,7 +744,8 @@ void UiStallWatchdog::run() {
 							= std::lock_guard(schedulerSamplesMutex);
 						schedulerSamples.push_back({
 							.sampledAtSteadyNanoseconds = sampledAtNanoseconds,
-							.state = state,
+							.state = sample.state,
+							.mainThreadCpuNanoseconds = sample.cpuNanoseconds,
 						});
 						if (schedulerSamples.size() > kMaxSchedulerSamples) {
 							schedulerSamples.pop_front();
@@ -747,7 +760,8 @@ void UiStallWatchdog::run() {
 								  std::chrono::nanoseconds>(
 								  sampledAt.time_since_epoch())
 								  .count(),
-							.state = state,
+							.state = sample.state,
+							.mainThreadCpuNanoseconds = sample.cpuNanoseconds,
 						});
 						if (SchedulerSampleHistory.size()
 							> kMaxSchedulerHistorySamples) {
@@ -939,6 +953,7 @@ void UiStallWatchdog::run() {
 			return;
 		}
 		auto schedulerSampleOffsetsNanoseconds = std::vector<qint64>();
+		auto schedulerSampleMainThreadCpuNanoseconds = std::vector<qint64>();
 		auto completedSchedulerTraceSnapshot = SchedulerTraceSnapshot();
 		if (_captureSchedulerTrace) {
 			completedSchedulerTraceSnapshot
@@ -946,6 +961,9 @@ void UiStallWatchdog::run() {
 			schedulerTraceText = completedSchedulerTraceSnapshot.trace;
 			schedulerSampleOffsetsNanoseconds
 				= completedSchedulerTraceSnapshot.sampleOffsetsNanoseconds;
+			schedulerSampleMainThreadCpuNanoseconds
+				= completedSchedulerTraceSnapshot
+					  .sampleMainThreadCpuNanoseconds;
 			const auto evidenceLock = std::lock_guard(StallEvidenceMutex);
 			for (auto i = PingAcknowledgementHistory.rbegin();
 				 i != PingAcknowledgementHistory.rend(); ++i) {
@@ -957,6 +975,8 @@ void UiStallWatchdog::run() {
 					i->schedulerTrace = schedulerTraceText;
 					i->schedulerSampleOffsetsNanoseconds
 						= schedulerSampleOffsetsNanoseconds;
+					i->schedulerSampleMainThreadCpuNanoseconds
+						= schedulerSampleMainThreadCpuNanoseconds;
 					i->schedulerTraceComplete = true;
 					break;
 				}
@@ -988,6 +1008,8 @@ void UiStallWatchdog::run() {
 					.schedulerTrace = schedulerTraceText,
 					.schedulerSampleOffsetsNanoseconds
 					= schedulerSampleOffsetsNanoseconds,
+					.schedulerSampleMainThreadCpuNanoseconds
+					= schedulerSampleMainThreadCpuNanoseconds,
 					.stack = rawStack,
 				};
 				const auto evidenceLock = std::lock_guard(StallEvidenceMutex);
