@@ -8,6 +8,20 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "tests/font_startup_regression.h"
 
 #include "base/debug_log.h"
+#ifdef Q_OS_MAC
+#include "core/sandbox.h"
+#include "ui/emoji_config.h"
+#include <QtCore/QCoreApplication>
+#include <QtCore/QFile>
+#include <QtCore/QThread>
+#include <QtCore/QTimer>
+#include <atomic>
+#include <chrono>
+#include <condition_variable>
+#include <cstdio>
+#include <memory>
+#include <mutex>
+#endif // Q_OS_MAC
 
 #include <QtCore/QElapsedTimer>
 #include <QtGui/QFont>
@@ -53,3 +67,123 @@ int RunFontFallbackRegression() {
 			.arg(passed ? u"PASS"_q : u"FAIL"_q));
 	return passed ? 0 : 1;
 }
+
+#ifdef Q_OS_MAC
+namespace {
+
+struct EmojiShutdownState {
+	std::atomic_bool enabled = false;
+	std::atomic_bool claimed = false;
+	std::atomic_bool blocked = false;
+	std::atomic_bool destroying = false;
+	std::atomic_bool workerReturned = false;
+	std::atomic_bool workerSawAlive = false;
+	std::atomic_bool guiResponsive = false;
+	std::atomic_bool timedOut = false;
+	std::mutex mutex;
+	std::condition_variable wake;
+	bool release = false;
+};
+
+EmojiShutdownState &ShutdownState() {
+	static auto state = EmojiShutdownState();
+	return state;
+}
+
+} // namespace
+
+void PauseEmojiCacheForShutdownRegression() {
+	auto &state = ShutdownState();
+	if (!state.enabled.load()
+		|| QThread::currentThread() == QCoreApplication::instance()->thread()
+		|| state.claimed.exchange(true)) {
+		return;
+	}
+	state.blocked = true;
+	{
+		auto lock = std::unique_lock(state.mutex);
+		const auto timeout
+			= qEnvironmentVariableIsSet("TDESKTOP_EMOJI_SHUTDOWN_RELEASE_FILE")
+				  ? 45
+				  : 10;
+		if (!state.wake.wait_for(lock, std::chrono::seconds(timeout),
+								 [&] { return state.release; })) {
+			state.timedOut = true;
+		}
+	}
+	state.workerSawAlive = !state.destroying.load();
+	state.workerReturned = true;
+}
+
+void RunEmojiCacheShutdownRegression(std::function<void(bool)> done) {
+	auto &state = ShutdownState();
+	state.enabled = true;
+	Ui::Emoji::ClearIrrelevantCache();
+	const auto timer = new QTimer(QCoreApplication::instance());
+	const auto elapsed = std::make_shared<QElapsedTimer>();
+	elapsed->start();
+	QObject::connect(timer, &QTimer::timeout, [timer, elapsed, done] {
+		auto &state = ShutdownState();
+		if (!state.blocked && elapsed->elapsed() < 5000) {
+			return;
+		}
+		timer->stop();
+		timer->deleteLater();
+		if (!state.blocked) {
+			done(false);
+			return;
+		}
+		std::fprintf(stderr,
+					 "Emoji cache shutdown regression: worker_blocked=1\n");
+		QTimer::singleShot(0, QCoreApplication::instance(), [] {
+			std::fprintf(stderr,
+						 "Emoji cache shutdown regression: repeat_quit=1\n");
+			Core::Sandbox::QuitWhenStarted();
+			auto &state = ShutdownState();
+			state.guiResponsive
+				= !state.destroying.load() && !state.workerReturned.load();
+			const auto release = [] {
+				auto &state = ShutdownState();
+				{
+					const auto lock = std::lock_guard(state.mutex);
+					state.release = true;
+				}
+				state.wake.notify_all();
+			};
+			const auto releaseFile
+				= qEnvironmentVariable("TDESKTOP_EMOJI_SHUTDOWN_RELEASE_FILE");
+			if (releaseFile.isEmpty()) {
+				release();
+				return;
+			}
+			std::fprintf(stderr,
+						 "Emoji cache shutdown regression: drain_active=1\n");
+			const auto poll = new QTimer(QCoreApplication::instance());
+			QObject::connect(poll, &QTimer::timeout, [=] {
+				if (QFile::exists(releaseFile)) {
+					poll->stop();
+					poll->deleteLater();
+					release();
+				}
+			});
+			poll->start(10);
+		});
+		done(true);
+	});
+	timer->start(1);
+}
+
+void EmojiCacheShutdownApplicationDestroying() {
+	auto &state = ShutdownState();
+	if (!state.enabled.load()) {
+		return;
+	}
+	state.destroying = true;
+	std::fprintf(
+		stderr,
+		"Emoji cache shutdown regression: gui_responsive=%d "
+		"integration_alive=%d worker_returned=%d wait_timed_out=%d\n",
+		state.guiResponsive.load() ? 1 : 0, state.workerSawAlive.load() ? 1 : 0,
+		state.workerReturned.load() ? 1 : 0, state.timedOut.load() ? 1 : 0);
+}
+#endif // Q_OS_MAC

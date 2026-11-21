@@ -890,6 +890,8 @@ fi
   && "$profile_step_timeout_seconds" =~ ^[1-9][0-9]*$ \
   && "$profile_step_finish_headroom_seconds" =~ ^[1-9][0-9]*$ ]] \
   || contract_fail 'The protected profile case, deadline, and cleanup timeout budget must be explicit and positive.'
+grep -Fq 'if (( CASE_RUN_TIMEOUT_SECONDS > CASE_TIMEOUT_LIMIT_SECONDS )); then' "$case_runner" \
+  || contract_fail 'Lifecycle cases must share the existing 10-minute timeout cap.'
 cleanup_headroom_seconds="$((2 * cleanup_grace_seconds))"
 case_timeout_budget_seconds="$((case_timeout_limit_seconds + cleanup_headroom_seconds))"
 profile_step_deadline_budget_seconds="$((profile_step_timeout_seconds - profile_step_finish_headroom_seconds))"
@@ -1121,7 +1123,10 @@ expect_equal 'DWARF probe skips the compile-unit low_pc' \
   "$dwarf_probe_address" '0x0000000100002100'
 require_step_field "$mac_workflow" build-macos "$regression_step" '.if' \
   "\${{ !cancelled() && steps.build.outcome == 'success' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.label.name == 'macos-build')) }}"
-require_step_field "$mac_workflow" build-macos "$regression_step" '.timeout-minutes' '20'
+regression_timeout_minutes="$(step_field "$mac_workflow" build-macos \
+  "$regression_step" '.timeout-minutes')"
+[[ "$regression_timeout_minutes" == 20 ]] \
+  || contract_fail 'Full chat info session regression must retain its existing 20-minute timeout.'
 require_step_script "$mac_workflow" build-macos "$regression_step" \
   'exec > >(tee "$diagnostics/harness.log") 2>&1' \
   'build_dir="$repo/out"' \
@@ -1431,7 +1436,7 @@ Cache startup watchdog stall: cache=cache started_at=2026-11-06T00:47:53.000Z du
 Cache access latency regression: cache=media_cache seeded_directories=125 seeded_files=169 closed_clear_missing_active=1 cache_initialization_ns=120678959 initialization_allowed=1 queued_ops_before_ready=1 queued_ops_passed=1 cache_usable_ns=120763125 under_10s=1 max_main_thread_work_ns=48247625 max_startup_estimated_work_ns=48247625 max_heartbeat_gap_ns=48247625 max_heartbeat_gap_work_ns=48247625 heartbeat_gap_process_work_ns=25000000 heartbeat_gap_started_at=2026-11-06T00:47:53.000Z startup_heartbeat_gap_count=0 startup_uncovered_heartbeat_gaps=0 startup_heartbeat_gap_coverage_proven=1 startup_stall_count=0 max_startup_stall_ns=0 startup_stall_main_thread_work_ns=0 startup_stall_process_work_ns=0 startup_stall_started_at=none startup_stall_heartbeat_gap_started_at=none startup_stall_scheduler_samples=0 startup_stall_scheduler_running=0 startup_stall_scheduler_waiting=0 startup_stall_scheduler_uninterruptible=0 startup_stall_scheduler_other=0 startup_stall_scheduler_trace=none startup_stall_stack_captured=0 startup_stall_evidence_matched=0 startup_stall_scheduler_preemption_proven=0 under_100ms=1 first_access_ns=83292 under_50ms=1 root_swap_refused=1 direct_fallback_closed=1 root_restored=1 startup_walks=2 main_thread_walks=0.
 First messages.getDialogs handler latency regression: seeded_directories=125 seeded_files=169 requests=1 parsed=1 chats=2 dialogs=1 messages=73 documents=73 cache_walks=2 max_handler_ns=9893666 main_thread_cpu_ns=9893666 blocked_estimate_ns=0 estimated_work_ns=9893666 trace=R under_50ms=1.
 Initial history selection: peer_id=281474977760707 wall_ns=135344750 main_thread_work_ns=40000000 blocked_estimate_ns=0 estimated_work_ns=40000000 budget_ns=50000000 trace=R scheduler_preemption_proven=0.
-Cache chat switch latency regression: seeded_directories=125 seeded_files=169 reactions=73 hydrated_documents=292 chat_switches=73 attach_menu_bot_count=20 minimized_restore=1 minimized_switch_ns=45000000 minimized_restore_budget_ns=50000000 max_hydration_ns=5210625 max_hydration_work_ns=4000000 hydration_scheduler_preemption_proven=0 max_switch_ns=45000000 max_switch_work_ns=40000000 max_recurring_switch_work_ns=40000000 max_switch_estimated_work_ns=40000000 max_recurring_switch_estimated_work_ns=40000000 max_switch_index=3 max_switch_peer_id=281474976711707 switch_scheduler_preemption_proven=0 attach_menu_first_hover_ns=12000000 attach_menu_hover_ns=92000000 attach_menu_update_hover_ns=11000000 attach_menu_uncached_peer_ns=20000000 attach_menu_first_hover_callback_cpu_ns=12000000 attach_menu_update_hover_callback_cpu_ns=1000000 attach_menu_uncached_peer_callback_cpu_ns=20000000 attach_menu_first_hover_callback_wall_ns=92000000 attach_menu_update_hover_callback_wall_ns=92000000 attach_menu_uncached_peer_callback_wall_ns=92000000 attach_menu_scheduler_preemption_proven=0 attach_menu_cached=1 attach_menu_invalidated=1 attach_menu_build_deferred=1 attach_menu_uncached_ready=1 attach_menu_uncached_deferred_failures=0 attach_menu_uncached_missing_bot_failures=0 attach_menu_uncached_build_count_failures=0 attach_menu_cache_bound=1 pending_reveal_after_controls_geometry=1 chat_switch_compose_ui_reused=1 field_autocomplete_suggestions_ready=1 menu_commands_unfocused=1 bot_commands_unfocused=1 history_chat_mode_invalidation_rebuilt=1 dialog_histories_ready=1 synthetic_histories_ready=1 max_stall_ns=40000000 within_budgets=1.
+Cache chat switch latency regression: seeded_directories=125 seeded_files=169 reactions=73 hydrated_documents=292 chat_switches=73 attach_menu_bot_count=20 minimized_restore=1 initial_history_window_activated=1 all_chat_switch_windows_activated=1 minimized_switch_ns=45000000 minimized_restore_budget_ns=50000000 max_hydration_ns=5210625 max_hydration_work_ns=4000000 hydration_scheduler_preemption_proven=0 max_switch_ns=45000000 max_switch_work_ns=40000000 max_recurring_switch_work_ns=40000000 max_switch_estimated_work_ns=40000000 max_recurring_switch_estimated_work_ns=40000000 max_switch_index=3 max_switch_peer_id=281474976711707 switch_scheduler_preemption_proven=0 attach_menu_first_hover_ns=12000000 attach_menu_hover_ns=92000000 attach_menu_update_hover_ns=11000000 attach_menu_uncached_peer_ns=20000000 attach_menu_first_hover_callback_cpu_ns=12000000 attach_menu_update_hover_callback_cpu_ns=1000000 attach_menu_uncached_peer_callback_cpu_ns=20000000 attach_menu_first_hover_callback_wall_ns=92000000 attach_menu_update_hover_callback_wall_ns=92000000 attach_menu_uncached_peer_callback_wall_ns=92000000 attach_menu_scheduler_preemption_proven=0 attach_menu_cached=1 attach_menu_invalidated=1 attach_menu_build_deferred=1 attach_menu_uncached_ready=1 attach_menu_uncached_deferred_failures=0 attach_menu_uncached_missing_bot_failures=0 attach_menu_uncached_build_count_failures=0 attach_menu_cache_bound=1 pending_reveal_after_controls_geometry=1 chat_switch_compose_ui_reused=1 field_autocomplete_suggestions_ready=1 menu_commands_unfocused=1 bot_commands_unfocused=1 history_chat_mode_invalidation_rebuilt=1 dialog_histories_ready=1 synthetic_histories_ready=1 max_stall_ns=40000000 within_budgets=1.
 Attach-menu callback work: cached_hover_wall_ns=92000000 cached_hover_estimated_work_ns=12000000 first_hover_estimated_work_ns=12000000 invalidation_estimated_work_ns=1000000 uncached_peer_estimated_work_ns=20000000 budget_ns=50000000.
 EOF
 check_cache_latency_evidence() (
@@ -1609,6 +1614,24 @@ all_first_command="$(awk '
 [[ "$all_first_command" == 'run_font_startup_regression' ]] \
   || contract_fail "$profile_harness must run the font-startup regression before any all-case app launches."
 application_source='Telegram/SourceFiles/core/application.cpp'
+if ! python3 - <<'PY'
+from pathlib import Path
+
+source = Path('Telegram/SourceFiles/core/application.cpp').read_text()
+hold_selector = source.index('qEnvironmentVariable("TDESKTOP_EMOJI_RELAUNCH_HOLD_FILE")')
+hold_branch = source.index('if (!holdFile.isEmpty())', hold_selector)
+shutdown_selector = source.index('"TDESKTOP_EMOJI_CACHE_SHUTDOWN_REGRESSION"')
+player = source.index('Media::Player::start(_audio.get());', hold_selector)
+shutdown = source.index('RunEmojiCacheShutdownRegression', shutdown_selector)
+if not (
+    hold_selector < player < hold_branch
+    and shutdown_selector < player < shutdown
+):
+    raise SystemExit('both headless relaunch fixtures must initialize Media::Player before waiting')
+PY
+then
+	contract_fail 'Both headless relaunch fixtures must initialize the media player before their event-loop waits.'
+fi
 emoji_init_line="$(grep -n -F 'Ui::Emoji::Init();' "$application_source" | head -n 1 | cut -d: -f1)"
 font_fallback_exit_line="$(grep -n -F \
 	'QCoreApplication::exit(RunFontFallbackRegression());' "$application_source" \
@@ -1646,15 +1669,283 @@ if ! awk '
 ' Telegram/SourceFiles/core/sandbox.cpp; then
   contract_fail 'System and bundled font metrics must be prewarmed before application startup.'
 fi
+grep -Fq 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz' \
+  Telegram/SourceFiles/core/sandbox.cpp \
+  || contract_fail 'Font glyph warmup must cover upper and lower case letters used by first paint.'
+grep -Fq '0123456789 !' \
+  Telegram/SourceFiles/core/sandbox.cpp \
+  || contract_fail 'Font glyph warmup must cover digits and punctuation used by first paint.'
+grep -Fq '12, 13, 14, 16, 18, 20,' \
+  Telegram/SourceFiles/core/sandbox.cpp \
+  || contract_fail 'Font glyph warmup must cover the UI text sizes used by first paint.'
+grep -Fq 'std::array{QFont::Normal, QFont::DemiBold}' \
+  Telegram/SourceFiles/core/sandbox.cpp \
+  || contract_fail 'Font glyph warmup must cover regular and emphasized UI text.'
 if ! awk '
   /^int Sandbox::start\(\)/ { in_start = 1 }
+  in_start && /const auto drainShutdown = \[this\]/ { helper = NR }
+  in_start && /_shutdownLoop\.run\(pending\)/ { shutdown_loop = NR }
   in_start && /const auto result = exec\(\);/ { exec_line = NR }
+  in_start && !joinable_line && /_fontDatabaseWarmupThread\.joinable\(\)/ { joinable_line = NR }
+  in_start && /!_fontDatabaseWarmupDone/ { done_line = NR }
+  in_start && /drainShutdown\(\);/ { drain_line = NR }
   in_start && /_fontDatabaseWarmupThread\.join\(\)/ { join_line = NR }
   in_start && /^int Sandbox::stopRunningInstance/ { in_start = 0 }
-  END { exit !(exec_line && join_line && exec_line < join_line) }
+  END { exit !(helper && shutdown_loop && joinable_line && done_line && exec_line && drain_line && join_line && helper < shutdown_loop && joinable_line < done_line && exec_line < drain_line && drain_line < join_line) }
 ' Telegram/SourceFiles/core/sandbox.cpp; then
-  contract_fail 'The font warmup worker must be joined after the event loop exits.'
+  contract_fail 'The GUI shutdown loop must drain font warmup work before joining its worker.'
 fi
+grep -Fq 'run_font_shutdown_regression shutdown-remove-pending' \
+  Telegram/build/test_mac_profile_guard.sh \
+  || contract_fail 'The macOS font shutdown regression must force a pending removal across application quit.'
+grep -Fq 'qt_font_database_hold=1' Telegram/build/test_mac_profile_guard.sh \
+	|| contract_fail 'The macOS font shutdown regression must assert its Qt database hold separately from CoreText enumeration.'
+if ! python3 - <<'PY'
+import re
+from pathlib import Path
+
+cmake = Path('Telegram/CMakeLists.txt').read_text()
+probe_target = re.search(
+    r'if \(APPLE AND TDESKTOP_TEAGRAM AND '
+    r'TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST\)(.*?)\nendif\(\)',
+    cmake,
+    re.DOTALL,
+)
+if (
+    not probe_target
+    or 'add_library(TeagramFontShutdownProbe SHARED' not in probe_target.group(1)
+):
+    raise SystemExit('font probe must be built as a test-only dylib')
+if (
+    'target_link_libraries(Telegram PRIVATE TeagramFontShutdownProbe)'
+    not in probe_target.group(1)
+):
+    raise SystemExit('Teagram must load the test probe dylib at launch')
+apple_sources = re.search(
+    r'if \(APPLE\)\s+nice_target_sources\(Telegram.*?\n\s*\)\nelse\(\)',
+    cmake,
+    re.DOTALL,
+)
+if not apple_sources or 'tests/font_shutdown_probe.mm' in apple_sources.group():
+    raise SystemExit('font probe must not be compiled into the executable')
+PY
+then
+  contract_fail 'The macOS integration probe must be a test-only dylib loaded at launch.'
+fi
+grep -Fq 'Font shutdown regression: probe_interposer=active' \
+  Telegram/SourceFiles/tests/font_shutdown_probe.mm \
+  || contract_fail 'The native font probe must report that dyld ran its interposer.'
+if ! python3 - <<'PY'
+from pathlib import Path
+
+source = Path('Telegram/SourceFiles/tests/font_shutdown_probe.mm').read_text()
+probe = source.split('Teagram_FontFamilyPopulationProbe() {', 1)[1]
+eligibility = probe.index('if (!ProbeArmed.load')
+skipped = probe.index('if (skipped > 0)')
+marker = probe.index('"Font shutdown regression: probe_interposer=active\\n"')
+first_call = probe.index('auto result = original();')
+if not eligibility < skipped < marker < first_call:
+    raise SystemExit('interposer marker must follow eligibility and precede the first native call')
+PY
+then
+  contract_fail 'The native font probe must report activation before its first CoreText call.'
+fi
+grep -Fq 'Font shutdown regression: probe_interposer=active' \
+  Telegram/build/test_mac_profile_guard.sh \
+  || contract_fail 'The native fixture must require the dyld interposer activation marker.'
+grep -Fq 'ArmFontShutdownProbe' Telegram/SourceFiles/core/sandbox.cpp \
+  || contract_fail 'The shutdown worker must arm the synchronized Qt CoreText probe.'
+grep -Fq 'ReleaseFontShutdownProbe' Telegram/SourceFiles/core/sandbox.cpp \
+  || contract_fail 'Application quit must release the synchronized Qt CoreText probe.'
+if ! python3 - <<'PY'
+from pathlib import Path
+
+source = Path('Telegram/SourceFiles/core/sandbox.cpp').read_text()
+warmup = source.split('void Sandbox::startFontDatabaseWarmup()', 1)[1]
+blocks = (
+    ('aboutToQuit',
+     'connect(this, &QCoreApplication::aboutToQuit, [=] {',
+     '\n\t\t});'),
+    ('stopWorker',
+     'const auto stopWorker = [=](ProbeExit exitMode) {',
+     '\n\t\t\t};'),
+)
+for name, start, end in blocks:
+    block = warmup.split(start, 1)[1].split(end, 1)[0]
+    release = block.index('ReleaseFontShutdownProbe')
+    final_release = block.index('ProbeFinalRelease.store')
+    if release > final_release:
+        raise SystemExit(f'{name} must release the probe before waking its worker')
+PY
+then
+  contract_fail 'The font shutdown release must be visible before waking the pre-arm worker.'
+fi
+grep -Fq 'timer->start(0);' Telegram/SourceFiles/core/sandbox.cpp \
+  || contract_fail 'The repeated real CoreText population must be sampled without the old millisecond gap.'
+grep -Fq 'IsFontShutdownProbeReleased' Telegram/SourceFiles/tests/font_shutdown_probe.h \
+  || contract_fail 'The cancellation-before-arm regression must inspect the preserved release state.'
+if sed -n '/void ArmFontShutdownProbe(/,/^}/p' \
+    Telegram/SourceFiles/tests/font_shutdown_probe.mm \
+    | grep -Fq 'ProbeReleased.store(false'; then
+  contract_fail 'Arming the font shutdown probe must preserve an early release.'
+fi
+grep -Fq 'run_font_shutdown_regression probe-release-before-arm' \
+  Telegram/build/test_mac_profile_guard.sh \
+  || contract_fail 'The macOS shutdown regression must cover release before probe arm.'
+grep -Fq 'IgnoreNextApplicationActivation' Telegram/SourceFiles/core/sandbox.cpp \
+  || contract_fail 'Start-in-tray must suppress its delayed initial activation.'
+grep -Fq 'QTimer::singleShot(500' Telegram/SourceFiles/core/sandbox.cpp \
+  || contract_fail 'The original 500 ms start-in-tray checkpoint must remain.'
+grep -Fq 'delayed_activation_check' Telegram/SourceFiles/core/sandbox.cpp \
+  || contract_fail 'The start-in-tray test must retain a later delayed-activation check.'
+grep -Fq 'applicationDidBecomeActive' Telegram/SourceFiles/platform/mac/specific_mac_p.mm \
+  || contract_fail 'The delayed start-in-tray activation guard must stay on the AppKit activation path.'
+grep -Fq 'kIgnoreNextActivationTimeoutMs = 1500' \
+  Telegram/SourceFiles/platform/mac/specific_mac_p.mm \
+  || contract_fail 'The initial activation suppression must expire after startup.'
+if ! awk '
+  /if \(!RemoveStaleLocalServer\(_localServerName\)\)/ { in_remove_failure = 1 }
+  in_remove_failure && /return showSingleInstanceError\(diagnostic\);/ { error_window = 1 }
+  in_remove_failure && /^[[:space:]]*}/ { in_remove_failure = 0 }
+  END { exit !error_window }
+' Telegram/SourceFiles/core/sandbox.cpp; then
+  contract_fail 'A conflicting single-instance path must be reported in the failure window.'
+fi
+grep -Fq 'Could not use the single-instance IPC path' Telegram/SourceFiles/core/sandbox.cpp \
+  || contract_fail 'The IPC collision diagnostic must identify the path in use.'
+grep -Fq "'ipc-collision'" .github/scripts/test_macos_socket_error.py \
+  || contract_fail 'The macOS socket regression must cover a non-socket IPC path.'
+grep -Fq 'entry_preserved' .github/scripts/test_macos_socket_error.py \
+  || contract_fail 'The IPC collision regression must verify that the non-socket entry remains intact.'
+grep -Fq "r'([^\\n]+)'" .github/scripts/test_macos_shutdown_relaunch.py \
+  || contract_fail 'The relaunch recheck fixture must capture the socket path up to its newline.'
+grep -Fq 'void retrySingleInstance(bool immediate = false);' \
+  Telegram/SourceFiles/core/sandbox.h \
+  || contract_fail 'Single-instance retries must keep their default backoff.'
+grep -Fq 'result == Core::SingleInstanceLock::Result::Acquired);' \
+  Telegram/SourceFiles/core/sandbox.cpp \
+  || contract_fail 'Only a successful profile-lock acquisition may retry immediately.'
+grep -Fq 'const auto delay = immediate ? 0 : 50;' \
+  Telegram/SourceFiles/core/sandbox.cpp \
+  || contract_fail 'Only successful acquisition retries may skip the 50 ms backoff.'
+grep -Fq 'QTimer::singleShot(delay, this, [=] {' \
+  Telegram/SourceFiles/core/sandbox.cpp \
+  || contract_fail 'The selected single-instance retry delay must reach the timer.'
+grep -Fq 'return retrySingleInstance();' Telegram/SourceFiles/core/sandbox.cpp \
+  || contract_fail 'Unexpected socket errors must retain the default retry backoff.'
+grep -Fq 'retrySingleInstance();' Telegram/SourceFiles/core/sandbox.cpp \
+  || contract_fail 'Socket disconnects must retain the default retry backoff.'
+grep -Fq 'Single instance retry regression: delay_ms=0' \
+  .github/scripts/test_macos_shutdown_relaunch.py \
+  || contract_fail 'The lock-acquire recheck must assert its immediate retry.'
+grep -Fq 'Single instance retry regression: delay_ms=50' \
+  .github/scripts/test_macos_socket_error.py \
+  || contract_fail 'Socket retry regressions must assert their 50 ms backoff.'
+if ! awk '
+  /const auto stopWorker = \[=\]\(ProbeExit exitMode\)/ { in_stop_worker = 1 }
+  in_stop_worker && /ReleaseFontShutdownProbe/ { release = 1 }
+  in_stop_worker && /^\t\t\t};/ { exit !release }
+  END { exit !release }
+' Telegram/SourceFiles/core/sandbox.cpp; then
+  contract_fail 'The timeout path must release a held CoreText probe before draining the worker.'
+fi
+grep -Fq 'return &CTFontManagerCopyAvailableFontFamilyNames;' \
+  Telegram/SourceFiles/tests/font_shutdown_probe.mm \
+  || contract_fail 'The shutdown probe must use dyld’s original CoreText binding.'
+if grep -Fq 'RTLD_NEXT' Telegram/SourceFiles/tests/font_shutdown_probe.mm; then
+  contract_fail 'The shutdown probe must not resolve its interposed CoreText symbol through RTLD_NEXT.'
+fi
+grep -Fq 'auto result = original();' \
+  Telegram/SourceFiles/tests/font_shutdown_probe.mm \
+	|| contract_fail 'The shutdown probe must keep making real CoreText queries inside Qt population.'
+grep -Fq 'IsQtFontDatabasePopulation()' \
+  Telegram/SourceFiles/tests/font_shutdown_probe.mm \
+  || contract_fail 'The shutdown probe must only hold the Qt font-family population call.'
+grep -Fq 'while (!ProbeReleased.load' \
+  Telegram/SourceFiles/tests/font_shutdown_probe.mm \
+	|| contract_fail 'The repeated CoreText queries must stop when shutdown releases the Qt population hold.'
+grep -Fq 'Teagram_FontFamilyPopulationProbe()' \
+	Telegram/SourceFiles/tests/font_shutdown_probe.mm \
+	|| contract_fail 'The interposer must have a symbol that cannot masquerade as CoreText.'
+if grep -Fq 'Teagram_CTFontManagerCopyAvailableFontFamilyNames' \
+	Telegram/SourceFiles/tests/font_shutdown_probe.mm; then
+	contract_fail 'The interposer symbol must not satisfy the real CoreText stack matcher.'
+fi
+if ! awk '
+  /const auto sampled/ { in_sample = 1 }
+  in_sample && /if \(!sampled/ { unmatched = NR }
+  in_sample && /qt_font_database_hold=1/ { hold = NR }
+  in_sample && /Core::Quit\(\);/ { quit = NR; exit !(unmatched && hold && unmatched < hold && hold < quit) }
+  END { if (!quit) exit 1 }
+' Telegram/SourceFiles/core/sandbox.cpp; then
+	contract_fail 'The Qt hold marker must follow a matched Qt/CoreText stack sample before quit.'
+fi
+if grep -Fq 'qt_font_database_hold=1' \
+	Telegram/SourceFiles/tests/font_shutdown_probe.mm; then
+	contract_fail 'The interposer must not claim a Qt hold before the real stack sample.'
+fi
+if grep -Fq 'CTFontManagerCopyAvailableFontFamilyNames();' \
+  Telegram/SourceFiles/core/sandbox.cpp; then
+  contract_fail 'The shutdown probe must not bypass Qt font-database population with a direct CoreText query.'
+fi
+if ! awk '
+  /bool FramesInSystemEnumeration\(/ { in_probe = 1 }
+  in_probe && /name\.contains\("CTFontManagerCopyAvailableFontFamilyNames"\)/ { core_text = 1 }
+  in_probe && /name\.contains\("QFontDatabase"\)/ { qt_database = 1 }
+  in_probe && /name\.contains\("families"\)/ { qt_families = 1 }
+  in_probe && /name\.contains\("QCoreTextFontDatabase"\)/ { qt_coretext = 1 }
+  in_probe && /name\.contains\("populateFromDescriptor"\)/ { qt_descriptor = 1 }
+  in_probe && /name\.contains\("populateFontDatabase"\)/ { qt_population = 1 }
+  in_probe && /name\.contains\("QFontDatabasePrivate"\)/ { qt_private = 1 }
+  in_probe && /name\.contains\("ensureFontDatabase"\)/ { qt_ensure = 1 }
+  in_probe && /qtFamilyList \|\| qtCoreTextPopulation \|\| qtDatabasePopulation/ { qt_paths = 1 }
+  in_probe && /return coreTextEnumeration && qtFontDatabasePopulation/ { paired = 1 }
+  in_probe && /^}/ { exit !(core_text && qt_database && qt_families && qt_coretext && (qt_descriptor || qt_population) && qt_private && qt_ensure && qt_paths && paired) }
+' Telegram/SourceFiles/core/sandbox.cpp; then
+  contract_fail 'The shutdown probe must require a real CoreText family enumeration frame inside Qt font-database population.'
+fi
+if ! python3 - <<'PY'
+from pathlib import Path
+
+probe = Path('Telegram/SourceFiles/tests/font_shutdown_probe.mm').read_text()
+function = probe.split('Teagram_FontFamilyPopulationProbe() {', 1)[1]
+first_call = function.index('auto result = original();')
+ready = function.index('ProbeInterposerReady.store(true, std::memory_order_release);')
+repeat = function.index('while (!ProbeReleased.load')
+if not first_call < ready < repeat:
+    raise SystemExit('the interposer must signal readiness after the first real CoreText query')
+
+header = Path('Telegram/SourceFiles/tests/font_shutdown_probe.h').read_text()
+if 'IsFontShutdownProbeReady' not in header:
+    raise SystemExit('the GUI must be able to observe the interposer readiness signal')
+
+warmup = Path('Telegram/SourceFiles/core/sandbox.cpp').read_text().split(
+    'void Sandbox::startFontDatabaseWarmup()', 1
+)[1]
+callback = warmup.split('connect(timer, &QTimer::timeout, this, [=] {', 1)[1]
+ready_check = callback.index('Core::Tests::IsFontShutdownProbeReady()')
+sample = callback.index('SampleWorkerStack(')
+if ready_check > sample or 'testFailure != "probe-timeout"' not in callback[ready_check - 80:ready_check]:
+    raise SystemExit('sampling must wait for interposer readiness except in the forced timeout case')
+PY
+then
+	contract_fail 'The shutdown sampler must wait for the interposer before requiring a real CoreText frame.'
+fi
+if ! awk '
+  /^run_font_startup_regression\(\) \{$/ { in_startup = 1; next }
+  in_startup && /^}$/ { in_startup = 0 }
+  in_startup && /run_font_shutdown_regression;/ { enumeration = NR }
+  in_startup && /run_font_shutdown_regression shutdown-remove-pending/ { removal = NR }
+  END { exit !(enumeration && removal && enumeration < removal) }
+' Telegram/build/test_mac_profile_guard.sh; then
+  contract_fail 'The startup regression must retain the baseline quit-during-enumeration case before the pending-removal case.'
+fi
+grep -Fq 'remove_pending_at_quit=1 removal_completed=1' \
+  Telegram/build/test_mac_profile_guard.sh \
+  || contract_fail 'The macOS font shutdown regression must assert that the pending removal completed.'
+grep -Fq 'const auto startupWork = EstimateStartupWork(' \
+  Telegram/SourceFiles/tests/account_lifecycle_regression.cpp \
+  || contract_fail 'Startup work estimates must use complete matched stall samples when ping captures are pending.'
 if grep -Eq 'QEventLoop' Telegram/SourceFiles/core/sandbox.cpp \
   || grep -Eq 'ResolveDeferredShapedMetrics|SetShapedMetricsDeferred' \
     Telegram/SourceFiles/core/application.cpp; then
@@ -1790,6 +2081,25 @@ grep -Fq "kMaxMinimizedRestoreNanoseconds = qint64(50'000'000)" \
 grep -Fq 'showPeerHistoryMeasured(firstHistory)' "$native_harness" \
 	&& grep -Fq 'result.minimizedSwitchNanoseconds' "$native_harness" \
   || contract_fail 'The minimized restore and chat switches must use the measured switch path.'
+
+awk '
+  /A separate test window has just been created/ { copy = 1 }
+  copy && /historyWidget->clearFieldFocusForRegressionTest\(\);/ { exit }
+  copy { print }
+' "$native_harness" > "$temp_dir/cache-first-selection.cpp"
+grep -Fq 'showPeerHistoryMeasured(emptyFirstHistory)' "$temp_dir/cache-first-selection.cpp" \
+	&& grep -Fq 'showPeerHistoryMeasured(target)' "$temp_dir/cache-first-selection.cpp" \
+	&& grep -Fq 'constexpr auto kWarmupChatSwitches = 8;' "$temp_dir/cache-first-selection.cpp" \
+	|| contract_fail 'The cold history selection and all eight warm-up switches must use the measured path.'
+awk '
+  /void Sandbox::startFontDatabaseWarmup\(\)/ { copy = 1 }
+  copy && /_fontDatabaseWarmupThread = std::thread/ { print; exit }
+  copy { print }
+' Telegram/SourceFiles/core/sandbox.cpp > "$temp_dir/font-database-warmup.cpp"
+grep -Fq 'style::internal::PrepareFontSubstitutions();' "$temp_dir/font-database-warmup.cpp" \
+	|| contract_fail 'Font substitutions must be installed before the worker prewarms the font database.'
+grep -Fq 'painter.drawText(QPoint(0, 24 + row * 32), sample);' Telegram/SourceFiles/core/sandbox.cpp \
+	|| contract_fail 'The font worker must warm glyph rasterization before the first history paint.'
 grep -Fq '&& (mediaCache || chatSwitch.passed)' "$native_harness" \
   || contract_fail 'The chat switch completion and restore checks must remain a gate.'
 grep -Fq 'completed && !timedOut' "$native_harness" \
@@ -1952,12 +2262,14 @@ awk '
   || contract_fail "$mac_platform must expose the current AppKit application activation state."
 grep -Fq 'WindowActivationForRegressionResult::AppInactive' "$native_harness" \
   || contract_fail "$native_harness must classify focus checks as unavailable when AppKit has no active application."
-grep -Fq 'AppKit app became inactive before focus verification.' "$native_harness" \
-  || contract_fail "$native_harness must use timeout AppKit state to decide whether focus could be verified."
+grep -Fq 'AppKit app remained inactive during focus verification.' "$native_harness" \
+  || contract_fail "$native_harness must report AppKit inactivity after the focus wait."
 awk '
-  /ActivateWindowForRegression\(Core::Application/ { in_activation = 1 }
+  /ActivateWindowForRegression\(/ { activation_signature = 1 }
+  activation_signature && /Core::Application &app/ { in_activation = 1 }
   in_activation && /if \(!activated\)/ { activation_timeout = NR }
   in_activation && /window->activate\(\)/ && !activation_call { activation_call = NR }
+  in_activation && /WaitForRegressionCondition\(isActive, timeoutMs\)/ { bounded_wait = NR }
   in_activation && /if \(!Platform::IsApplicationActiveForRegression\(\)\)/ {
     if (activation_timeout) {
       timeout_appkit_check = NR
@@ -1966,16 +2278,136 @@ awk '
     }
   }
   in_activation && /return WindowActivationForRegressionResult::AppInactive/ {
-    if (!activation_call || NR < activation_call) inactive_return_before_attempt = 1
+    if (!activation_timeout || NR < activation_timeout) inactive_return_before_timeout = 1
   }
   in_activation && /^}/ { exit }
   END {
     exit !(activation_call && activation_timeout > activation_call &&
+      bounded_wait > activation_call && bounded_wait < activation_timeout &&
       !pre_attempt_appkit_check && timeout_appkit_check > activation_timeout &&
-      !inactive_return_before_attempt)
+      !inactive_return_before_timeout)
   }
 ' "$native_harness" \
   || contract_fail "$native_harness must issue activation before classifying AppKit inactivity at timeout."
+awk '
+  /IsWindowActiveForRegression\(/ { in_check = 1 }
+  in_check && /Platform::IsApplicationActiveForRegression\(\)/ { requires_foreground = 1 }
+  in_check && /widget->isActiveWindow\(\)/ { checks_active_widget = 1 }
+  in_check && /widget->isVisible\(\)/ { checks_visible_widget = 1 }
+  in_check && /Qt::WindowMinimized/ { checks_unminimized_widget = 1 }
+  in_check && /requireForeground/ { foreground_opt_out = 1 }
+  in_check && /^}/ { exit }
+  END {
+    exit !(requires_foreground && !foreground_opt_out &&
+      checks_active_widget && checks_visible_widget && checks_unminimized_widget)
+  }
+' "$native_harness" \
+  || contract_fail "$native_harness must require foreground, active, visible, unminimized window state for every caller."
+awk '
+  /ActivateWindowForRegression\(/ { activation_signature = 1 }
+  activation_signature && /Core::Application &app/ { in_activation = 1 }
+  in_activation && /window->activate\(\)/ { activation_call = NR }
+  in_activation && /const auto timeoutMs/ { timeout_choice = NR }
+  in_activation && /Platform::IsApplicationActiveForRegression\(\)/ && !appkit_state {
+    appkit_state = NR
+  }
+  in_activation && /5000/ { active_timeout = NR }
+  in_activation && /: 500/ { inactive_timeout = NR }
+  in_activation && /WaitForRegressionCondition\(isActive, timeoutMs\)/ { bounded_wait = NR }
+  in_activation && /^}/ { exit }
+  END {
+    exit !(activation_call && timeout_choice > activation_call &&
+      appkit_state >= timeout_choice && active_timeout >= appkit_state &&
+      inactive_timeout >= active_timeout && bounded_wait > inactive_timeout)
+  }
+' "$native_harness" \
+  || contract_fail "$native_harness must use a bounded shorter activation wait when AppKit starts inactive."
+awk '
+  /ActivateWindowForRegression\(/ { activation_signature = 1 }
+  activation_signature && /Core::Application &app/ { in_activation = 1 }
+  in_activation && /const auto isActive =/ { in_predicate = 1 }
+  in_predicate && /IsWindowActiveForRegression\(/ { uses_window_predicate = 1 }
+  in_predicate && /app, window, requirePrimary\)/ { passes_options = 1 }
+  in_activation && /WaitForRegressionCondition\(isActive, timeoutMs\)/ { waits_for_predicate = 1 }
+  in_activation && /^}/ { exit }
+  END { exit !(uses_window_predicate && passes_options && waits_for_predicate) }
+' "$native_harness" \
+  || contract_fail "$native_harness must wait on the shared window activity predicate before reporting activation."
+awk '
+  /const auto showPeerHistoryMeasured =/ { in_measurement = 1 }
+  in_measurement && /IsWindowActiveForRegression\(Core::App\(\), window, false\)/ {
+    if (active_check) {
+      restored_active_check = NR
+    } else {
+      active_check = NR
+    }
+  }
+  in_measurement && /ActivateWindowForRegression\(/ { activation = NR }
+  in_measurement && /Core::App\(\), window, false/ && activation && !activation_options {
+    activation_options = NR
+  }
+  in_measurement && /chatSwitchWindowsActivated/ { activation_result = NR }
+  in_measurement && /timer.start\(\)/ { timer_start = NR; exit }
+  END {
+    exit !(active_check && activation > active_check &&
+      activation_options >= activation && restored_active_check > activation_options &&
+      activation_result > restored_active_check &&
+      timer_start > activation_result)
+  }
+' "$native_harness" \
+  || contract_fail "$native_harness must confirm or restore foreground activation for every measured chat switch before starting its timer."
+grep -Fq 'result.chatSwitchWindowsActivated = false;' "$native_harness" \
+  && grep -Fq '&& result.chatSwitchWindowsActivated' "$native_harness" \
+  || contract_fail "$native_harness must fail the chat-switch regression if a foreground window cannot be established for every sample."
+awk '
+  /const auto showPeerHistoryMeasured =/ { in_measurement = 1 }
+  in_measurement && /index == 0.*&& !result.initialHistoryWindowActivated/ { no_activation_guard = NR }
+  in_measurement && /controller->showPeerHistory\(history\)/ {
+    if (no_activation_guard) {
+      unmeasured_fallback = NR
+    }
+  }
+  in_measurement && /timer.start\(\)/ {
+    timer_start = NR
+    exit
+  }
+  END {
+    exit !(no_activation_guard && unmeasured_fallback > no_activation_guard &&
+      timer_start > unmeasured_fallback)
+  }
+' "$native_harness" \
+  || contract_fail "$native_harness must not time the initial history selection unless its window was activated."
+awk '
+  /Platform::ActivateThisProcess\(window->widget\(\)\)/ {
+    process_activation = NR
+    activation_result = activation_complete = settled = 0
+    post_drain_activation = activation_recheck = 0
+  }
+  process_activation && !activation_result && NR > process_activation && /result.initialHistoryWindowActivated/ {
+    activation_result = NR
+  }
+  activation_result && !activation_complete && /WindowActivationForRegressionResult::Activated/ {
+    activation_complete = NR
+  }
+  activation_complete && /settleHistoryUnfocused\(\)/ { settled = NR }
+  settled && /result.initialHistoryWindowActivated/ {
+    post_drain_activation = NR
+  }
+  post_drain_activation && /&& IsWindowActiveForRegression\(Core::App\(\), window, false\)/ {
+    activation_recheck = NR
+  }
+  /showPeerHistoryMeasured\(emptyFirstHistory\)/ {
+    cold_selection = NR
+    exit
+  }
+  END {
+    exit !(process_activation && activation_result > process_activation &&
+      activation_complete > activation_result && settled > activation_complete &&
+      post_drain_activation > settled && activation_recheck > post_drain_activation &&
+      cold_selection > activation_recheck)
+  }
+' "$native_harness" \
+  || contract_fail "$native_harness must recheck foreground activation after settling the window and before timing its cold first history selection."
 grep -Fq 'Settings deep link native focus assertion skipped:' "$native_harness" \
   || contract_fail "$native_harness must report when the synthetic macOS replay cannot assert native focus."
 grep -Fq 'ordinaryFocusBehaviorMatches' "$native_harness" \
@@ -2013,7 +2445,8 @@ awk '
 ' "$native_harness" \
   || contract_fail 'Settings deep-link checks must keep the base activation check and run the custom-active URL matrix once.'
 awk '
-  /ActivateWindowForRegression\(Core::Application/ { in_activation = 1 }
+  /ActivateWindowForRegression\(/ { activation_signature = 1 }
+  activation_signature && /Core::Application &app/ { in_activation = 1 }
   in_activation && /if \(!activated\)/ { activation_timeout = NR }
   in_activation && /LogWindowActivationForRegression\(app, window\)/ {
     activation_diagnostics = NR

@@ -6,6 +6,9 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "core/ui_integration.h"
+#if defined(Q_OS_MAC) && defined(TDESKTOP_LIFECYCLE_REGRESSION)
+#include "tests/font_startup_regression.h"
+#endif // Q_OS_MAC && TDESKTOP_LIFECYCLE_REGRESSION
 
 #include "api/api_text_entities.h"
 #include "core/local_url_handlers.h"
@@ -317,6 +320,9 @@ void UiIntegration::unregisterLeaveSubscription(not_null<QWidget*> widget) {
 }
 
 QString UiIntegration::emojiCacheFolder() {
+#if defined(Q_OS_MAC) && defined(TDESKTOP_LIFECYCLE_REGRESSION)
+	PauseEmojiCacheForShutdownRegression();
+#endif // Q_OS_MAC && TDESKTOP_LIFECYCLE_REGRESSION
 	const auto folder = cWorkingDir() + "tdata/emoji";
 	const auto spoiler = folder + "/spoiler";
 	constexpr auto kCallsite = "emojiCacheFolder";

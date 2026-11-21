@@ -51,6 +51,7 @@ using Platform::NS2QString;
 namespace {
 
 constexpr auto kIgnoreActivationTimeoutMs = 500;
+constexpr auto kIgnoreNextActivationTimeoutMs = 1500;
 
 void SetupDockMenu() {
 	static const auto DockMenu = std::make_unique<QMenu>();
@@ -115,6 +116,7 @@ void SetupDockMenu() {
 - (void) receiveWakeNote:(NSNotification*)note;
 
 - (void) ignoreApplicationActivationRightNow;
+- (void)ignoreNextApplicationActivation;
 
 @end // @interface ApplicationDelegate
 
@@ -122,18 +124,23 @@ ApplicationDelegate *_sharedDelegate = nil;
 
 @implementation ApplicationDelegate {
 	bool _ignoreActivation;
+	bool _ignoreNextActivation;
 	base::Timer _ignoreActivationStop;
+	base::Timer _ignoreNextActivationStop;
 }
 
-- (instancetype) init {
+- (instancetype)init {
 	_ignoreActivation = false;
-	_ignoreActivationStop.setCallback([self] {
-		_ignoreActivation = false;
-	});
+	_ignoreNextActivation = false;
+	_ignoreActivationStop.setCallback([self] { _ignoreActivation = false; });
+	_ignoreNextActivationStop.setCallback(
+		[self] { _ignoreNextActivation = false; });
 	return [super init];
 }
 
-- (BOOL) applicationShouldHandleReopen:(NSApplication *)theApplication hasVisibleWindows:(BOOL)flag {
+- (BOOL)applicationShouldHandleReopen:(NSApplication *)theApplication
+					hasVisibleWindows:(BOOL)flag {
+	_ignoreNextActivation = false;
 	Core::Sandbox::Instance().customEnterFromEventLoop([&] {
 		if (Core::IsAppLaunched()) {
 			if (const auto window = Core::App().activeWindow()) {
@@ -146,8 +153,12 @@ ApplicationDelegate *_sharedDelegate = nil;
 	return YES;
 }
 
-- (void) applicationDidBecomeActive:(NSNotification *)aNotification {
+- (void)applicationDidBecomeActive:(NSNotification *)aNotification {
 	Core::Sandbox::Instance().customEnterFromEventLoop([&] {
+		if (Core::IsAppLaunched() && _ignoreNextActivation) {
+			_ignoreNextActivation = false;
+			return;
+		}
 		if (Core::IsAppLaunched() && !_ignoreActivation) {
 			Core::App().handleAppActivated();
 			if (const auto window = Core::App().activeWindow()) {
@@ -188,6 +199,11 @@ ApplicationDelegate *_sharedDelegate = nil;
 - (void) ignoreApplicationActivationRightNow {
 	_ignoreActivation = true;
 	_ignoreActivationStop.callOnce(kIgnoreActivationTimeoutMs);
+}
+
+- (void)ignoreNextApplicationActivation {
+	_ignoreNextActivation = true;
+	_ignoreNextActivationStop.callOnce(kIgnoreNextActivationTimeoutMs);
 }
 
 @end // @implementation ApplicationDelegate
@@ -366,6 +382,12 @@ void objc_start() {
 void objc_ignoreApplicationActivationRightNow() {
 	if (_sharedDelegate) {
 		[_sharedDelegate ignoreApplicationActivationRightNow];
+	}
+}
+
+void objc_ignoreNextApplicationActivation() {
+	if (_sharedDelegate) {
+		[_sharedDelegate ignoreNextApplicationActivation];
 	}
 }
 
