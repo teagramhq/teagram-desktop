@@ -119,7 +119,7 @@ constexpr auto kSocketCollisionFixtureContents
 	= "Teagram IPC collision fixture";
 #endif
 
-#ifndef Q_OS_WINRT
+#if !defined Q_OS_WINRT && (defined Q_OS_WIN || defined Q_OS_MAC)
 [[nodiscard]] bool
 RemoveStaleLocalServer([[maybe_unused]] const QString &name) {
 #if defined(Q_OS_LINUX) && QT_VERSION >= QT_VERSION_CHECK(6, 2, 0)
@@ -136,7 +136,7 @@ RemoveStaleLocalServer([[maybe_unused]] const QString &name) {
 	return true;
 #endif // Q_OS_UNIX
 }
-#endif // Q_OS_WINRT
+#endif // !Q_OS_WINRT && (Q_OS_WIN || Q_OS_MAC)
 
 #if !defined Q_OS_WIN && !defined Q_OS_MAC
 void ShowSingleInstanceStartupError(const QString &error) {
