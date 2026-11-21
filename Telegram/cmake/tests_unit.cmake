@@ -140,6 +140,7 @@ PRIVATE
     tests/unit/data_download_manager_tests.cpp
     tests/unit/data_document_download_policy_tests.cpp
     tests/unit/data_message_reactions_tests.cpp
+    tests/unit/dialogs_list_order_tests.cpp
     tests/unit/debug_mode_tests.cpp
     tests/unit/edit_admin_rights_save_tests.cpp
     tests/unit/edit_peer_permissions_save_tests.cpp
@@ -241,6 +242,10 @@ PRIVATE
 )
 
 if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    add_library(test_unit_td_ui STATIC $<TARGET_OBJECTS:td_ui>)
+    init_target(test_unit_td_ui "(tests)")
+    add_dependencies(test_unit td_ui_styles)
+
     target_compile_definitions(test_unit PRIVATE
         TDESKTOP_TEAGRAM
         TDESKTOP_TEAGRAM_UPDATE_BUILD=${TDESKTOP_TEAGRAM_UPDATE_BUILD}ULL
@@ -257,12 +262,26 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
         tests/unit/linux_data_path_tests.cpp
         tests/unit/linux_desktop_identity_tests.cpp
         tests/unit/linux_local_socket_path_tests.cpp
+        tests/unit/send_button_tests.cpp
         tests/unit/username_input_tests.cpp
         ui/widgets/fields/username_input.cpp
     )
 
+    nice_target_sources(test_unit ${res_loc}
+    PRIVATE
+        qrc/telegram/animations.qrc
+    )
+
+    target_link_options(test_unit PRIVATE
+        "LINKER:--wrap=_ZN6Lottie11ReadContentERK10QByteArrayRK7QString"
+    )
+
     target_link_libraries(test_unit
     PRIVATE
+        test_unit_td_ui
+        tdesktop::td_lang
+        desktop-app::lib_lottie
+        desktop-app::external_rlottie
         Qt${QT_VERSION_MAJOR}::QOffscreenIntegrationPlugin
     )
     if (QT_VERSION_MAJOR GREATER_EQUAL 6)
