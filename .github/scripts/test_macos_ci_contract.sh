@@ -2212,17 +2212,20 @@ awk '
   || contract_fail "$native_harness must issue activation before classifying AppKit inactivity at timeout."
 awk '
   /ActivateWindowForRegression\(Core::Application/ { in_activation = 1 }
-  in_activation && /Platform::IsApplicationActiveForRegression\(\)/ { requires_foreground = 1 }
-  in_activation && /widget->isActiveWindow\(\)/ { checks_active_widget = 1 }
-  in_activation && /widget->isVisible\(\)/ { checks_visible_widget = 1 }
-  in_activation && /Qt::WindowMinimized/ { checks_unminimized_widget = 1 }
+  in_activation && /const auto isActive =/ { in_predicate = 1 }
+  in_predicate && /Platform::IsApplicationActiveForRegression\(\)/ { requires_foreground = 1 }
+  in_predicate && /widget->isActiveWindow\(\)/ { checks_active_widget = 1 }
+  in_predicate && /widget->isVisible\(\)/ { checks_visible_widget = 1 }
+  in_predicate && /Qt::WindowMinimized/ { checks_unminimized_widget = 1 }
+  in_predicate && /^[[:space:]]*};/ { in_predicate = 0 }
+  in_activation && /WaitForRegressionCondition\(isActive\)/ { waits_for_predicate = 1 }
   in_activation && /^}/ { exit }
   END {
     exit !(requires_foreground && checks_active_widget && checks_visible_widget &&
-      checks_unminimized_widget)
+      checks_unminimized_widget && waits_for_predicate)
   }
 ' "$native_harness" \
-  || contract_fail "$native_harness must require the foreground app and active, visible, unminimized target before reporting activation."
+  || contract_fail "$native_harness must require the foreground app and active, visible, unminimized target in the activation predicate passed to WaitForRegressionCondition."
 awk '
   /const auto showPeerHistoryMeasured =/ { in_measurement = 1 }
   in_measurement && /index == 0.*&& !result.initialHistoryWindowActivated/ { no_activation_guard = NR }
