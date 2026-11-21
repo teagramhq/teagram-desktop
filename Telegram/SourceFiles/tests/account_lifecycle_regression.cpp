@@ -12915,6 +12915,9 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 	// history selection so its measurement covers showing history, not
 	// finishing window activation.
 	settleHistoryUnfocused();
+	result.initialHistoryWindowActivated
+		= result.initialHistoryWindowActivated
+		  && IsWindowActiveForRegression(Core::App(), window, false);
 	showPeerHistoryMeasured(emptyFirstHistory);
 	settleHistoryUnfocused();
 	constexpr auto kWarmupChatSwitches = 8;

@@ -2302,14 +2302,24 @@ awk '
 ' "$native_harness" \
   || contract_fail "$native_harness must not time the initial history selection unless its window was activated."
 awk '
-  /Platform::ActivateThisProcess\(window->widget\(\)\)/ { process_activation = NR }
-  process_activation && NR > process_activation && /result.initialHistoryWindowActivated/ {
+  /Platform::ActivateThisProcess\(window->widget\(\)\)/ {
+    process_activation = NR
+    activation_result = activation_complete = settled = 0
+    post_drain_activation = activation_recheck = 0
+  }
+  process_activation && !activation_result && NR > process_activation && /result.initialHistoryWindowActivated/ {
     activation_result = NR
   }
-  activation_result && /WindowActivationForRegressionResult::Activated/ {
+  activation_result && !activation_complete && /WindowActivationForRegressionResult::Activated/ {
     activation_complete = NR
   }
   activation_complete && /settleHistoryUnfocused\(\)/ { settled = NR }
+  settled && /result.initialHistoryWindowActivated/ {
+    post_drain_activation = NR
+  }
+  post_drain_activation && /&& IsWindowActiveForRegression\(Core::App\(\), window, false\)/ {
+    activation_recheck = NR
+  }
   /showPeerHistoryMeasured\(emptyFirstHistory\)/ {
     cold_selection = NR
     exit
@@ -2317,10 +2327,11 @@ awk '
   END {
     exit !(process_activation && activation_result > process_activation &&
       activation_complete > activation_result && settled > activation_complete &&
-      cold_selection > settled)
+      post_drain_activation > settled && activation_recheck > post_drain_activation &&
+      cold_selection > activation_recheck)
   }
 ' "$native_harness" \
-  || contract_fail "$native_harness must settle the activated window before timing its cold first history selection."
+  || contract_fail "$native_harness must recheck foreground activation after settling the window and before timing its cold first history selection."
 grep -Fq 'Settings deep link native focus assertion skipped:' "$native_harness" \
   || contract_fail "$native_harness must report when the synthetic macOS replay cannot assert native focus."
 grep -Fq 'ordinaryFocusBehaviorMatches' "$native_harness" \
