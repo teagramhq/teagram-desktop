@@ -23,6 +23,8 @@ on:
       - '.github/scripts/test_ccache_launcher.sh'
       - '.github/scripts/test_macos_ci_contract.sh'
       - '.github/scripts/test_macos_launch_smoke.py'
+      - '.github/scripts/macos_perf_fixture.py'
+      - '.github/scripts/test_macos_perf_fixture.py'
       - '.github/scripts/extract_dwarf_subprogram_address.py'
       - '.github/scripts/symbolicate_macos_minidump.py'
       - 'Telegram/build/run_mac_lifecycle_cases.sh'
@@ -70,6 +72,8 @@ on:
       - '.github/scripts/test_ccache_launcher.sh'
       - '.github/scripts/test_macos_ci_contract.sh'
       - '.github/scripts/test_macos_launch_smoke.py'
+      - '.github/scripts/macos_perf_fixture.py'
+      - '.github/scripts/test_macos_perf_fixture.py'
       - '.github/scripts/extract_dwarf_subprogram_address.py'
       - '.github/scripts/symbolicate_macos_minidump.py'
       - 'Telegram/build/run_mac_lifecycle_cases.sh'
@@ -162,6 +166,9 @@ jobs:
 
       - name: Test macOS CI contract.
         run: bash .github/scripts/test_macos_ci_contract.sh
+
+      - name: Test macOS performance fixture setup.
+        run: python3 .github/scripts/test_macos_perf_fixture.py
 
       - name: Test macOS dependency artifact handling.
         run: bash .github/scripts/test_macos_libraries_image.sh
