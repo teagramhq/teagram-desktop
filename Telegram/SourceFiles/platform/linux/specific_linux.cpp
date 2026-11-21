@@ -595,20 +595,6 @@ void SetApplicationIcon(const QIcon &icon) {
 	QApplication::setWindowIcon(icon);
 }
 
-QString SingleInstanceLocalServerName(const QString &hash) {
-#if defined Q_OS_LINUX && QT_VERSION >= QT_VERSION_CHECK(6, 2, 0)
-	return Platform::Linux::SingleInstanceLocalServerName(
-		hash, QCoreApplication::applicationName(), KSandbox::isSnap(),
-		qEnvironmentVariable("SNAP_INSTANCE_NAME"));
-#else // Q_OS_LINUX && Qt >= 6.2.0
-	return QDir::tempPath()
-		+ '/'
-		+ hash
-		+ '-'
-		+ QCoreApplication::applicationName();
-#endif // !Q_OS_LINUX || Qt < 6.2.0
-}
-
 #if QT_VERSION < QT_VERSION_CHECK(6, 5, 0)
 std::optional<bool> IsDarkMode() {
 	auto result = base::Platform::XDP::ReadSetting(

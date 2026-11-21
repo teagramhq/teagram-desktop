@@ -126,6 +126,7 @@ private:
 	// Single instance application
 	void socketConnected();
 	void socketError(QLocalSocket::LocalSocketError e);
+	void afterSingleInstanceStarted();
 	void socketDisconnected();
 	void retrySingleInstance(bool immediate = false);
 	void showSingleInstanceError(QString diagnostic = QString(),

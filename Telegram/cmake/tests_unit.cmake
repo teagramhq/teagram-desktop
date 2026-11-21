@@ -253,9 +253,11 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
     nice_target_sources(test_unit ${src_loc}
     PRIVATE
         platform/linux/app_data_path.cpp
+        platform/linux/single_instance_local_server_name.cpp
         tests/unit/emoji_cache_shutdown_tests.cpp
         tests/unit/linux_data_path_tests.cpp
         tests/unit/linux_desktop_identity_tests.cpp
+        tests/unit/linux_local_socket_path_tests.cpp
         tests/unit/username_input_tests.cpp
         ui/widgets/fields/username_input.cpp
     )

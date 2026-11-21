@@ -9,6 +9,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "base/platform/base_platform_info.h"
 #include "platform/platform_specific.h"
+#if !defined Q_OS_WIN && !defined Q_OS_MAC
+#include "platform/linux/local_socket_path.h"
+#endif // !Q_OS_WIN && !Q_OS_MAC
 #include "mainwidget.h"
 #include "mainwindow.h"
 #include "storage/localstorage.h"
@@ -58,6 +61,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <cerrno>
 #include <sys/stat.h>
 #endif // Q_OS_UNIX
+#if !defined Q_OS_WIN && !defined Q_OS_MAC
+#include <QtWidgets/QMessageBox>
+#endif // !Q_OS_WIN && !Q_OS_MAC
 #ifdef Q_OS_MAC
 #include <QtCore/QPoint>
 #include <QtCore/QRect>
@@ -113,7 +119,7 @@ constexpr auto kSocketCollisionFixtureContents
 	= "Teagram IPC collision fixture";
 #endif
 
-#ifndef Q_OS_WINRT
+#if !defined Q_OS_WINRT && (defined Q_OS_WIN || defined Q_OS_MAC)
 [[nodiscard]] bool
 RemoveStaleLocalServer([[maybe_unused]] const QString &name) {
 #if defined(Q_OS_LINUX) && QT_VERSION >= QT_VERSION_CHECK(6, 2, 0)
@@ -130,7 +136,17 @@ RemoveStaleLocalServer([[maybe_unused]] const QString &name) {
 	return true;
 #endif // Q_OS_UNIX
 }
-#endif // Q_OS_WINRT
+#endif // !Q_OS_WINRT && (Q_OS_WIN || Q_OS_MAC)
+
+#if !defined Q_OS_WIN && !defined Q_OS_MAC
+void ShowSingleInstanceStartupError(const QString &error) {
+	const auto message
+		= error.isEmpty()
+			  ? u"Could not start the single-instance IPC service."_q
+			  : error;
+	QMessageBox::critical(nullptr, QApplication::applicationName(), message);
+}
+#endif // !Q_OS_WIN && !Q_OS_MAC
 #ifdef Q_OS_MAC
 constexpr auto kFontStartupSplashExposureTimeout = 1000;
 #endif // Q_OS_MAC
@@ -402,12 +418,26 @@ int Sandbox::start() {
 			_shutdownLoop.run(pending);
 		}
 	};
+	auto localServerNameError = QString();
 	{
 		const auto d = QFile::encodeName(QDir(cWorkingDir()).absolutePath());
-		char h[33] = { 0 };
+		char h[33] = {0};
 		hashMd5Hex(d.constData(), d.size(), h);
-		_localServerName = Platform::SingleInstanceLocalServerName(h);
+		_localServerName
+			= Platform::SingleInstanceLocalServerName(h, &localServerNameError);
 	}
+
+#if !defined Q_OS_WIN && !defined Q_OS_MAC
+	if (_localServerName.isEmpty()) {
+		const auto message
+			= localServerNameError.isEmpty()
+				  ? u"Could not determine a private local socket path."_q
+				  : localServerNameError;
+		LOG(("%1").arg(message));
+		ShowSingleInstanceStartupError(message);
+		return 1;
+	}
+#endif // !Q_OS_WIN && !Q_OS_MAC
 
 #ifdef Q_OS_MAC
 	if (_localServerName.isEmpty()) {
@@ -555,10 +585,9 @@ int Sandbox::start() {
 		}
 	}
 
-#if defined Q_OS_LINUX && QT_VERSION >= QT_VERSION_CHECK(6, 2, 0)
-	_localServer.setSocketOptions(QLocalServer::AbstractNamespaceOption);
-	_localSocket.setSocketOptions(QLocalSocket::AbstractNamespaceOption);
-#endif // Q_OS_LINUX && Qt >= 6.2.0
+#ifdef Q_OS_LINUX
+	_localServer.setSocketOptions(QLocalServer::UserAccessOption);
+#endif // Q_OS_LINUX
 
 	connect(
 		&_localSocket,
@@ -1513,6 +1542,36 @@ void Sandbox::socketError(QLocalSocket::LocalSocketError e) {
 		return Quit();
 	}
 #endif // Q_OS_MAC
+#if !defined Q_OS_WIN && !defined Q_OS_MAC
+	Platform::Linux::StartSingleInstanceServer(
+		_localServer, _localServerName,
+		[](const QString &serverName) { psCheckLocalSocket(serverName); },
+		[this](Platform::Linux::SingleInstanceServerResult result,
+			   const QString &error) {
+			if (Quitting()) {
+				return;
+			}
+			if (result
+				== Platform::Linux::SingleInstanceServerResult::Secondary) {
+				Platform::Linux::QueueSingleInstanceSocketReconnect(
+					this, &_localSocket, _localServerName);
+				return;
+			} else if (result
+					   == Platform::Linux::SingleInstanceServerResult::Failed) {
+				LOG(("Failed to start listening to %1 server: %2")
+						.arg(_localServerName, error));
+				ShowSingleInstanceStartupError(error);
+				return Quit();
+			}
+			if (_retryingSingleInstance && _lockFile && !_lockFile->isLocked()
+				&& !_lockFile->tryLock()) {
+				LOG(("Executable lock remains held by another profile."));
+			}
+			_retryingSingleInstance = false;
+			afterSingleInstanceStarted();
+		});
+	return;
+#else
 	if (!RemoveStaleLocalServer(_localServerName)) {
 		const auto diagnostic
 			= u"Could not use the single-instance IPC path: %1"_q.arg(
@@ -1522,7 +1581,8 @@ void Sandbox::socketError(QLocalSocket::LocalSocketError e) {
 	}
 
 	if (!_localServer.listen(_localServerName)) {
-		LOG(("Failed to start listening to %1 server: %2").arg(_localServerName, _localServer.errorString()));
+		LOG(("Failed to start listening to %1 server: %2")
+				.arg(_localServerName, _localServer.errorString()));
 		return Quit();
 	}
 	if (_retryingSingleInstance && _lockFile && !_lockFile->isLocked()
@@ -1530,6 +1590,7 @@ void Sandbox::socketError(QLocalSocket::LocalSocketError e) {
 		LOG(("Executable lock remains held by another profile."));
 	}
 	_retryingSingleInstance = false;
+#endif // !Q_OS_WIN && !Q_OS_MAC
 #ifdef Q_OS_MAC
 	if (MacProtectedPath::IntegrationTestActive()) {
 		const auto fullServerName = _localServer.fullServerName().toUtf8();
@@ -1539,12 +1600,15 @@ void Sandbox::socketError(QLocalSocket::LocalSocketError e) {
 	}
 #endif // Q_OS_MAC
 #endif // !Q_OS_WINRT
+	afterSingleInstanceStarted();
+}
 
-	if (!Core::UpdaterDisabled()
-		&& !cNoStartUpdate()
+void Sandbox::afterSingleInstanceStarted() {
+	if (!Core::UpdaterDisabled() && !cNoStartUpdate()
 		&& Core::checkReadyUpdate()) {
 		cSetRestartingUpdate(true);
-		DEBUG_LOG(("Sandbox Info: installing update instead of starting app..."));
+		DEBUG_LOG(
+			("Sandbox Info: installing update instead of starting app..."));
 		return Quit();
 	}
 
