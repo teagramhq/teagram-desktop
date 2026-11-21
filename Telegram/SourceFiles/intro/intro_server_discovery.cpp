@@ -10,9 +10,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "base/random.h"
 #include "lang/lang_keys.h"
 
+#include <QtCore/QSocketNotifier>
 #include <QtCore/QTimer>
 #include <QtCore/QUrl>
-#include <QtCore/QSocketNotifier>
 #include <QtNetwork/QHostInfo>
 #include <QtNetwork/QNetworkAccessManager>
 #include <QtNetwork/QNetworkInterface>

@@ -8,8 +8,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "main/main_account.h"
 
 #include "base/platform/base_platform_info.h"
-#include "intro/intro_server_discovery.h"
 #include "core/application.h"
+#include "intro/intro_server_discovery.h"
 #include "storage/storage_account.h"
 #include "storage/storage_domain.h" // Storage::StartResult.
 #include "storage/serialize_common.h"
