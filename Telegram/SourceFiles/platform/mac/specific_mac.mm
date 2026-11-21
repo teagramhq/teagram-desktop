@@ -249,6 +249,10 @@ void IgnoreApplicationActivationRightNow() {
 	objc_ignoreApplicationActivationRightNow();
 }
 
+void IgnoreNextApplicationActivation() {
+	objc_ignoreNextApplicationActivation();
+}
+
 void AutostartToggle(bool enabled, Fn<void(bool)> done) {
 	if (done) {
 		done(false);

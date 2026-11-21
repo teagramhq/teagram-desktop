@@ -12,7 +12,7 @@ cat > "$FAKE_CASES" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 case "$2" in
-pass)
+pass|native-failure-continuation)
 	printf 'case body passed\n'
 	;;
 fail)
@@ -128,6 +128,22 @@ grep -Fq 'lifecycle_case=pass result=START timeout_seconds=600' \
 	exit 1
 }
 
+if TDESKTOP_MAC_LIFECYCLE_CASE_TIMEOUT_SECONDS=700 \
+	bash "$RUNNER" "$FAKE_CASES" fake-app "$TEMP_ROOT/long-case-logs" \
+		native-failure-continuation > "$TEMP_ROOT/long-case-output.txt" 2>&1; then
+	:
+else
+	cat "$TEMP_ROOT/long-case-output.txt" >&2
+	echo "case runner should complete the native failure continuation case below its timeout cap." >&2
+	exit 1
+fi
+grep -Fq 'lifecycle_case=native-failure-continuation result=START timeout_seconds=600' \
+	"$TEMP_ROOT/long-case-output.txt" || {
+	cat "$TEMP_ROOT/long-case-output.txt" >&2
+	echo "native failure continuation should keep the existing 600-second case cap." >&2
+	exit 1
+}
+
 if TDESKTOP_MAC_LIFECYCLE_STEP_DEADLINE_EPOCH=1009 \
 	PATH="$CLOCK_BIN:$PATH" \
 	bash "$RUNNER" "$FAKE_CASES" fake-app "$TEMP_ROOT/deadline-exhausted-logs" \
@@ -200,8 +216,123 @@ if [[ "${TDESKTOP_FONT_STARTUP_QUIT_REGRESSION:-}" == 1 ]]; then
 		printf 'Font shutdown regression: quit_observed=1 font_work=active enumeration_overlapped=0\n'
 		exit 0
 	fi
+	if [[ "${TDESKTOP_FONT_STARTUP_TEST_FAILURE:-}" == probe-timeout-retry ]]; then
+		printf 'Font shutdown regression: retry_checkpoint=1\n'
+		printf 'Font shutdown regression: retry_timeout=1\n'
+		printf 'Font shutdown regression: retry_gui_event=1\n'
+		printf 'Font shutdown regression: retry_worker_done=1\n'
+		printf 'Font shutdown regression: worker_joined=1 application_created=0 teardown=complete\n'
+		exit 0
+	fi
+	if [[ "${TDESKTOP_FONT_STARTUP_TEST_FAILURE:-}" == probe-release-before-arm ]]; then
+		printf 'Font shutdown regression: probe_release_preserved=1\n'
+		printf 'Font shutdown regression: quit_observed=0 font_work=active enumeration_overlapped=0\n'
+		printf 'Font shutdown regression: worker_joined=1 application_created=0 teardown=complete\n'
+		exit 0
+	fi
+	if [[ "${TDESKTOP_FONT_STARTUP_TEST_FAILURE:-}" == shutdown-remove-pending ]]; then
+		printf 'Font shutdown regression: quit_observed=1 font_work=active remove_pending_at_quit=1 removal_completed=1\n'
+		printf 'Font shutdown regression: worker_joined=1 application_created=0 teardown=complete\n'
+		exit 0
+	fi
+	if [[ "${TDESKTOP_FONT_STARTUP_TEST_FAILURE:-}" == probe-missed-first ]]; then
+		printf 'Font shutdown regression: enumeration_retry=1\n'
+	fi
+	printf 'Font shutdown regression: probe_interposer=active\n'
+	printf 'Font shutdown regression: qt_font_database_hold=1\n'
 	printf 'Font shutdown regression: quit_observed=1 font_work=active enumeration_overlapped=1\n'
 	printf 'Font shutdown regression: worker_joined=1 application_created=0 teardown=complete\n'
+	exit 0
+fi
+if [[ -n "${TDESKTOP_PROFILE_LOCK_REFUSAL_REGRESSION:-}" ]]; then
+    refusal_window=1
+    refusal_path="$HOME/Library/Group Containers/6N38VWS5BX.ru.keepcoder.Telegram/refused-profile.lock"
+    if [[ "${TDESKTOP_FONT_TEST_MODE:-${FONT_TEST_MODE:-}}" == lock-refusal-no-window ]]; then refusal_window=0; fi
+    if [[ "${TDESKTOP_FONT_TEST_MODE:-${FONT_TEST_MODE:-}}" == lock-refusal-no-path ]]; then refusal_path='missing'; fi
+    policy_operation=stat
+    reported_operation=stat
+    window_contains_error=1
+    if [[ "${TDESKTOP_FONT_TEST_MODE:-${FONT_TEST_MODE:-}}" == lock-refusal-wrong-policy ]]; then policy_operation=write; fi
+    if [[ "${TDESKTOP_FONT_TEST_MODE:-${FONT_TEST_MODE:-}}" == lock-refusal-wrong-reported ]]; then reported_operation=write; fi
+    if [[ "${TDESKTOP_FONT_TEST_MODE:-${FONT_TEST_MODE:-}}" == lock-refusal-wrong-window ]]; then window_contains_error=0; fi
+    printf 'Mac protected path refusal: operation=%s class=group-container callsite=int Core::Sandbox::start()\n' "$policy_operation"
+    printf 'Profile lock refusal regression: failure_window=%s window_contains_error=%s operation=%s path=%s\n' "$refusal_window" "$window_contains_error" "$reported_operation" "$refusal_path"
+    exit 1
+fi
+if [[ -n "${TDESKTOP_PROFILE_LOCK_REGRESSION:-}" ]]; then
+    lock_window=1
+    lock_reason='open failed'
+    if [[ "${TDESKTOP_FONT_TEST_MODE:-${FONT_TEST_MODE:-}}" == lock-error-no-window ]]; then lock_window=0; fi
+    if [[ "${TDESKTOP_FONT_TEST_MODE:-${FONT_TEST_MODE:-}}" == lock-error-no-reason ]]; then lock_reason=''; fi
+    printf 'Profile lock regression: failure_window=%s window_contains_error=1 reason=%s\n' "$lock_window" "$lock_reason"
+    exit 0
+fi
+if [[ -n "${TDESKTOP_SOCKET_ERROR_REGRESSION:-}" ]]; then
+    printf 'Socket error regression: injected=1\n'
+	if [[ "$TDESKTOP_SOCKET_ERROR_REGRESSION" == ipc-collision ]]; then
+		collision_path="$HOME/fixture-ipc"
+		printf 'Teagram IPC collision fixture' > "$collision_path"
+		printf 'Socket error regression: collision_window=1 path_visible=1 entry_preserved=1 path=%s\n' "$collision_path"
+		exit 0
+	fi
+    if [[ "$TDESKTOP_SOCKET_ERROR_REGRESSION" == persistent ]]; then
+        printf 'Single instance retry regression: delay_ms=50\n'
+        if [[ "${TDESKTOP_FONT_TEST_MODE:-${FONT_TEST_MODE:-}}" != socket-error-no-window ]]; then
+            printf 'Socket error regression: failure_window=1\n'
+        fi
+        exit 0
+    fi
+    if [[ "${TDESKTOP_FONT_TEST_MODE:-${FONT_TEST_MODE:-}}" == socket-error-no-retry ]]; then exit 1; fi
+fi
+if [[ -n "${TDESKTOP_INSTANCE_RECHECK_HOLD_FILE:-}" ]]; then
+    printf 'Single instance recheck regression: initial_failure=1 socket=%s\n' "$TDESKTOP_INSTANCE_RECHECK_TEST_SOCKET"
+    while [[ ! -e "$TDESKTOP_INSTANCE_RECHECK_HOLD_FILE" ]]; do sleep 0.02; done
+    if [[ "${TDESKTOP_FONT_TEST_MODE:-${FONT_TEST_MODE:-}}" == emoji-relaunch-skip-recheck ]]; then exit 1; fi
+    printf 'Single instance retry regression: delay_ms=0\n'
+    python3 -c 'import socket,sys; s=socket.socket(socket.AF_UNIX); s.connect(sys.argv[1]); s.sendall(b"CMD:show;"); s.recv(128)' "$TDESKTOP_INSTANCE_RECHECK_TEST_SOCKET"
+    printf 'Emoji cache relaunch: forwarded=1\n'
+    exit 0
+fi
+if [[ -n "${TDESKTOP_EMOJI_SHUTDOWN_RELEASE_FILE:-}" ]]; then
+    printf 'Emoji cache shutdown regression: drain_active=1\n'
+    if [[ "${TDESKTOP_EMOJI_RELAUNCH_COMPETING:-}" == 1 ]]; then
+        for index in 1 2; do
+            while [[ ! -e "$TDESKTOP_EMOJI_SHUTDOWN_RELEASE_FILE.peer.$index" ]]; do sleep 0.02; done
+            printf 'Emoji cache shutdown regression: peer_waiting=1\n'
+        done
+    else
+        while [[ ! -e "$TDESKTOP_EMOJI_SHUTDOWN_RELEASE_FILE.peer" ]]; do sleep 0.02; done
+        printf 'Emoji cache shutdown regression: peer_waiting=1\n'
+    fi
+    while [[ ! -e "$TDESKTOP_EMOJI_SHUTDOWN_RELEASE_FILE" ]]; do sleep 0.02; done
+    exit 0
+fi
+if [[ "${TDESKTOP_EMOJI_RELAUNCH_SECONDARY_TEST:-}" == 1 ]]; then
+    if [[ -n "${TDESKTOP_EMOJI_RELAUNCH_HOLD_FILE:-}" ]]; then
+        touch "$TDESKTOP_EMOJI_RELAUNCH_TEST_FILE.peer.$TDESKTOP_EMOJI_RELAUNCH_INDEX"
+    else
+        touch "$TDESKTOP_EMOJI_RELAUNCH_TEST_FILE.peer"
+    fi
+    if [[ "${TDESKTOP_FONT_TEST_MODE:-${FONT_TEST_MODE:-}}" == emoji-relaunch-early ]]; then exit 0; fi
+    while [[ ! -e "$TDESKTOP_EMOJI_RELAUNCH_TEST_FILE" ]]; do sleep 0.02; done
+    if [[ -n "${TDESKTOP_EMOJI_RELAUNCH_HOLD_FILE:-}" ]]; then
+        if [[ "${TDESKTOP_FONT_TEST_MODE:-${FONT_TEST_MODE:-}}" == emoji-relaunch-double-start ]] \
+            || [[ "${TDESKTOP_FONT_TEST_MODE:-${FONT_TEST_MODE:-}}" == emoji-relaunch-second-wins && "$TDESKTOP_EMOJI_RELAUNCH_INDEX" == 2 ]] \
+            || [[ "${TDESKTOP_FONT_TEST_MODE:-${FONT_TEST_MODE:-}}" != emoji-relaunch-second-wins && "$TDESKTOP_EMOJI_RELAUNCH_INDEX" == 1 ]]; then
+            printf 'Emoji cache relaunch: application_started=1\n'
+            while [[ ! -e "$TDESKTOP_EMOJI_RELAUNCH_HOLD_FILE" ]]; do sleep 0.02; done
+        else
+            printf 'Emoji cache relaunch: forwarded=1\n'
+        fi
+        exit 0
+    fi
+    printf 'Font database warmup regression: ready=1 custom-fonts=1\n'
+    exit 0
+fi
+if [[ "${TDESKTOP_EMOJI_CACHE_SHUTDOWN_REGRESSION:-}" == 1 ]]; then
+	printf 'Emoji cache shutdown regression: worker_blocked=1\n'
+	printf 'Emoji cache shutdown regression: repeat_quit=1\n'
+	printf 'Emoji cache shutdown regression: gui_responsive=1 integration_alive=1 worker_returned=1 wait_timed_out=0\n'
 	exit 0
 fi
 if [[ "${TDESKTOP_FONT_STARTUP_REGRESSION:-}" == 1 ]]; then
@@ -235,7 +366,8 @@ EOF
 chmod +x "$FAKE_BIN/uname" "$FAKE_BIN/md5" "$FAKE_BIN/sw_vers" "$FAKE_APP"
 mkdir -p "$TEMP_ROOT/profile-harness"
 
-if TDESKTOP_MAC_PROFILE_TEST_TMP_BASE="$TEMP_ROOT/profile-harness" \
+if TDESKTOP_FONT_TEST_MODE=pass \
+	TDESKTOP_MAC_PROFILE_TEST_TMP_BASE="$TEMP_ROOT/profile-harness" \
 	PATH="$FAKE_BIN:$PATH" bash "$PROFILE_GUARD" "$FAKE_APP" \
 	> "$TEMP_ROOT/profile-entrypoint-output.txt" 2>&1; then
 	echo "profile guard should report failures from the fake app cases." >&2
