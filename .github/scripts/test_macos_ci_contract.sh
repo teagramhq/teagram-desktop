@@ -687,7 +687,10 @@ require_step_script "$mac_workflow" build-macos 'Set up fixture server Go.' \
 require_step_field "$mac_workflow" build-macos 'Set up fixture migrations.' '.timeout-minutes' '6'
 require_step_field "$mac_workflow" build-macos 'Set up fixture migrations.' '.uses' 'null'
 require_step_script "$mac_workflow" build-macos 'Set up fixture migrations.' \
-  'https://atlasgo.sh' 'ATLAS_VERSION=v1.2.0 CI=true sh' 'atlas version'
+  'https://release.ariga.io/atlas/atlas-darwin-arm64-v1.2.0' \
+  'c0d8443a603991c337341a303abf3812cb9f12d74d0ec0d585245735f18c1224' \
+  'shasum -a 256 --check' 'GITHUB_PATH' 'atlas version'
+reject_step_script "$mac_workflow" build-macos 'Set up fixture migrations.' 'atlasgo.sh'
 require_step_field "$mac_workflow" build-macos 'Restore and run performance fixtures (informational).' '.timeout-minutes' '20'
 for fixture_step in 'Start performance fixture timing.' 'Set up fixture server Go.' 'Set up fixture migrations.' 'Restore and run performance fixtures (informational).' 'Report interrupted fixture setup.'; do
   require_step_field "$mac_workflow" build-macos "$fixture_step" '.continue-on-error' 'true'
