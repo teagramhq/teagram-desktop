@@ -3855,24 +3855,24 @@ enum class WindowActivationForRegressionResult {
 	Failed,
 };
 
-[[nodiscard]] bool IsWindowActiveForRegression(
-	Core::Application &app, not_null<Window::Controller *> window,
-	bool requirePrimary = false, bool requireForeground = false) {
+[[nodiscard]] bool
+IsWindowActiveForRegression(Core::Application &app,
+							not_null<Window::Controller *> window,
+							bool requirePrimary = false) {
 	const auto widget = window->widget();
-	return (!requireForeground
-			|| (Platform::IsApplicationActiveForRegression()
-				&& widget->isActiveWindow() && widget->isVisible()
-				&& !(widget->windowState() & Qt::WindowMinimized)))
+	return Platform::IsApplicationActiveForRegression()
+		   && widget->isActiveWindow() && widget->isVisible()
+		   && !(widget->windowState() & Qt::WindowMinimized)
 		   && (app.activeWindow() == window.get())
 		   && (!requirePrimary || (app.activePrimaryWindow() == window.get()));
 }
 
-[[nodiscard]] WindowActivationForRegressionResult ActivateWindowForRegression(
-	Core::Application &app, not_null<Window::Controller *> window,
-	bool requirePrimary = false, bool requireForeground = false) {
+[[nodiscard]] WindowActivationForRegressionResult
+ActivateWindowForRegression(Core::Application &app,
+							not_null<Window::Controller *> window,
+							bool requirePrimary = false) {
 	const auto isActive = [&] {
-		return IsWindowActiveForRegression(app, window, requirePrimary,
-										   requireForeground);
+		return IsWindowActiveForRegression(app, window, requirePrimary);
 	};
 	auto retry = QTimer();
 	retry.setInterval(100);
@@ -3883,14 +3883,9 @@ enum class WindowActivationForRegressionResult {
 	});
 	retry.start();
 	window->activate();
-	if (!requireForeground && !Platform::IsApplicationActiveForRegression()) {
-		LogWindowActivationForRegression(app, window);
-		std::fprintf(stderr,
-					 "Settings deep link activation unavailable: "
-					 "AppKit app is inactive before focus verification.\n");
-		return WindowActivationForRegressionResult::AppInactive;
-	}
-	const auto activated = WaitForRegressionCondition(isActive);
+	const auto timeoutMs
+		= Platform::IsApplicationActiveForRegression() ? 5000 : 500;
+	const auto activated = WaitForRegressionCondition(isActive, timeoutMs);
 	retry.stop();
 	if (!activated) {
 		LogWindowActivationForRegression(app, window);
@@ -3898,7 +3893,9 @@ enum class WindowActivationForRegressionResult {
 			std::fprintf(
 				stderr,
 				"Settings deep link activation unavailable: "
-				"AppKit app became inactive before focus verification.\n");
+				"AppKit app remained inactive during focus verification. "
+				"Waited %d ms.\n",
+				timeoutMs);
 			return WindowActivationForRegressionResult::AppInactive;
 		}
 	}
@@ -12824,12 +12821,11 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 			return qint64(-1);
 		}
 		if ((index > 0) && result.chatSwitchWindowsActivated
-			&& !IsWindowActiveForRegression(Core::App(), window, false, true)) {
+			&& !IsWindowActiveForRegression(Core::App(), window, false)) {
 			const auto activation
-				= ActivateWindowForRegression(Core::App(), window, false, true);
+				= ActivateWindowForRegression(Core::App(), window, false);
 			if (activation != WindowActivationForRegressionResult::Activated
-				|| !IsWindowActiveForRegression(Core::App(), window, false,
-												true)) {
+				|| !IsWindowActiveForRegression(Core::App(), window, false)) {
 				result.chatSwitchWindowsActivated = false;
 				controller->showPeerHistory(history);
 				return qint64(-1);
@@ -12912,7 +12908,7 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 	settleHistoryUnfocused();
 	Platform::ActivateThisProcess(window->widget());
 	result.initialHistoryWindowActivated
-		= (ActivateWindowForRegression(Core::App(), window, false, true)
+		= (ActivateWindowForRegression(Core::App(), window, false)
 		   == WindowActivationForRegressionResult::Activated);
 	showPeerHistoryMeasured(emptyFirstHistory);
 	settleHistoryUnfocused();

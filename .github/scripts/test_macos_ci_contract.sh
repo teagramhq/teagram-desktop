@@ -2186,13 +2186,14 @@ awk '
   || contract_fail "$mac_platform must expose the current AppKit application activation state."
 grep -Fq 'WindowActivationForRegressionResult::AppInactive' "$native_harness" \
   || contract_fail "$native_harness must classify focus checks as unavailable when AppKit has no active application."
-grep -Fq 'AppKit app became inactive before focus verification.' "$native_harness" \
-  || contract_fail "$native_harness must use timeout AppKit state to decide whether focus could be verified."
+grep -Fq 'AppKit app remained inactive during focus verification.' "$native_harness" \
+  || contract_fail "$native_harness must report AppKit inactivity after the focus wait."
 awk '
   /ActivateWindowForRegression\(/ { activation_signature = 1 }
   activation_signature && /Core::Application &app/ { in_activation = 1 }
   in_activation && /if \(!activated\)/ { activation_timeout = NR }
   in_activation && /window->activate\(\)/ && !activation_call { activation_call = NR }
+  in_activation && /WaitForRegressionCondition\(isActive, timeoutMs\)/ { bounded_wait = NR }
   in_activation && /if \(!Platform::IsApplicationActiveForRegression\(\)\)/ {
     if (activation_timeout) {
       timeout_appkit_check = NR
@@ -2201,77 +2202,80 @@ awk '
     }
   }
   in_activation && /return WindowActivationForRegressionResult::AppInactive/ {
-    if (!activation_call || NR < activation_call) inactive_return_before_attempt = 1
+    if (!activation_timeout || NR < activation_timeout) inactive_return_before_timeout = 1
   }
   in_activation && /^}/ { exit }
   END {
     exit !(activation_call && activation_timeout > activation_call &&
+      bounded_wait > activation_call && bounded_wait < activation_timeout &&
       !pre_attempt_appkit_check && timeout_appkit_check > activation_timeout &&
-      !inactive_return_before_attempt)
+      !inactive_return_before_timeout)
   }
 ' "$native_harness" \
   || contract_fail "$native_harness must issue activation before classifying AppKit inactivity at timeout."
 awk '
-  /bool IsWindowActiveForRegression\(/ { in_check = 1 }
-  in_check && /bool requireForeground = false/ { foreground_option = 1 }
-  in_check && /!requireForeground/ { foreground_gated = 1 }
+  /IsWindowActiveForRegression\(/ { in_check = 1 }
   in_check && /Platform::IsApplicationActiveForRegression\(\)/ { requires_foreground = 1 }
   in_check && /widget->isActiveWindow\(\)/ { checks_active_widget = 1 }
   in_check && /widget->isVisible\(\)/ { checks_visible_widget = 1 }
   in_check && /Qt::WindowMinimized/ { checks_unminimized_widget = 1 }
+  in_check && /requireForeground/ { foreground_opt_out = 1 }
   in_check && /^}/ { exit }
   END {
-    exit !(foreground_option && foreground_gated && requires_foreground &&
+    exit !(requires_foreground && !foreground_opt_out &&
       checks_active_widget && checks_visible_widget && checks_unminimized_widget)
   }
 ' "$native_harness" \
-  || contract_fail "$native_harness must gate foreground, active, visible, unminimized checks behind an opt-in window activity predicate."
+  || contract_fail "$native_harness must require foreground, active, visible, unminimized window state for every caller."
 awk '
   /ActivateWindowForRegression\(/ { activation_signature = 1 }
   activation_signature && /Core::Application &app/ { in_activation = 1 }
   in_activation && /window->activate\(\)/ { activation_call = NR }
-  in_activation && /if \(!requireForeground && !Platform::IsApplicationActiveForRegression\(\)\)/ {
-    inactive_gate = NR
+  in_activation && /const auto timeoutMs/ { timeout_choice = NR }
+  in_activation && /Platform::IsApplicationActiveForRegression\(\)/ && !appkit_state {
+    appkit_state = NR
   }
-  in_activation && /return WindowActivationForRegressionResult::AppInactive/ {
-    if (inactive_gate && NR > inactive_gate && !inactive_return) {
-      inactive_return = NR
-    }
-  }
+  in_activation && /5000/ { active_timeout = NR }
+  in_activation && /: 500/ { inactive_timeout = NR }
+  in_activation && /WaitForRegressionCondition\(isActive, timeoutMs\)/ { bounded_wait = NR }
   in_activation && /^}/ { exit }
   END {
-    exit !(activation_call && inactive_gate > activation_call &&
-      inactive_return > inactive_gate)
+    exit !(activation_call && timeout_choice > activation_call &&
+      appkit_state >= timeout_choice && active_timeout >= appkit_state &&
+      inactive_timeout >= active_timeout && bounded_wait > inactive_timeout)
   }
 ' "$native_harness" \
-  || contract_fail "$native_harness must stop retrying focus checks when the app is inactive after a non-foreground activation attempt."
+  || contract_fail "$native_harness must use a bounded shorter activation wait when AppKit starts inactive."
 awk '
   /ActivateWindowForRegression\(/ { activation_signature = 1 }
   activation_signature && /Core::Application &app/ { in_activation = 1 }
   in_activation && /const auto isActive =/ { in_predicate = 1 }
   in_predicate && /IsWindowActiveForRegression\(/ { uses_window_predicate = 1 }
-  in_predicate && /app, window, requirePrimary,/ { saw_options_prefix = 1 }
-  in_predicate && /requireForeground\)/ { saw_foreground_option = 1 }
-  in_predicate && saw_options_prefix && saw_foreground_option { passes_options = 1 }
-  in_activation && /WaitForRegressionCondition\(isActive\)/ { waits_for_predicate = 1 }
+  in_predicate && /app, window, requirePrimary\)/ { passes_options = 1 }
+  in_activation && /WaitForRegressionCondition\(isActive, timeoutMs\)/ { waits_for_predicate = 1 }
   in_activation && /^}/ { exit }
   END { exit !(uses_window_predicate && passes_options && waits_for_predicate) }
 ' "$native_harness" \
   || contract_fail "$native_harness must wait on the shared window activity predicate before reporting activation."
 awk '
   /const auto showPeerHistoryMeasured =/ { in_measurement = 1 }
-  in_measurement && /IsWindowActiveForRegression\(Core::App\(\), window, false, true\)/ {
-    active_check = NR
+  in_measurement && /IsWindowActiveForRegression\(Core::App\(\), window, false\)/ {
+    if (active_check) {
+      restored_active_check = NR
+    } else {
+      active_check = NR
+    }
   }
   in_measurement && /ActivateWindowForRegression\(/ { activation = NR }
-  in_measurement && /Core::App\(\), window, false, true/ && activation {
+  in_measurement && /Core::App\(\), window, false/ && activation && !activation_options {
     activation_options = NR
   }
   in_measurement && /chatSwitchWindowsActivated/ { activation_result = NR }
   in_measurement && /timer.start\(\)/ { timer_start = NR; exit }
   END {
     exit !(active_check && activation > active_check &&
-      activation_options >= activation && activation_result > activation_options &&
+      activation_options >= activation && restored_active_check > activation_options &&
+      activation_result > restored_active_check &&
       timer_start > activation_result)
   }
 ' "$native_harness" \
