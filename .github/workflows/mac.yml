@@ -1501,19 +1501,30 @@ jobs:
         if: ${{ !cancelled() && steps.perf-fixture-start.outcome == 'success' && steps.perf-fixture-start.outputs.run_fixture == 'true' }}
         continue-on-error: true
         timeout-minutes: 6
-        uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5
-        with:
-          go-version: '1.27.4'
-          cache: false
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/go1.27.4.darwin-arm64.tar.gz"
+          go_root="$RUNNER_TEMP/go1.27.4"
+          curl --fail --location --retry 3 --silent --show-error \
+            --output "$archive" https://go.dev/dl/go1.27.4.darwin-arm64.tar.gz
+          printf '%s  %s\n' \
+            '91a44a2b8a716600ad94a4f143e156116620db8828086a6e3602291be9bd0bb4' "$archive" \
+            | shasum -a 256 --check
+          mkdir -p "$go_root"
+          tar -xzf "$archive" -C "$go_root" --strip-components=1
+          echo "$go_root/bin" >> "$GITHUB_PATH"
+          "$go_root/bin/go" version
 
       - name: Set up fixture migrations.
         id: perf-fixture-atlas
         if: ${{ !cancelled() && steps.perf-fixture-go.outcome == 'success' }}
         continue-on-error: true
         timeout-minutes: 6
-        uses: ariga/setup-atlas@2f3c785c89a15e1c0d07bcae3900fb5feb969eea
-        with:
-          version: v1.2.0
+        run: |
+          set -euo pipefail
+          curl -sSf --retry 3 https://atlasgo.sh \
+            | ATLAS_VERSION=v1.2.0 CI=true sh
+          atlas version
 
       - name: Restore and run performance fixtures (informational).
         id: perf-fixture

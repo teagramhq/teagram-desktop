@@ -678,7 +678,16 @@ reject_value "$mac_workflow" 'A warm MacOS PR run must have an exact Libraries c
 
 require_job_field "$mac_workflow" build-macos '.["timeout-minutes"]' '240'
 require_step_field "$mac_workflow" build-macos 'Set up fixture server Go.' '.timeout-minutes' '6'
+require_step_field "$mac_workflow" build-macos 'Set up fixture server Go.' '.uses' 'null'
+require_step_script "$mac_workflow" build-macos 'Set up fixture server Go.' \
+  'https://go.dev/dl/go1.27.4.darwin-arm64.tar.gz' \
+  '91a44a2b8a716600ad94a4f143e156116620db8828086a6e3602291be9bd0bb4' \
+  'shasum -a 256 --check' \
+  'GITHUB_PATH'
 require_step_field "$mac_workflow" build-macos 'Set up fixture migrations.' '.timeout-minutes' '6'
+require_step_field "$mac_workflow" build-macos 'Set up fixture migrations.' '.uses' 'null'
+require_step_script "$mac_workflow" build-macos 'Set up fixture migrations.' \
+  'https://atlasgo.sh' 'ATLAS_VERSION=v1.2.0 CI=true sh' 'atlas version'
 require_step_field "$mac_workflow" build-macos 'Restore and run performance fixtures (informational).' '.timeout-minutes' '20'
 for fixture_step in 'Start performance fixture timing.' 'Set up fixture server Go.' 'Set up fixture migrations.' 'Restore and run performance fixtures (informational).' 'Report interrupted fixture setup.'; do
   require_step_field "$mac_workflow" build-macos "$fixture_step" '.continue-on-error' 'true'
