@@ -8,6 +8,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #pragma once
 
 #include "mtproto/mtproto_proxy_data.h"
+#include "core/shutdown_loop.h"
 
 #include <QtWidgets/QApplication>
 #include <QtNetwork/QLocalServer>
@@ -32,6 +33,7 @@ extern const char kOptionDeadlockDetector[];
 class UpdateChecker;
 class Application;
 class UiStallWatchdog;
+class SingleInstanceLock;
 
 class Sandbox final
 	: public QApplication
@@ -100,6 +102,7 @@ private:
 	};
 
 	void closeApplication(); // will be done in aboutToQuit()
+	void finishCloseApplication();
 	void checkForQuit(); // will be done in exec()
 	void checkForEmptyLoopNestingLevel();
 	void registerEnterFromEventLoop();
@@ -124,6 +127,9 @@ private:
 	void socketConnected();
 	void socketError(QLocalSocket::LocalSocketError e);
 	void socketDisconnected();
+	void retrySingleInstance(bool immediate = false);
+	void showSingleInstanceError(QString diagnostic = QString(),
+								 QString refusedOperation = QString());
 	void socketWritten(qint64 bytes);
 	void socketReading();
 	void newInstanceConnected();
@@ -141,13 +147,21 @@ private:
 	bool _postponedCallsDeferred = false;
 
 	std::unique_ptr<Application> _application;
+	bool _closingApplication = false;
+	ShutdownLoop _shutdownLoop;
 
 	QString _localServerName, _localSocketReadData;
+	// Destroy the listener before releasing ownership of its profile.
+	std::unique_ptr<SingleInstanceLock> _singleInstanceLock;
 	QLocalServer _localServer;
 	QLocalSocket _localSocket;
 	LocalClients _localClients;
 	std::unique_ptr<QLockFile> _lockFile;
 	bool _secondInstance = false;
+	bool _retryingSingleInstance = false;
+	bool _singleInstanceRetryScheduled = false;
+	int _singleInstanceRetries = 0;
+	int _unexpectedSingleInstanceErrors = 0;
 	bool _started = false;
 	static bool QuitOnStartRequested;
 	static bool SystemShuttingDown;

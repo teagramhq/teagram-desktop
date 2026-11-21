@@ -2,6 +2,8 @@
 
 set -euo pipefail
 
+unset FONT_TEST_MODE
+
 if [[ $# -lt 1 || $# -gt 2 ]]; then
 	echo "usage: $0 <Teagram executable> [case]" >&2
 	exit 2
@@ -1605,7 +1607,7 @@ if ! work_value_within_budget \
 fi
 local chat_switch_evidence
 chat_switch_evidence="$(grep -E \
-	'^Cache chat switch latency regression: seeded_directories=125 seeded_files=169 reactions=73 hydrated_documents=292 chat_switches=73 attach_menu_bot_count=[0-9]+ minimized_restore=1 minimized_switch_ns=[0-9]+ minimized_restore_budget_ns=50000000 max_hydration_ns=[0-9]+ max_hydration_work_ns=[0-9]+ hydration_scheduler_preemption_proven=[01] max_switch_ns=[0-9]+ max_switch_work_ns=[0-9]+ max_recurring_switch_work_ns=[0-9]+ max_switch_estimated_work_ns=[0-9]+ max_recurring_switch_estimated_work_ns=[0-9]+ max_switch_index=[0-9]+ max_switch_peer_id=[0-9]+ switch_scheduler_preemption_proven=[01] attach_menu_first_hover_ns=[0-9]+ attach_menu_hover_ns=[0-9]+ attach_menu_update_hover_ns=[0-9]+ attach_menu_uncached_peer_ns=[0-9]+ attach_menu_first_hover_callback_cpu_ns=[0-9]+ attach_menu_update_hover_callback_cpu_ns=[0-9]+ attach_menu_uncached_peer_callback_cpu_ns=[0-9]+ attach_menu_first_hover_callback_wall_ns=[0-9]+ attach_menu_update_hover_callback_wall_ns=[0-9]+ attach_menu_uncached_peer_callback_wall_ns=[0-9]+ attach_menu_scheduler_preemption_proven=[01] attach_menu_cached=1 attach_menu_invalidated=1 attach_menu_build_deferred=1 attach_menu_uncached_ready=1 attach_menu_uncached_deferred_failures=0 attach_menu_uncached_missing_bot_failures=0 attach_menu_uncached_build_count_failures=0 attach_menu_cache_bound=1 pending_reveal_after_controls_geometry=1 chat_switch_compose_ui_reused=1 field_autocomplete_suggestions_ready=1 menu_commands_unfocused=[01] bot_commands_unfocused=1 history_chat_mode_invalidation_rebuilt=1 dialog_histories_ready=1 synthetic_histories_ready=1 max_stall_ns=[0-9]+ within_budgets=1\.$' \
+	'^Cache chat switch latency regression: seeded_directories=125 seeded_files=169 reactions=73 hydrated_documents=292 chat_switches=73 attach_menu_bot_count=[0-9]+ minimized_restore=1 initial_history_window_activated=1 all_chat_switch_windows_activated=1 minimized_switch_ns=[0-9]+ minimized_restore_budget_ns=50000000 max_hydration_ns=[0-9]+ max_hydration_work_ns=[0-9]+ hydration_scheduler_preemption_proven=[01] max_switch_ns=[0-9]+ max_switch_work_ns=[0-9]+ max_recurring_switch_work_ns=[0-9]+ max_switch_estimated_work_ns=[0-9]+ max_recurring_switch_estimated_work_ns=[0-9]+ max_switch_index=[0-9]+ max_switch_peer_id=[0-9]+ switch_scheduler_preemption_proven=[01] attach_menu_first_hover_ns=[0-9]+ attach_menu_hover_ns=[0-9]+ attach_menu_update_hover_ns=[0-9]+ attach_menu_uncached_peer_ns=[0-9]+ attach_menu_first_hover_callback_cpu_ns=[0-9]+ attach_menu_update_hover_callback_cpu_ns=[0-9]+ attach_menu_uncached_peer_callback_cpu_ns=[0-9]+ attach_menu_first_hover_callback_wall_ns=[0-9]+ attach_menu_update_hover_callback_wall_ns=[0-9]+ attach_menu_uncached_peer_callback_wall_ns=[0-9]+ attach_menu_scheduler_preemption_proven=[01] attach_menu_cached=1 attach_menu_invalidated=1 attach_menu_build_deferred=1 attach_menu_uncached_ready=1 attach_menu_uncached_deferred_failures=0 attach_menu_uncached_missing_bot_failures=0 attach_menu_uncached_build_count_failures=0 attach_menu_cache_bound=1 pending_reveal_after_controls_geometry=1 chat_switch_compose_ui_reused=1 field_autocomplete_suggestions_ready=1 menu_commands_unfocused=[01] bot_commands_unfocused=1 history_chat_mode_invalidation_rebuilt=1 dialog_histories_ready=1 synthetic_histories_ready=1 max_stall_ns=[0-9]+ within_budgets=1\.$' \
 	"$AUTH_LOG" || true)"
 if [[ -z "$chat_switch_evidence" ]]; then
 	cat "$AUTH_LOG" >&2
@@ -1760,14 +1762,30 @@ run_font_shutdown_regression() {
 	mkdir -p "$(dirname "$font_profile_log")"
 	: > "$font_profile_log"
 	local launch_status=0
+	local -a shutdown_command=("$APP" -noupdate -debug)
+	if [[ "$forced_failure" == probe-timeout-retry \
+		|| "$forced_failure" == shutdown-remove-pending \
+		|| "$forced_failure" == probe-release-before-arm ]]; then
+		shutdown_command=(python3 -c '
+import subprocess
+import sys
+
+try:
+    result = subprocess.run(sys.argv[1:], timeout=30)
+except subprocess.TimeoutExpired:
+    print("font shutdown worker drain timed out", file=sys.stderr)
+    sys.exit(124)
+sys.exit(result.returncode if result.returncode >= 0 else 128 - result.returncode)
+' "$APP" -noupdate -debug)
+	fi
 	if env -u TDESKTOP_FONT_STARTUP_REGRESSION \
 		HOME="$font_home" TMPDIR="$TEST_TMP_BASE" \
 		TDESKTOP_MAC_PROFILE_TEST_HOME="$font_home" \
 		TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST=1 \
 		TDESKTOP_FONT_STARTUP_QUIT_REGRESSION=1 \
 		TDESKTOP_FONT_STARTUP_TEST_FAILURE="$forced_failure" \
-		FONT_SHUTDOWN_TEST_MODE="${FONT_TEST_MODE:-pass}" \
-		"$APP" -noupdate -debug >"$shutdown_log" 2>&1; then
+		FONT_SHUTDOWN_TEST_MODE="${TDESKTOP_FONT_TEST_MODE:-pass}" \
+		"${shutdown_command[@]}" >"$shutdown_log" 2>&1; then
 		:
 	else
 		launch_status=$?
@@ -1788,24 +1806,98 @@ run_font_shutdown_regression() {
 			"$launch_status" >&2
 		return 1
 	fi
-	if ! grep -F -q 'Font shutdown regression: quit_observed=1 font_work=active enumeration_overlapped=1' \
-		"$shutdown_log"; then
+	local expected_shutdown_line
+	if [[ "$forced_failure" == shutdown-remove-pending ]]; then
+		expected_shutdown_line='Font shutdown regression: quit_observed=1 font_work=active remove_pending_at_quit=1 removal_completed=1'
+	elif [[ "$forced_failure" == probe-release-before-arm ]]; then
+		expected_shutdown_line='Font shutdown regression: quit_observed=0 font_work=active enumeration_overlapped=0'
+	else
+		expected_shutdown_line='Font shutdown regression: quit_observed=1 font_work=active enumeration_overlapped=1'
+	fi
+	if ! grep -F -q "$expected_shutdown_line" "$shutdown_log"; then
 		cat "$shutdown_log" >&2
-		echo "font shutdown regression did not quit during an active system font enumeration" >&2
+		if [[ "$forced_failure" == shutdown-remove-pending ]]; then
+			echo 'font shutdown did not complete the pending removal after quit' >&2
+		elif [[ "$forced_failure" == probe-release-before-arm ]]; then
+			echo 'font shutdown cancellation before probe arm did not finish before quit' >&2
+		else
+			echo "font shutdown regression did not quit during an active system font enumeration" >&2
+		fi
 		return 1
 	fi
-	local in_flight_position
-	in_flight_position="$(grep -F -n 'Font shutdown regression: quit_observed=1' \
-		"$shutdown_log" | tail -n 1 | cut -d: -f1 || true)"
+	if [[ "$forced_failure" == probe-release-before-arm ]] \
+		&& ! grep -F -q 'Font shutdown regression: probe_release_preserved=1' \
+			"$shutdown_log"; then
+		cat "$shutdown_log" >&2
+		echo 'font shutdown cancellation before probe arm was not observed' >&2
+		return 1
+	fi
+	if [[ -z "$forced_failure" || "$forced_failure" == probe-missed-first ]] \
+		&& ! grep -F -q 'Font shutdown regression: qt_font_database_hold=1' \
+			"$shutdown_log"; then
+		cat "$shutdown_log" >&2
+		echo 'font shutdown did not hold Qt font-database population' >&2
+		return 1
+	fi
+	if [[ -z "$forced_failure" || "$forced_failure" == probe-missed-first ]] \
+		&& ! grep -F -q 'Font shutdown regression: probe_interposer=active' \
+			"$shutdown_log"; then
+		cat "$shutdown_log" >&2
+		echo 'font shutdown fixture did not observe the CoreText dylib interposer' >&2
+		return 1
+	fi
+	if [[ -z "$forced_failure" || "$forced_failure" == probe-missed-first ]]; then
+		local population_hold_position
+		population_hold_position="$(grep -F -n 'Font shutdown regression: qt_font_database_hold=1' \
+			"$shutdown_log" | head -n 1 | cut -d: -f1 || true)"
+		local population_quit_position
+		population_quit_position="$(grep -F -n 'Font shutdown regression: quit_observed=1' \
+			"$shutdown_log" | tail -n 1 | cut -d: -f1 || true)"
+		if [[ ! "$population_hold_position" =~ ^[0-9]+$ ]] \
+			|| [[ ! "$population_quit_position" =~ ^[0-9]+$ ]] \
+			|| (( population_hold_position >= population_quit_position )); then
+			cat "$shutdown_log" >&2
+			echo 'font shutdown did not quit after entering Qt font-database population' >&2
+			return 1
+		fi
+	fi
 	local teardown_position
 	teardown_position="$(grep -F -n 'Font shutdown regression: worker_joined=1 application_created=0 teardown=complete' \
 		"$shutdown_log" | tail -n 1 | cut -d: -f1 || true)"
-	if [[ ! "$in_flight_position" =~ ^[0-9]+$ ]] \
-		|| [[ ! "$teardown_position" =~ ^[0-9]+$ ]] \
-		|| (( in_flight_position >= teardown_position )); then
-		cat "$shutdown_log" >&2
-		echo "font shutdown did not join the worker and tear down without starting the application" >&2
-		return 1
+	if [[ "$forced_failure" == probe-release-before-arm ]]; then
+		local release_position
+		release_position="$(grep -F -n 'Font shutdown regression: probe_release_preserved=1' \
+			"$shutdown_log" | head -n 1 | cut -d: -f1 || true)"
+		if [[ ! "$release_position" =~ ^[0-9]+$ ]] \
+			|| [[ ! "$teardown_position" =~ ^[0-9]+$ ]] \
+			|| (( release_position >= teardown_position )); then
+			cat "$shutdown_log" >&2
+			echo 'font shutdown cancellation before probe arm was not followed by worker join' >&2
+			return 1
+		fi
+	else
+		local in_flight_position
+		in_flight_position="$(grep -F -n 'Font shutdown regression: quit_observed=1' \
+			"$shutdown_log" | tail -n 1 | cut -d: -f1 || true)"
+		if [[ "$forced_failure" == probe-missed-first ]]; then
+			local retry_position
+			retry_position="$(grep -F -n 'Font shutdown regression: enumeration_retry=1' \
+				"$shutdown_log" | head -n 1 | cut -d: -f1 || true)"
+			if [[ ! "$retry_position" =~ ^[0-9]+$ ]] \
+				|| [[ ! "$in_flight_position" =~ ^[0-9]+$ ]] \
+				|| (( retry_position >= in_flight_position )); then
+				cat "$shutdown_log" >&2
+				echo 'font shutdown enumeration retry was not observed' >&2
+				return 1
+			fi
+		fi
+		if [[ ! "$in_flight_position" =~ ^[0-9]+$ ]] \
+			|| [[ ! "$teardown_position" =~ ^[0-9]+$ ]] \
+			|| (( in_flight_position >= teardown_position )); then
+			cat "$shutdown_log" >&2
+			echo "font shutdown did not join the worker and tear down without starting the application" >&2
+			return 1
+		fi
 	fi
 	printf 'Font shutdown teardown=PASS font_work_active=1 application_created=0\n'
 }
@@ -1909,6 +2001,13 @@ run_font_startup_regression() {
 			symbolicate_font_startup_crash "$font_home"
 			printf 'font startup regression launch failed: sample=%s exit_status=%s\n' \
 				"$sample" "$launch_status" >&2
+			return 1
+		fi
+		if grep -Fq 'Mac protected path refusal: operation=read class=invalid callsite=emojiCacheFolder' \
+			"$sample_log"; then
+			cat "$sample_log" >&2
+			printf 'emoji cache accessed an invalid profile during shutdown: %s\n' \
+				"$sample" >&2
 			return 1
 		fi
 		local splash_timing
@@ -2097,7 +2196,27 @@ run_font_startup_regression() {
 		"$exposure_timeout_wall_ns"
 	printf 'StartFonts startup regression: cold_wall_ns=%s warm_wall_ns=%s fallback=PASS font_stall_gate=PASS\n' \
 		"$cold_wall_ns" "$warm_wall_ns"
-	run_font_shutdown_regression
+	if ! run_font_shutdown_regression; then
+		return 1
+	fi
+	printf 'Font shutdown during active enumeration=PASS\n'
+	if ! run_font_shutdown_regression shutdown-remove-pending; then
+		return 1
+	fi
+	printf 'Font shutdown removal pending across quit=PASS\n'
+	local retry_log="$TEST_HOME/font-probe-missed-first.log"
+	if ! run_font_shutdown_regression probe-missed-first >"$retry_log" 2>&1; then
+		cat "$retry_log" >&2
+		return 1
+	fi
+	printf 'Font shutdown retry after missed enumeration=PASS\n'
+	local release_before_arm_log="$TEST_HOME/font-probe-release-before-arm.log"
+	if ! run_font_shutdown_regression probe-release-before-arm \
+		>"$release_before_arm_log" 2>&1; then
+		cat "$release_before_arm_log" >&2
+		return 1
+	fi
+	printf 'Font shutdown cancellation before probe arm=PASS\n'
 	local probe_failure_log="$TEST_HOME/font-probe-install-failure.log"
 	if run_font_shutdown_regression signal-install >"$probe_failure_log" 2>&1; then
 		echo 'font shutdown regression accepted a failed probe installation' >&2
@@ -2126,7 +2245,66 @@ run_font_startup_regression() {
 		return 1
 	fi
 	printf 'Font shutdown probe timeout diagnostics=PASS\n'
+	local retry_timeout_log="$TEST_HOME/font-probe-retry-timeout.log"
+	if run_font_shutdown_regression probe-timeout-retry >"$retry_timeout_log" 2>&1; then
+		echo 'font shutdown regression accepted a retry timeout' >&2
+		return 1
+	fi
+	if ! awk '
+		/retry_checkpoint=1/ && stage == 0 { stage = 1; next }
+		/retry_timeout=1/ && stage == 1 { stage = 2; next }
+		/retry_gui_event=1/ && stage == 2 { stage = 3; next }
+		/retry_worker_done=1/ && stage == 3 { stage = 4; next }
+		/worker_joined=1 application_created=0 teardown=complete/ && stage == 4 { stage = 5 }
+		END { exit stage != 5 }
+	' "$retry_timeout_log" \
+		|| ! grep -F -q 'font shutdown regression did not quit during an active system font enumeration' \
+			"$retry_timeout_log"; then
+		cat "$retry_timeout_log" >&2
+		echo 'font shutdown retry timeout ordering was not observed' >&2
+		return 1
+	fi
+	printf 'Font shutdown retry timeout ordering=PASS\n'
 	run_font_warmup_thread_failure_regression
+	local emoji_shutdown_log="$TEST_HOME/emoji-cache-shutdown.log"
+	if ! env -u TDESKTOP_FONT_STARTUP_TEST_FAILURE \
+		HOME="$font_home" TMPDIR="$TEST_TMP_BASE" \
+		TDESKTOP_MAC_PROFILE_TEST_HOME="$font_home" \
+		TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST=1 \
+		TDESKTOP_FONT_STARTUP_REGRESSION=1 \
+		TDESKTOP_EMOJI_CACHE_SHUTDOWN_REGRESSION=1 \
+		python3 -c '
+import subprocess
+import sys
+try:
+    result = subprocess.run(sys.argv[1:], timeout=30, check=False)
+except subprocess.TimeoutExpired:
+    print("emoji cache shutdown process hung", file=sys.stderr)
+    sys.exit(124)
+sys.exit(result.returncode if result.returncode >= 0 else 128 - result.returncode)
+' "$APP" -noupdate -debug >"$emoji_shutdown_log" 2>&1; then
+		cat "$emoji_shutdown_log" >&2
+		echo 'emoji cache shutdown launch failed' >&2
+		return 1
+	fi
+	if ! grep -Fq 'Emoji cache shutdown regression: worker_blocked=1' "$emoji_shutdown_log" \
+		|| ! grep -Fq 'Emoji cache shutdown regression: repeat_quit=1' "$emoji_shutdown_log" \
+		|| ! grep -Fq 'Emoji cache shutdown regression: gui_responsive=1 integration_alive=1 worker_returned=1 wait_timed_out=0' "$emoji_shutdown_log"; then
+		cat "$emoji_shutdown_log" >&2
+		echo 'emoji cache shutdown ordering was not observed' >&2
+		return 1
+	fi
+	printf 'Emoji cache shutdown lifetime and GUI responsiveness=PASS\n'
+	python3 "$REPO_ROOT/.github/scripts/test_macos_shutdown_relaunch.py" \
+		"$APP" "$TEST_HOME/emoji-relaunch" "$TEST_TMP_BASE" normal
+	python3 "$REPO_ROOT/.github/scripts/test_macos_shutdown_relaunch.py" \
+		"$APP" "$TEST_HOME/emoji-relaunch-crash" "$TEST_TMP_BASE" crash
+	python3 "$REPO_ROOT/.github/scripts/test_macos_shutdown_relaunch.py" \
+		"$APP" "$TEST_HOME/emoji-relaunch-competing" "$TEST_TMP_BASE" competing
+	python3 "$REPO_ROOT/.github/scripts/test_macos_shutdown_relaunch.py" \
+		"$APP" "$TEST_HOME/emoji-relaunch-recheck" "$TEST_TMP_BASE" recheck
+	python3 "$REPO_ROOT/.github/scripts/test_macos_socket_error.py" \
+		"$APP" "$TEST_HOME/socket-error" "$TEST_TMP_BASE"
 }
 
 run_start_in_tray_regression() {
@@ -2134,6 +2312,7 @@ run_start_in_tray_regression() {
 	local case_log="$case_home/start.log"
 	local quit_log="$case_home/quit.log"
 	local expected='Mac start-in-tray regression: startup=complete start_intray=1 window_and_tray=1 hidden=1 splash_visible=1 splash_destroyed=1'
+	local delayed_expected='Mac start-in-tray regression: delayed_activation_check hidden=1'
 	local ready=false
 	local exit_status
 	mkdir -p "$case_home"
@@ -2164,6 +2343,11 @@ run_start_in_tray_regression() {
 	if ! process_alive "$FIRST_PID"; then
 		cat "$case_log" >&2
 		echo 'start-in-tray process exited after startup' >&2
+		return 1
+	fi
+	if ! grep -F -q "$delayed_expected" "$case_log"; then
+		cat "$case_log" >&2
+		echo 'start-in-tray window reopened after the 500 ms visibility checkpoint' >&2
 		return 1
 	fi
 	if ! env HOME="$case_home" TMPDIR="$TEST_TMP_BASE" \

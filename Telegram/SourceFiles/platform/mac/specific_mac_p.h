@@ -15,6 +15,7 @@ void objc_outputDebugString(const QString &str);
 
 void objc_start();
 void objc_ignoreApplicationActivationRightNow();
+void objc_ignoreNextApplicationActivation();
 void objc_finish();
 
 void objc_activateProgram(WId winId);
