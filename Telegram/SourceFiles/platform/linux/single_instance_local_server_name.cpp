@@ -9,7 +9,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "platform/linux/desktop_identity.h"
 #include "platform/linux/local_socket_path.h"
 
-#include "base/logs.h"
+#include "logs.h"
 
 #include <QtCore/QCoreApplication>
 
