@@ -15813,7 +15813,7 @@ void RunAuthenticatedCacheSymlinkCases(
 				"startup_stall_stack_captured=%d "
 				"startup_stall_evidence_matched=%d "
 				"startup_stall_scheduler_preemption_proven=%d "
-				"under_100ms=%d "
+				"startup_within_budget=%d "
 				"first_access_ns=%lld "
 				"first_access_main_thread_cpu_ns=%lld "
 				"first_access_blocked_estimate_ns=%lld "
