@@ -86,6 +86,20 @@ void AppendBigEndian(QByteArray &target, quint16 value) {
 	target.append(char(value));
 }
 
+class RedirectReplyStub final : public QNetworkReply {
+  public:
+	explicit RedirectReplyStub(const QUrl &target) {
+		setAttribute(QNetworkRequest::RedirectionTargetAttribute, target);
+		setAttribute(QNetworkRequest::HttpStatusCodeAttribute, 302);
+		setFinished(true);
+	}
+
+	void abort() override {}
+
+  protected:
+	qint64 readData(char *, qint64) override { return -1; }
+};
+
 [[nodiscard]] QByteArray LocalResponse(const QByteArray &nonce) {
 	const auto der = TestKey().getSubjectPublicKeyInfo();
 	auto response = QByteArray("telegramd-key-r1", 16) + nonce;
@@ -1604,10 +1618,11 @@ TEST_CASE(PublicDiscoveryRefreshRejectsRedirectsOversizeAndEncodedResponses) {
 	using Intro::details::ServerEndpointRefreshFailureName;
 	using Intro::details::ServerEndpointRefreshFailureStatus;
 	using Intro::details::ServerEndpointRefreshHttpResponseFailure;
+	using Intro::details::ServerEndpointRefreshRedirectFailure;
 	const auto json = u"application/json"_q;
 	const auto none = QByteArray();
-	const auto redirect
-		= ServerEndpointRefreshHttpResponseFailure(true, 302, json, none, 0, 0);
+	const auto reply = RedirectReplyStub(QUrl(u"https://redirect.example"_q));
+	const auto redirect = ServerEndpointRefreshRedirectFailure(reply);
 	CHECK(redirect == ServerEndpointRefreshFailureStatus::Redirect);
 	if (redirect) {
 		CHECK_EQ(

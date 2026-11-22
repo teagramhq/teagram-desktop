@@ -1100,7 +1100,7 @@ TEST_CASE(EndpointRefreshRetryUsesBoundedBackoff) {
 
 TEST_CASE(EndpointRefreshKeepsRequestsPausedOnConnectedStateUntilProof) {
 	const auto original = MakeEndpointRefreshPin("100.124.236.66");
-	auto candidate = MakeEndpointRefreshPin("100.112.103.90");
+	const auto candidate = MakeEndpointRefreshPin("100.112.103.90");
 	auto transaction = ServerEndpointRefreshTransaction();
 	CHECK(transaction.begin(
 		{
@@ -1112,18 +1112,23 @@ TEST_CASE(EndpointRefreshKeepsRequestsPausedOnConnectedStateUntilProof) {
 		original));
 	CHECK(transaction.setCandidate(candidate)
 		  == CustomServerEndpointRefreshIdentityFailure::None);
-	auto requestsPaused = true;
-	if (!ShouldKeepServerEndpointRefreshPausedOnConnected(
-			transaction.hasCandidate())) {
-		requestsPaused = false;
-	}
-	CHECK(requestsPaused);
-	CHECK(!ShouldKeepServerEndpointRefreshPausedOnConnected(false));
-
+	auto gate = ServerEnrollmentGate();
+	CHECK(gate.start());
+	CHECK(gate.pause());
+	auto resumedBeforeProof = false;
+	HandleServerEndpointRefreshConnectedState(
+		true, ConnectedState, ConnectedState, transaction.hasCandidate(),
+		[&] { resumedBeforeProof = gate.resume().resumed; });
+	CHECK(!resumedBeforeProof);
+	CHECK(!gate.networkAllowed());
+	CHECK(!transaction.commit(
+		false, [] { return true; }, [] { return true; },
+		[&] { gate.resume(); }));
+	CHECK(!gate.networkAllowed());
 	CHECK(transaction.commit(
 		true, [] { return true; }, [] { return true; },
-		[&] { requestsPaused = false; }));
-	CHECK(!requestsPaused);
+		[&] { gate.resume(); }));
+	CHECK(gate.networkAllowed());
 }
 
 TEST_CASE(EndpointVerifierRefusesConfigThatDoesNotConfirmPinnedDc) {

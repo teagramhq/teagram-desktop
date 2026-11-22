@@ -88,6 +88,9 @@ ServerEndpointRefreshNetworkFailureStatus(QNetworkReply::NetworkError error,
 										  int httpStatusCode);
 
 [[nodiscard]] std::optional<ServerEndpointRefreshFailureStatus>
+ServerEndpointRefreshRedirectFailure(const QNetworkReply &reply);
+
+[[nodiscard]] std::optional<ServerEndpointRefreshFailureStatus>
 ServerEndpointRefreshHttpResponseFailure(bool redirected, int httpStatusCode,
 										 const QString &contentType,
 										 const QByteArray &contentEncoding,

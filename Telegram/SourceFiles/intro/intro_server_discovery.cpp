@@ -870,6 +870,16 @@ ServerEndpointRefreshNetworkFailureStatus(QNetworkReply::NetworkError error,
 }
 
 std::optional<ServerEndpointRefreshFailureStatus>
+ServerEndpointRefreshRedirectFailure(const QNetworkReply &reply) {
+	const auto target
+		= reply.attribute(QNetworkRequest::RedirectionTargetAttribute).toUrl();
+	if (target.isEmpty()) {
+		return std::nullopt;
+	}
+	return ServerEndpointRefreshFailureStatus::Redirect;
+}
+
+std::optional<ServerEndpointRefreshFailureStatus>
 ServerEndpointRefreshHttpResponseFailure(bool redirected, int httpStatusCode,
 										 const QString &contentType,
 										 const QByteArray &contentEncoding,
@@ -1082,10 +1092,14 @@ void ServerEndpointRefreshDiscovery::startLocalDiscovery(
 
 void ServerEndpointRefreshDiscovery::publicDiscoveryFinished() {
 	const auto reply = std::exchange(_reply, nullptr);
+	const auto status
+		= reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+	if (const auto failure = ServerEndpointRefreshRedirectFailure(*reply)) {
+		reply->deleteLater();
+		fail(*failure, status);
+		return;
+	}
 	if (reply->error() != QNetworkReply::NoError) {
-		const auto status
-			= reply->attribute(QNetworkRequest::HttpStatusCodeAttribute)
-				  .toInt();
 		auto failureStatus
 			= ServerEndpointRefreshNetworkFailureStatus(reply->error(), status);
 		if (status
@@ -1110,8 +1124,6 @@ void ServerEndpointRefreshDiscovery::publicDiscoveryFinished() {
 			return;
 		}
 	}
-	const auto status
-		= reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
 	const auto contentType = reply->header(QNetworkRequest::ContentTypeHeader)
 								 .toString()
 								 .section(QChar::fromLatin1(';'), 0, 0)

@@ -901,14 +901,15 @@ bool Account::startMtp(
 		= _mtp->lifetime().make_state<Api::details::UpdateConnectionState>(
 			_mtp->dcstate(_mtp->mainDcId()) == MTP::ConnectedState);
 	_mtp->setStateChangedHandler([=](MTP::ShiftedDcId dc, int32 state) {
-		if (dc == _mtp->mainDcId()) {
-			if (state == MTP::ConnectedState
-				&& !MTP::ShouldKeepServerEndpointRefreshPausedOnConnected(
-					_endpointRefresh.hasCandidate())) {
+		const auto mainDc = (dc == _mtp->mainDcId());
+		MTP::HandleServerEndpointRefreshConnectedState(
+			mainDc, state, MTP::ConnectedState, _endpointRefresh.hasCandidate(),
+			[=] {
 				_serverEndpointRefreshFailures = 0;
 				_serverEndpointRefreshIdentityFailure = false;
 				cancelServerEndpointRefresh();
-			}
+			});
+		if (mainDc) {
 			Core::App().settings().proxy().connectionTypeChangesNotify();
 			Core::App().checkProxyRotation(this, state);
 			if (mainDcConnection->update(state == MTP::ConnectedState)) {
