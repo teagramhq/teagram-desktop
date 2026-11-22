@@ -1117,17 +1117,21 @@ TEST_CASE(EndpointRefreshKeepsRequestsPausedOnConnectedStateUntilProof) {
 	CHECK(gate.pause());
 	auto resumedBeforeProof = false;
 	HandleServerEndpointRefreshConnectedState(
-		true, ConnectedState, ConnectedState, transaction.hasCandidate(),
+		true, MTP::ConnectedState, MTP::ConnectedState,
+		transaction.hasCandidate(),
 		[&] { resumedBeforeProof = gate.resume().resumed; });
 	CHECK(!resumedBeforeProof);
 	CHECK(!gate.networkAllowed());
+	auto resumedAfterProof = false;
 	CHECK(!transaction.commit(
 		false, [] { return true; }, [] { return true; },
-		[&] { gate.resume(); }));
+		[&] { resumedAfterProof = gate.resume().resumed; }));
+	CHECK(!resumedAfterProof);
 	CHECK(!gate.networkAllowed());
 	CHECK(transaction.commit(
 		true, [] { return true; }, [] { return true; },
-		[&] { gate.resume(); }));
+		[&] { resumedAfterProof = gate.resume().resumed; }));
+	CHECK(resumedAfterProof);
 	CHECK(gate.networkAllowed());
 }
 
