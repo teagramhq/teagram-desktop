@@ -13685,6 +13685,9 @@ struct CacheReactionProbe final {
 	user->setBarSettings(PeerBarSettings());
 	auto parent = Ui::RpWidget(controller->widget().get());
 	auto status = HistoryView::ContactStatus(controller, &parent, user, false);
+	parent.resize(500, 300);
+	parent.show();
+	Ui::SendPendingMoveResizeEvents(&parent);
 	const auto botPhotoLabel = [](QWidget &root) -> Ui::FlatLabel * {
 		for (const auto child : root.findChildren<QWidget *>()) {
 			if (const auto label = dynamic_cast<Ui::FlatLabel *>(child)) {
@@ -13731,9 +13734,18 @@ struct CacheReactionProbe final {
 		}
 		return static_cast<Ui::RippleButton *>(nullptr);
 	}();
+	while (controller->window().isLayerShown()) {
+		controller->window().hideLayer(anim::type::instant);
+	}
 	const auto noLayerBeforeRequest = !controller->window().isLayerShown();
 	auto requestInfoDialogOpened = false;
-	if (requestButton && noLayerBeforeRequest) {
+	const auto requestButtonSized = WaitForRegressionCondition(
+		[&] {
+			return requestButton && (requestButton->width() > 0)
+				   && (requestButton->height() > 0);
+		},
+		1000);
+	if (requestButtonSized && noLayerBeforeRequest) {
 		Test::Click(requestButton);
 		requestInfoDialogOpened = WaitForRegressionCondition(
 			[&] { return controller->window().isLayerShown(); }, 1000);
@@ -13773,9 +13785,13 @@ struct CacheReactionProbe final {
 		|| !botPhotoDeferred || !botPhotoReady) {
 		std::fprintf(
 			stderr,
-			"Contact status fixture: group=%d request_info=%d channel=%d "
+			"Contact status fixture: group=%d request_info=%d request_button="
+			"%d request_size=%dx%d no_layer_before=%d channel=%d "
 			"controls_deferred=%d photo_deferred=%d photo_ready=%d.\n",
-			groupReady, requestInfoDialogOpened, channelReady, controlsDeferred,
+			groupReady, requestInfoDialogOpened, bool(requestButton),
+			requestButton ? requestButton->width() : -1,
+			requestButton ? requestButton->height() : -1,
+			noLayerBeforeRequest, channelReady, controlsDeferred,
 			botPhotoDeferred, botPhotoReady);
 	}
 	return groupReady && requestInfoDialogOpened && channelReady
