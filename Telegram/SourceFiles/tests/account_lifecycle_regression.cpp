@@ -11454,8 +11454,7 @@ AssessMainThreadWorkBudget(const MainThreadWorkEstimate &estimate,
 			   || assessment.schedulerEvidenceAvailable);
 }
 
-constexpr auto kMaxUntracedRunnerNoiseMainThreadCpuNanoseconds
-	= 5'000'000;
+constexpr auto kMaxUntracedRunnerNoiseMainThreadCpuNanoseconds = 5'000'000;
 
 [[nodiscard]] bool MainThreadWorkBudgetIsUntracedWallOverrun(
 	const MainThreadWorkBudgetAssessment &assessment, qint64 wallNanoseconds,
@@ -11695,8 +11694,8 @@ void AccumulateMainThreadWorkEstimate(qint64 &aggregateNanoseconds,
 	const auto missingTraceInitialSelectionAssessment
 		= AssessMainThreadWorkBudget(missingTraceInitialSelection, 40'000'000,
 									 kMaxChatSwitchNanoseconds);
-	const auto missingTraceLowCpuInitialSelection = EstimateMainThreadWork(
-		1'138'000, 135'000'000, u"none"_q, {});
+	const auto missingTraceLowCpuInitialSelection
+		= EstimateMainThreadWork(1'138'000, 135'000'000, u"none"_q, {});
 	const auto missingTraceLowCpuInitialSelectionAssessment
 		= AssessMainThreadWorkBudget(missingTraceLowCpuInitialSelection,
 									 1'138'000, kMaxChatSwitchNanoseconds);
@@ -11711,10 +11710,12 @@ void AccumulateMainThreadWorkEstimate(qint64 &aggregateNanoseconds,
 			missingTraceLowCpuInitialSelectionAssessment, 135'000'000,
 			kMaxChatSwitchNanoseconds);
 	auto twoUntracedWallOverruns = MainThreadWorkBudgetRun();
-	twoUntracedWallOverruns.Observe(missingTraceLowCpuInitialSelectionAssessment,
-									135'000'000, kMaxChatSwitchNanoseconds);
-	twoUntracedWallOverruns.Observe(missingTraceLowCpuInitialSelectionAssessment,
-									135'000'000, kMaxChatSwitchNanoseconds);
+	twoUntracedWallOverruns.Observe(
+		missingTraceLowCpuInitialSelectionAssessment, 135'000'000,
+		kMaxChatSwitchNanoseconds);
+	twoUntracedWallOverruns.Observe(
+		missingTraceLowCpuInitialSelectionAssessment, 135'000'000,
+		kMaxChatSwitchNanoseconds);
 	auto tracedBlockedRun = MainThreadWorkBudgetRun();
 	tracedBlockedRun.Observe(blockedSelectionAssessment, 60'000'000,
 							 kMaxChatSwitchNanoseconds);
