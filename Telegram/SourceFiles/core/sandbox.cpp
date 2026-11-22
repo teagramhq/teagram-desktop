@@ -63,6 +63,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #endif // Q_OS_UNIX
 #ifdef Q_OS_LINUX
 #include <unistd.h>
+#include <ksandbox.h>
 #endif // Q_OS_LINUX
 #if !defined Q_OS_WIN && !defined Q_OS_MAC
 #include <QtWidgets/QMessageBox>
@@ -483,7 +484,8 @@ int Sandbox::start() {
 		auto lockIdentity = _localServerName;
 #ifdef Q_OS_LINUX
 		// The endpoint can differ if session runtime creation races startup.
-		lockIdentity = QFileInfo(_localServerName).fileName();
+		lockIdentity = Platform::Linux::SingleInstanceProfileLockIdentity(
+			_localServerName, KSandbox::isSnap());
 #endif // Q_OS_LINUX
 		const auto encoded = QFile::encodeName(lockIdentity);
 		char hash[33] = {0};
@@ -1545,7 +1547,7 @@ void Sandbox::socketError(QLocalSocket::LocalSocketError e) {
 			const auto selectedPath
 				= Platform::Linux::SingleInstanceServerPathFromLockContents(
 					_singleInstanceLock->contents(), _localServerName,
-					geteuid());
+					geteuid(), KSandbox::isSnap());
 			if (!selectedPath.isEmpty()) {
 				_localServerName = selectedPath;
 			}

@@ -68,6 +68,36 @@ TEST_CASE(LinuxSingleInstanceSocketUsesPrivateRuntimeDirectory) {
 	CHECK_EQ(path, runtimeDirectory.filePath(u"teagram-instance"_q));
 }
 
+#ifdef Q_OS_LINUX
+TEST_CASE(LinuxSingleInstanceSnapProfileLocksKeepRuntimeNamespace) {
+	auto firstRuntime = QTemporaryDir();
+	auto secondRuntime = QTemporaryDir();
+	CHECK(firstRuntime.isValid());
+	CHECK(secondRuntime.isValid());
+	if (!firstRuntime.isValid() || !secondRuntime.isValid()) {
+		return;
+	}
+	CHECK(SetPrivatePermissions(firstRuntime.path()));
+	CHECK(SetPrivatePermissions(secondRuntime.path()));
+	const auto serverName = u"same-profile-hash"_q;
+	const auto firstPath = Platform::Linux::SingleInstanceSocketPathInDirectory(
+		firstRuntime.path(), serverName, geteuid());
+	const auto secondPath
+		= Platform::Linux::SingleInstanceSocketPathInDirectory(
+			secondRuntime.path(), serverName, geteuid());
+	CHECK_EQ(QFileInfo(firstPath).fileName(), QFileInfo(secondPath).fileName());
+	CHECK(Platform::Linux::SingleInstanceProfileLockIdentity(firstPath, true)
+		  != Platform::Linux::SingleInstanceProfileLockIdentity(secondPath,
+																true));
+	CHECK_EQ(
+		Platform::Linux::SingleInstanceProfileLockIdentity(firstPath, false),
+		Platform::Linux::SingleInstanceProfileLockIdentity(secondPath, false));
+	CHECK(Platform::Linux::SingleInstanceServerPathFromLockContents(
+			  firstPath, secondPath, geteuid(), true)
+			  .isEmpty());
+}
+#endif // Q_OS_LINUX
+
 TEST_CASE(LinuxSingleInstanceSocketPrefersStableRuntimeDirectory) {
 	auto runtimeDirectory = QTemporaryDir();
 	CHECK(runtimeDirectory.isValid());

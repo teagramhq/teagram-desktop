@@ -274,11 +274,19 @@ SingleInstanceSocketPathFailureMessage(SingleInstanceSocketPathFailure failure,
 	return socketPath;
 }
 
+[[nodiscard]] inline QString
+SingleInstanceProfileLockIdentity(const QString &serverPath, bool snap) {
+	const auto info = QFileInfo(serverPath);
+	return snap ? (info.absolutePath() + '/' + info.fileName())
+				: info.fileName();
+}
+
 [[nodiscard]] inline QString SingleInstanceServerPathFromLockContents(
-	const QString &contents, const QString &candidatePath, uid_t effectiveUid) {
+	const QString &contents, const QString &candidatePath, uid_t effectiveUid,
+	bool snap = false) {
 	if (!QDir::isAbsolutePath(contents)
-		|| (QFileInfo(contents).fileName()
-			!= QFileInfo(candidatePath).fileName())) {
+		|| (SingleInstanceProfileLockIdentity(contents, snap)
+			!= SingleInstanceProfileLockIdentity(candidatePath, snap))) {
 		return QString();
 	}
 	const auto validatedPath = SingleInstanceSocketPathInDirectory(
