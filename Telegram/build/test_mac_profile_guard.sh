@@ -1641,11 +1641,19 @@ for cache in cache media_cache; do
 		exit 1
 	fi
 done
-if ! grep -E -q \
-	'^First messages\.getDialogs handler latency regression: seeded_directories=125 seeded_files=169 requests=1 parsed=1 chats=2 dialogs=1 messages=73 documents=73 cache_walks=2 max_handler_ns=[0-9]+ main_thread_cpu_ns=-?[0-9]+ blocked_estimate_ns=-?[0-9]+ estimated_work_ns=[0-9]+ trace=([[:alpha:]?]+|none) within_budget=[01] cpu_only_within_budget=[01] runner_noise_eligible=[01] under_50ms=1\.$' \
-	"$AUTH_LOG"; then
+local first_dialogs_handler_evidence
+first_dialogs_handler_evidence="$(grep -E \
+	'^First messages\.getDialogs handler latency regression: seeded_directories=125 seeded_files=169 requests=1 parsed=1 chats=2 dialogs=1 messages=73 documents=73 cache_walks=2 max_handler_ns=[0-9]+ main_thread_cpu_ns=-?[0-9]+ blocked_estimate_ns=-?[0-9]+ estimated_work_ns=[0-9]+ trace=([[:alpha:]?]+|none) within_budget=[01] cpu_only_within_budget=[01] runner_noise_eligible=[01] under_50ms=[01]\.$' \
+	"$AUTH_LOG" || true)"
+if [[ -z "$first_dialogs_handler_evidence" ]]; then
 	cat "$AUTH_LOG" >&2
-	echo "first messages.getDialogs handler evidence missing or over 50 ms." >&2
+	echo "first messages.getDialogs handler evidence missing." >&2
+	exit 1
+fi
+if [[ "$first_dialogs_handler_evidence" != *' within_budget=1 '* \
+	&& "$first_dialogs_handler_evidence" != *' runner_noise_eligible=1 '* ]]; then
+	cat "$AUTH_LOG" >&2
+	echo "first messages.getDialogs handler timing verdict failed." >&2
 	exit 1
 fi
 local initial_history_selection

@@ -1399,6 +1399,7 @@ sed '/^First messages.getDialogs handler latency regression:/ {
   s/trace=R/trace=none/
   s/within_budget=1/within_budget=0/
   s/runner_noise_eligible=0/runner_noise_eligible=1/
+  s/under_50ms=1/under_50ms=0/
 }' "$temp_dir/cache-latency.log" > "$temp_dir/cache-latency-getdialogs-runner-pause.log"
 printf '%s\n' \
   'HARNESS ERROR: getDialogs scheduler trace unavailable: window_start_steady_ns=1000000000 wall_ns=60000000 main_thread_cpu_ns=1000000 budget_ns=50000000 runner_noise_eligible=1 runner_noise_cpu_limit_ns=5000000.' \
@@ -1412,9 +1413,26 @@ if ! grep -Fq 'untraced_wall_overrun_count=1' \
   "$temp_dir/cache-latency-getdialogs-runner-pause-output.log"; then
   contract_fail 'The getDialogs runner pause must count as one untraced incident.'
 fi
+if ! grep -Fq 'trace=none within_budget=0 cpu_only_within_budget=1 runner_noise_eligible=1 under_50ms=0.' \
+  "$temp_dir/cache-latency-getdialogs-runner-pause.log"; then
+  contract_fail 'The getDialogs under_50ms field must reflect its 60 ms wall time.'
+fi
 if ! grep -Fq '::warning:: HARNESS ERROR: getDialogs scheduler trace unavailable' \
   "$temp_dir/cache-latency-getdialogs-runner-pause-output.log"; then
   contract_fail 'A missing getDialogs scheduler trace must be reported as a warning.'
+fi
+sed '/^First messages.getDialogs handler latency regression:/ {
+  s/max_handler_ns=9893666/max_handler_ns=60000000/
+  s/main_thread_cpu_ns=9893666/main_thread_cpu_ns=1000000/
+  s/blocked_estimate_ns=0/blocked_estimate_ns=10000000/
+  s/estimated_work_ns=9893666/estimated_work_ns=11000000/
+  s/trace=R/trace=RR/
+  s/under_50ms=1/under_50ms=0/
+}' "$temp_dir/cache-latency.log" > "$temp_dir/cache-latency-getdialogs-traced-under-budget.log"
+if ! check_cache_latency_evidence \
+  "$temp_dir/cache-latency-getdialogs-traced-under-budget.log" \
+  >/dev/null 2>&1; then
+  contract_fail 'A traced getDialogs handler must pass from its timing verdict when wall time exceeds 50 ms.'
 fi
 cp "$temp_dir/cache-latency.log" "$temp_dir/cache-latency-responsive.log"
 sed -e 's/startup_stall_count=1/startup_stall_count=0/' \
@@ -1644,7 +1662,7 @@ sed 's/minimized_restore=1/minimized_restore=0/' \
 if check_cache_latency_evidence "$temp_dir/cache-latency-unrestored.log" >/dev/null 2>&1; then
   contract_fail 'The minimized window must be restored.'
 fi
-sed '/^First messages.getDialogs handler latency regression:/ s/under_50ms=1\./under_50ms=0./' \
+sed '/^First messages.getDialogs handler latency regression:/ { s/within_budget=1/within_budget=0/; s/under_50ms=1\./under_50ms=0./; }' \
   "$temp_dir/cache-latency-responsive.log" > "$temp_dir/cache-latency-bad-dialogs.log"
 if check_cache_latency_evidence "$temp_dir/cache-latency-bad-dialogs.log" >/dev/null 2>&1; then
   contract_fail 'The first getDialogs timing must remain a gate.'

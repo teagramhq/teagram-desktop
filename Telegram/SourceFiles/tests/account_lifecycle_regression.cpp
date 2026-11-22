@@ -14477,6 +14477,8 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 	return result;
 }
 
+constexpr auto kMaxHandlerNanoseconds = qint64(50'000'000);
+
 struct FirstDialogsHandlerRegressionResult final {
 	int requests = 0;
 	int processedChats = 0;
@@ -14529,7 +14531,6 @@ RunFirstDialogsHandlerLatencyRegression(
 	constexpr auto kFirstChatMessageCount = (kMessageCount + 1) / 2;
 	constexpr auto kSecondChatMessageCount = kMessageCount / 2;
 	constexpr auto kDialogUnreadCount = 7;
-	constexpr auto kMaxHandlerNanoseconds = qint64(50'000'000);
 	const auto firstChatId = ChatId(1051);
 	const auto secondChatId = ChatId(1052);
 	const auto firstPeerId = peerFromChat(firstChatId);
@@ -15474,8 +15475,7 @@ void RunAuthenticatedCacheSymlinkCases(
 					dialogsHandler.handlerWithinBudget,
 					dialogsHandler.handlerCpuOnlyWithinBudget,
 					dialogsHandler.handlerRunnerNoiseEligible,
-					dialogsHandler.handlerWithinBudget
-						|| dialogsHandler.handlerRunnerNoiseEligible);
+					dialogsHandler.handlerNanoseconds < kMaxHandlerNanoseconds);
 				auto &app = Core::App();
 				const auto window = app.ensureSeparateWindowFor(guarded);
 				const auto closeWindow = gsl::finally([&] {
