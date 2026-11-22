@@ -1541,6 +1541,15 @@ if ! grep -F -q \
 	echo "open log descriptor symlink regression did not report coverage." >&2
 	exit 1
 fi
+local untraced_wall_overruns
+untraced_wall_overruns="$(grep -E -c \
+	'^HARNESS ERROR: (startup|chat-switch|first-access) scheduler trace unavailable:' \
+	"$AUTH_LOG" || true)"
+if (( untraced_wall_overruns > 1 )); then
+	cat "$AUTH_LOG" >&2
+	echo "multiple untraced wall-only timing overruns exceeded the single-sample allowance." >&2
+	exit 1
+fi
 for cache in cache media_cache; do
 	if [[ "$cache" == cache ]]; then
 		while IFS= read -r capture_error; do
@@ -1551,7 +1560,7 @@ for cache in cache media_cache; do
 	fi
 	local cache_latency_evidence
 	cache_latency_evidence="$(grep -E \
-		"^Cache access latency regression: cache=$cache seeded_directories=125 seeded_files=169 closed_clear_missing_active=1 cache_initialization_ns=[0-9]+ initialization_allowed=1 queued_ops_before_ready=1 queued_ops_passed=1 cache_usable_ns=[0-9]+ under_10s=1 max_main_thread_work_ns=[0-9]+ max_startup_estimated_work_ns=[0-9]+ max_heartbeat_gap_ns=[0-9]+ max_heartbeat_gap_work_ns=[0-9]+ heartbeat_gap_process_work_ns=[0-9]+ heartbeat_gap_started_at=[^ ]+ startup_heartbeat_gap_count=[0-9]+ startup_uncovered_heartbeat_gaps=[0-9]+ startup_heartbeat_gap_coverage_proven=[01] startup_stall_count=[0-9]+ max_startup_stall_ns=[0-9]+ startup_stall_main_thread_work_ns=[0-9]+ startup_stall_process_work_ns=[0-9]+ startup_stall_started_at=([^ ]+) startup_stall_heartbeat_gap_started_at=([^ ]+) startup_stall_scheduler_samples=[0-9]+ startup_stall_scheduler_running=[0-9]+ startup_stall_scheduler_waiting=[0-9]+ startup_stall_scheduler_uninterruptible=[0-9]+ startup_stall_scheduler_other=[0-9]+ startup_stall_scheduler_trace=([[:alpha:]?]+|none) startup_stall_stack_captured=[01] startup_stall_evidence_matched=[01] startup_stall_scheduler_preemption_proven=[01] under_100ms=[01] first_access_ns=[0-9]+ first_access_main_thread_cpu_ns=-?[0-9]+ first_access_blocked_estimate_ns=-?[0-9]+ first_access_estimated_work_ns=-?[0-9]+ first_access_trace=([[:alpha:]?]+|none) first_access_within_budget=[01] first_access_cpu_only_within_budget=[01] under_50ms=1 root_swap_refused=1 direct_fallback_closed=1 root_restored=1 startup_walks=2 main_thread_walks=0\\.$" \
+		"^Cache access latency regression: cache=$cache seeded_directories=125 seeded_files=169 closed_clear_missing_active=1 cache_initialization_ns=[0-9]+ initialization_allowed=1 queued_ops_before_ready=1 queued_ops_passed=1 cache_usable_ns=[0-9]+ under_10s=1 max_main_thread_work_ns=[0-9]+ max_startup_estimated_work_ns=[0-9]+ max_heartbeat_gap_ns=[0-9]+ max_heartbeat_gap_work_ns=[0-9]+ heartbeat_gap_process_work_ns=[0-9]+ heartbeat_gap_started_at=[^ ]+ startup_heartbeat_gap_count=[0-9]+ startup_uncovered_heartbeat_gaps=[0-9]+ startup_heartbeat_gap_coverage_proven=[01] startup_stall_count=[0-9]+ max_startup_stall_ns=[0-9]+ startup_stall_main_thread_work_ns=[0-9]+ startup_stall_process_work_ns=[0-9]+ startup_stall_started_at=([^ ]+) startup_stall_heartbeat_gap_started_at=([^ ]+) startup_stall_scheduler_samples=[0-9]+ startup_stall_scheduler_running=[0-9]+ startup_stall_scheduler_waiting=[0-9]+ startup_stall_scheduler_uninterruptible=[0-9]+ startup_stall_scheduler_other=[0-9]+ startup_stall_scheduler_trace=([[:alpha:]?]+|none) startup_stall_stack_captured=[01] startup_stall_evidence_matched=[01] startup_stall_scheduler_preemption_proven=[01] under_100ms=[01] first_access_ns=[0-9]+ first_access_main_thread_cpu_ns=-?[0-9]+ first_access_blocked_estimate_ns=-?[0-9]+ first_access_estimated_work_ns=-?[0-9]+ first_access_trace=([[:alpha:]?]+|none) first_access_within_budget=[01] first_access_cpu_only_within_budget=[01] under_50ms=[01] root_swap_refused=1 direct_fallback_closed=1 root_restored=1 startup_walks=2 main_thread_walks=0\\.$" \
 		"$AUTH_LOG" || true)"
 	if [[ -z "$cache_latency_evidence" ]]; then
 		cat "$AUTH_LOG" >&2
@@ -1597,7 +1606,7 @@ if ! grep -E -q \
 fi
 local initial_history_selection
 initial_history_selection="$(grep -E \
-	'^Initial history selection: peer_id=[0-9]+ wall_ns=[0-9]+ main_thread_work_ns=[0-9]+ blocked_estimate_ns=(-1|[0-9]+) estimated_work_ns=[0-9]+ budget_ns=50000000 trace=([[:alpha:]?]+|none) scheduler_preemption_proven=[01]\.$' \
+	'^Initial history selection: peer_id=[0-9]+ wall_ns=[0-9]+ main_thread_work_ns=[0-9]+ blocked_estimate_ns=(-1|[0-9]+) estimated_work_ns=[0-9]+ budget_ns=50000000 trace=([[:alpha:]?]+|none) within_budget=[01] cpu_only_within_budget=[01] scheduler_preemption_proven=[01]\.$' \
 	"$AUTH_LOG" || true)"
 if [[ -z "$initial_history_selection" ]]; then
 	cat "$AUTH_LOG" >&2

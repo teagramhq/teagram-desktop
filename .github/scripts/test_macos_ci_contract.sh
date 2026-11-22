@@ -1155,7 +1155,7 @@ if check_cache_watchdog_evidence "$temp_dir/cache-watchdog-stall.log" >/dev/null
   contract_fail 'The 292-access watchdog stall check must remain a gate.'
 fi
 awk '
-  /^for cache in cache media_cache; do$/ { copy = 1 }
+  /^local untraced_wall_overruns$/ { copy = 1 }
   copy && /^if ! grep -F -q/ { exit }
   copy { print }
 ' "$profile_harness" > "$temp_dir/cache-latency-check.sh"
@@ -1375,7 +1375,7 @@ Cache access latency regression: cache=cache seeded_directories=125 seeded_files
 Cache startup watchdog stall: cache=cache started_at=2026-11-06T00:47:53.000Z duration_ms=230 heartbeat_gap_started_at=2026-11-06T00:47:53.000Z scheduler_trace=WWWW stack_captured=1 stack=worker wait regression
 Cache access latency regression: cache=media_cache seeded_directories=125 seeded_files=169 closed_clear_missing_active=1 cache_initialization_ns=120678959 initialization_allowed=1 queued_ops_before_ready=1 queued_ops_passed=1 cache_usable_ns=120763125 under_10s=1 max_main_thread_work_ns=48247625 max_startup_estimated_work_ns=48247625 max_heartbeat_gap_ns=48247625 max_heartbeat_gap_work_ns=48247625 heartbeat_gap_process_work_ns=25000000 heartbeat_gap_started_at=2026-11-06T00:47:53.000Z startup_heartbeat_gap_count=0 startup_uncovered_heartbeat_gaps=0 startup_heartbeat_gap_coverage_proven=1 startup_stall_count=0 max_startup_stall_ns=0 startup_stall_main_thread_work_ns=0 startup_stall_process_work_ns=0 startup_stall_started_at=none startup_stall_heartbeat_gap_started_at=none startup_stall_scheduler_samples=0 startup_stall_scheduler_running=0 startup_stall_scheduler_waiting=0 startup_stall_scheduler_uninterruptible=0 startup_stall_scheduler_other=0 startup_stall_scheduler_trace=none startup_stall_stack_captured=0 startup_stall_evidence_matched=0 startup_stall_scheduler_preemption_proven=0 under_100ms=1 first_access_ns=83292 under_50ms=1 root_swap_refused=1 direct_fallback_closed=1 root_restored=1 startup_walks=2 main_thread_walks=0.
 First messages.getDialogs handler latency regression: seeded_directories=125 seeded_files=169 requests=1 parsed=1 chats=2 dialogs=1 messages=73 documents=73 cache_walks=2 max_handler_ns=9893666 main_thread_cpu_ns=9893666 blocked_estimate_ns=0 estimated_work_ns=9893666 trace=R under_50ms=1.
-Initial history selection: peer_id=281474977760707 wall_ns=135344750 main_thread_work_ns=40000000 blocked_estimate_ns=0 estimated_work_ns=40000000 budget_ns=50000000 trace=R scheduler_preemption_proven=0.
+Initial history selection: peer_id=281474977760707 wall_ns=135344750 main_thread_work_ns=40000000 blocked_estimate_ns=0 estimated_work_ns=40000000 budget_ns=50000000 trace=R within_budget=1 cpu_only_within_budget=1 scheduler_preemption_proven=0.
 Cache chat switch latency regression: seeded_directories=125 seeded_files=169 reactions=73 hydrated_documents=292 chat_switches=73 attach_menu_bot_count=20 minimized_restore=1 initial_history_window_activated=1 all_chat_switch_windows_activated=1 minimized_switch_ns=45000000 minimized_restore_budget_ns=50000000 max_hydration_ns=5210625 max_hydration_work_ns=4000000 hydration_scheduler_preemption_proven=0 max_switch_ns=45000000 max_switch_work_ns=40000000 max_recurring_switch_work_ns=40000000 max_switch_estimated_work_ns=40000000 max_recurring_switch_estimated_work_ns=40000000 max_switch_index=3 max_switch_peer_id=281474976711707 switch_scheduler_preemption_proven=0 attach_menu_first_hover_ns=12000000 attach_menu_hover_ns=92000000 attach_menu_update_hover_ns=11000000 attach_menu_uncached_peer_ns=20000000 attach_menu_first_hover_callback_cpu_ns=12000000 attach_menu_update_hover_callback_cpu_ns=1000000 attach_menu_uncached_peer_callback_cpu_ns=20000000 attach_menu_first_hover_callback_wall_ns=92000000 attach_menu_update_hover_callback_wall_ns=92000000 attach_menu_uncached_peer_callback_wall_ns=92000000 attach_menu_scheduler_preemption_proven=0 attach_menu_cached=1 attach_menu_invalidated=1 attach_menu_build_deferred=1 attach_menu_uncached_ready=1 attach_menu_uncached_deferred_failures=0 attach_menu_uncached_missing_bot_failures=0 attach_menu_uncached_build_count_failures=0 attach_menu_cache_bound=1 pending_reveal_after_controls_geometry=1 chat_switch_compose_ui_reused=1 field_autocomplete_suggestions_ready=1 menu_commands_unfocused=1 bot_commands_unfocused=1 history_chat_mode_invalidation_rebuilt=1 dialog_histories_ready=1 synthetic_histories_ready=1 max_stall_ns=40000000 within_budgets=1.
 Attach-menu callback work: cached_hover_wall_ns=92000000 cached_hover_estimated_work_ns=12000000 first_hover_estimated_work_ns=12000000 invalidation_estimated_work_ns=1000000 uncached_peer_estimated_work_ns=20000000 budget_ns=50000000.
 EOF
@@ -1409,7 +1409,7 @@ sed -e 's/startup_stall_count=1/startup_stall_count=0/' \
   "$temp_dir/cache-latency-responsive.log" > "$temp_dir/cache-latency-no-watchdog-evidence.log"
 printf '%s\n' \
   'Cache startup work window: started_at=2026-11-06T00:47:53.000Z wall_ns=105113167 main_thread_cpu_ns=1138000 blocked_estimate_ns=-1 estimated_work_ns=1138000 budget_ns=100000000 trace=none within_budget=0 cpu_work_within_budget=1 scheduler_evidence_available=0.' \
-  'HARNESS ERROR: startup scheduler trace unavailable: timing gate evaluated using main-thread CPU.' \
+  'HARNESS ERROR: startup scheduler trace unavailable: this sample fails its individual gate and uses the single-sample runner-noise allowance.' \
   >> "$temp_dir/cache-latency-no-watchdog-evidence.log"
 if ! check_cache_latency_evidence "$temp_dir/cache-latency-no-watchdog-evidence.log" \
   > "$temp_dir/cache-latency-no-watchdog-error.log" 2>&1; then
@@ -1428,7 +1428,7 @@ sed \
   > "$temp_dir/cache-latency-attempt-1.log"
 printf '%s\n' \
   'Cache startup work window: started_at=2026-11-06T00:47:53.000Z wall_ns=105113167 main_thread_cpu_ns=1138000 blocked_estimate_ns=-1 estimated_work_ns=1138000 budget_ns=100000000 capture_pending=0 trace_samples=0 trace=none within_budget=0 cpu_only_within_budget=1 scheduler_capture_required=1 scheduler_evidence_available=0.' \
-  'HARNESS ERROR: startup scheduler trace unavailable: started_at=2026-11-06T00:47:53.000Z wall_ns=105113167 main_thread_cpu_ns=1138000 budget_ns=100000000; timing gate evaluated using main-thread CPU.' \
+  'HARNESS ERROR: startup scheduler trace unavailable: started_at=2026-11-06T00:47:53.000Z wall_ns=105113167 main_thread_cpu_ns=1138000 budget_ns=100000000; this sample fails its individual gate and uses the single-sample runner-noise allowance.' \
   >> "$temp_dir/cache-latency-attempt-1.log"
 if ! check_cache_latency_evidence "$temp_dir/cache-latency-attempt-1.log" \
   > "$temp_dir/cache-latency-attempt-1-output.log" 2>&1; then
@@ -1438,16 +1438,25 @@ if ! grep -Fq '::warning:: HARNESS ERROR: startup scheduler trace unavailable' \
   "$temp_dir/cache-latency-attempt-1-output.log"; then
   contract_fail 'The attempt-1 startup sample must report the missing trace as a warning.'
 fi
-sed \
-  -e 's/first_access_ns=86917/first_access_ns=105113167/' \
-  -e 's/first_access_main_thread_cpu_ns=80000/first_access_main_thread_cpu_ns=1138000/' \
-  -e 's/first_access_blocked_estimate_ns=0/first_access_blocked_estimate_ns=-1/' \
-  -e 's/first_access_estimated_work_ns=80000/first_access_estimated_work_ns=1138000/' \
-  -e 's/first_access_within_budget=1/first_access_within_budget=0/' \
-  -e 's/first_access_trace=R/first_access_trace=none/' \
-  "$temp_dir/cache-latency-responsive.log" > "$temp_dir/cache-latency-first-access-cpu-only.log"
+cp "$temp_dir/cache-latency-attempt-1.log" \
+  "$temp_dir/cache-latency-two-untraced-overruns.log"
 printf '%s\n' \
-  'HARNESS ERROR: first-access scheduler trace unavailable: timing gate evaluated using main-thread CPU.' \
+  'HARNESS ERROR: chat-switch scheduler trace unavailable: index=0 label=initial-history-selection wall_ns=135000000 main_thread_cpu_ns=40000000 budget_ns=50000000; this sample fails its individual gate and uses the single-sample runner-noise allowance.' \
+  >> "$temp_dir/cache-latency-two-untraced-overruns.log"
+if check_cache_latency_evidence \
+  "$temp_dir/cache-latency-two-untraced-overruns.log" \
+  > "$temp_dir/cache-latency-two-untraced-overruns-output.log" 2>&1; then
+  contract_fail 'Two untraced wall-only overruns in one profile step must fail.'
+fi
+sed \
+  -e '/^Cache access latency regression: cache=cache / { s/first_access_ns=86917/first_access_ns=105113167/; s/first_access_main_thread_cpu_ns=80000/first_access_main_thread_cpu_ns=1138000/; s/first_access_blocked_estimate_ns=0/first_access_blocked_estimate_ns=-1/; s/first_access_estimated_work_ns=80000/first_access_estimated_work_ns=1138000/; s/first_access_within_budget=1/first_access_within_budget=0/; s/first_access_trace=R/first_access_trace=none/; s/under_50ms=1/under_50ms=0/; }' \
+  "$temp_dir/cache-latency-responsive.log" > "$temp_dir/cache-latency-first-access-cpu-only.log"
+if ! grep -Fq 'first_access_ns=105113167 first_access_main_thread_cpu_ns=1138000 first_access_blocked_estimate_ns=-1 first_access_estimated_work_ns=1138000 first_access_trace=none first_access_within_budget=0 first_access_cpu_only_within_budget=1 under_50ms=0' \
+  "$temp_dir/cache-latency-first-access-cpu-only.log"; then
+  contract_fail 'First access must report the wall threshold and CPU-only assessment separately.'
+fi
+printf '%s\n' \
+  'HARNESS ERROR: first-access scheduler trace unavailable: this sample fails its individual gate and uses the single-sample runner-noise allowance.' \
   >> "$temp_dir/cache-latency-first-access-cpu-only.log"
 if ! check_cache_latency_evidence \
   "$temp_dir/cache-latency-first-access-cpu-only.log" \
@@ -1494,12 +1503,19 @@ sed '/^Initial history selection:/s/estimated_work_ns=40000000/estimated_work_ns
 if check_cache_latency_evidence "$temp_dir/cache-latency-initial-selection-over-budget.log" >/dev/null 2>&1; then
 	contract_fail 'The initial history selection must reject 52 ms of main-thread work even with scheduler proof.'
 fi
-sed '/^Initial history selection:/ { s/blocked_estimate_ns=0/blocked_estimate_ns=-1/; s/trace=R/trace=none/; }' \
+sed '/^Initial history selection:/ { s/blocked_estimate_ns=0/blocked_estimate_ns=-1/; s/trace=R/trace=none/; s/within_budget=1/within_budget=0/; }' \
   "$temp_dir/cache-latency-responsive.log" > "$temp_dir/cache-latency-initial-selection-cpu-only.log"
-if ! check_cache_latency_evidence "$temp_dir/cache-latency-initial-selection-cpu-only.log" >/dev/null 2>&1; then
-	contract_fail 'The CPU-only initial-selection verdict must pass for 40 ms CPU, despite 135 ms wall time.'
+if ! grep -Fq 'within_budget=0 cpu_only_within_budget=1' \
+  "$temp_dir/cache-latency-initial-selection-cpu-only.log"; then
+  contract_fail 'The initial-selection gate must reject an untraced 135 ms window with 40 ms CPU.'
 fi
-sed '/^Initial history selection:/ { s/main_thread_work_ns=40000000/main_thread_work_ns=52107000/; s/estimated_work_ns=40000000/estimated_work_ns=52107000/; }' \
+printf '%s\n' \
+  'HARNESS ERROR: chat-switch scheduler trace unavailable: index=0 label=initial-history-selection wall_ns=135344750 main_thread_cpu_ns=40000000 budget_ns=50000000; this sample fails its individual gate and uses the single-sample runner-noise allowance.' \
+  >> "$temp_dir/cache-latency-initial-selection-cpu-only.log"
+if ! check_cache_latency_evidence "$temp_dir/cache-latency-initial-selection-cpu-only.log" >/dev/null 2>&1; then
+	contract_fail 'A single untraced 135 ms initial selection must warn without failing the profile step.'
+fi
+sed '/^Initial history selection:/ { s/main_thread_work_ns=40000000/main_thread_work_ns=52107000/; s/estimated_work_ns=40000000/estimated_work_ns=52107000/; s/cpu_only_within_budget=1/cpu_only_within_budget=0/; }' \
   "$temp_dir/cache-latency-initial-selection-cpu-only.log" > "$temp_dir/cache-latency-initial-selection-cpu-over-budget.log"
 if check_cache_latency_evidence "$temp_dir/cache-latency-initial-selection-cpu-over-budget.log" >/dev/null 2>&1; then
 	contract_fail 'A 52 ms initial selection CPU stall must fail without scheduler evidence.'
@@ -2025,6 +2041,11 @@ grep -Fq 'MainThreadCpuWorkWithinBudget' "$native_harness" \
   && grep -Fq 'attachMenuHoverEstimatedWorkNanoseconds' "$native_harness" \
   && grep -Fq 'premiumBuildCallbackCpuNanoseconds' "$native_harness" \
   || contract_fail 'Every attach-menu callback must use the CPU-plus-blocked estimate with wall times as diagnostics.'
+grep -Fq 'const auto firstAccessWithinBudget = timingBudgetRun.Observe(' \
+  "$native_harness" \
+  && grep -Fq 'firstAccessBudgetAssessment.withinBudget,' "$native_harness" \
+  && grep -Fq 'firstAccessNanoseconds < kMaxChatSwitchNanoseconds,' "$native_harness" \
+  || contract_fail 'First-access evidence must report its strict gate, CPU-only assessment, and wall threshold separately.'
 grep -Fq 'slowHydrationCallbacks.push_back' "$native_harness" \
   && grep -Fq 'hydrationSchedulerPreemptionProven' "$native_harness" \
   && grep -Fq 'maxHydrationMainThreadWorkNanoseconds' "$native_harness" \
