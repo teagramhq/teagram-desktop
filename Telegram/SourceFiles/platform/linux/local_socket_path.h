@@ -24,7 +24,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <cerrno>
 #include <cstring>
 #include <functional>
-#include <pwd.h>
 #include <utility>
 #include <sys/stat.h>
 #include <sys/types.h>
@@ -209,21 +208,6 @@ SingleInstanceRuntimeDirectory(uid_t effectiveUid) {
 		QString::number(static_cast<qulonglong>(effectiveUid)));
 }
 
-[[nodiscard]] inline QString
-ChooseHomeDirectory(const QString &passwdHome, const QString &environmentHome) {
-	return passwdHome.isEmpty() ? environmentHome : passwdHome;
-}
-
-[[nodiscard]] inline QString UserHomeDirectory(uid_t effectiveUid,
-											   const QString &environmentHome) {
-	const auto entry = getpwuid(effectiveUid);
-	auto passwdHome = QString();
-	if (entry && entry->pw_dir) {
-		passwdHome = QFile::decodeName(QByteArray(entry->pw_dir));
-	}
-	return ChooseHomeDirectory(passwdHome, environmentHome);
-}
-
 } // namespace SingleInstanceSocketPathDetails
 
 enum class SingleInstanceSocketPathFailure {
@@ -249,11 +233,11 @@ SingleInstanceSocketPathFailureMessage(SingleInstanceSocketPathFailure failure,
 	case SingleInstanceSocketPathFailure::XdgRuntimeDirectoryCheckFailed:
 		return u"Could not create the single-instance IPC socket: the Snap XDG_RUNTIME_DIR failed its owner, mode, or path-length check."_q;
 	case SingleInstanceSocketPathFailure::HomeDirectoryCheckFailed:
-		return u"Could not create the single-instance IPC socket: /run/user/<uid> is unavailable or too long, and the passwd home directory failed its owner or mode check."_q;
+		return u"Could not create the single-instance IPC socket: /run/user/<uid> is unavailable or too long, and the HOME directory failed its owner or mode check."_q;
 	case SingleInstanceSocketPathFailure::FallbackDirectoryCheckFailed:
-		return u"Could not create the single-instance IPC socket: /run/user/<uid> is unavailable or too long, and the private .teagram-runtime-<uid> directory under the passwd home failed its owner, mode, or symlink check."_q;
+		return u"Could not create the single-instance IPC socket: /run/user/<uid> is unavailable or too long, and the private .teagram-runtime-<uid> directory under HOME failed its owner, mode, or symlink check."_q;
 	case SingleInstanceSocketPathFailure::SocketPathTooLong:
-		return u"Could not create the single-instance IPC socket: /run/user/<uid> is unavailable or too long, and the .teagram-runtime-<uid> fallback under the passwd home exceeds Linux's 106-byte AF_UNIX socket path limit."_q;
+		return u"Could not create the single-instance IPC socket: /run/user/<uid> is unavailable or too long, and the .teagram-runtime-<uid> fallback under HOME exceeds Linux's 106-byte AF_UNIX socket path limit."_q;
 	case SingleInstanceSocketPathFailure::None:
 		break;
 	}
@@ -329,16 +313,35 @@ SingleInstanceSocketPathFailureMessage(SingleInstanceSocketPathFailure failure,
 				xdgFailureDetail));
 		return QString();
 	}
+	auto homeFailureDetail = QString();
+	const auto verifiedHomeDirectory
+		= SingleInstanceSocketPathDetails::VerifiedUserHomeDirectory(
+			homeDirectory, effectiveUid, &homeFailureDetail);
+	if (!verifiedHomeDirectory.isEmpty()) {
+		// A previous launch may have selected this before the session runtime
+		// existed.
+		const auto existingFallbackDirectory
+			= QDir(verifiedHomeDirectory)
+				  .filePath(
+					  u".teagram-runtime-%1"_q.arg(qulonglong(effectiveUid)));
+		auto existingFallbackFailureDetail = QString();
+		const auto existingFallbackPath = SingleInstanceSocketPathInDirectory(
+			existingFallbackDirectory, serverName, effectiveUid,
+			&existingFallbackFailureDetail);
+		if (!existingFallbackPath.isEmpty()) {
+			SingleInstanceSocketPathDetails::SetFailureDetail(
+				selectionWarning,
+				u"Existing private fallback '%1' keeps the single-instance endpoint stable instead of switching to runtime candidate '%2'."_q
+					.arg(existingFallbackPath, stableRuntimeDirectory));
+			return existingFallbackPath;
+		}
+	}
 	auto stableFailureDetail = QString();
 	const auto stableRuntimePath = SingleInstanceSocketPathInDirectory(
 		stableRuntimeDirectory, serverName, effectiveUid, &stableFailureDetail);
 	if (!stableRuntimePath.isEmpty()) {
 		return stableRuntimePath;
 	}
-	auto homeFailureDetail = QString();
-	const auto verifiedHomeDirectory
-		= SingleInstanceSocketPathDetails::VerifiedUserHomeDirectory(
-			homeDirectory, effectiveUid, &homeFailureDetail);
 	if (verifiedHomeDirectory.isEmpty()) {
 		if (failure) {
 			*failure
@@ -346,7 +349,7 @@ SingleInstanceSocketPathFailureMessage(SingleInstanceSocketPathFailure failure,
 		}
 		SingleInstanceSocketPathDetails::SetFailureDetail(
 			failureDetail,
-			u"runtime candidate '%1' was rejected (%2); passwd home '%3' failed validation (%4)."_q
+			u"runtime candidate '%1' was rejected (%2); HOME directory '%3' failed validation (%4)."_q
 				.arg(stableRuntimeDirectory, stableFailureDetail, homeDirectory,
 					 homeFailureDetail));
 		return QString();
@@ -365,7 +368,7 @@ SingleInstanceSocketPathFailureMessage(SingleInstanceSocketPathFailure failure,
 		}
 		SingleInstanceSocketPathDetails::SetFailureDetail(
 			failureDetail,
-			u"runtime candidate '%1' was rejected (%2); private fallback '%3' under passwd home '%4' failed (%5)."_q
+			u"runtime candidate '%1' was rejected (%2); private fallback '%3' under HOME directory '%4' failed (%5)."_q
 				.arg(stableRuntimeDirectory, stableFailureDetail,
 					 fallbackCandidate, verifiedHomeDirectory,
 					 fallbackFailureDetail));
@@ -381,7 +384,7 @@ SingleInstanceSocketPathFailureMessage(SingleInstanceSocketPathFailure failure,
 	if (fallbackPath.isEmpty()) {
 		SingleInstanceSocketPathDetails::SetFailureDetail(
 			failureDetail,
-			u"runtime candidate '%1' was rejected (%2); private fallback '%3' under passwd home '%4' is unusable (%5)."_q
+			u"runtime candidate '%1' was rejected (%2); private fallback '%3' under HOME directory '%4' is unusable (%5)."_q
 				.arg(stableRuntimeDirectory, stableFailureDetail,
 					 fallbackDirectory, verifiedHomeDirectory,
 					 fallbackPathFailureDetail));

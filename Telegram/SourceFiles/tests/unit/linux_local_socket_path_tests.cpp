@@ -69,17 +69,15 @@ TEST_CASE(LinuxSingleInstanceSocketUsesPrivateRuntimeDirectory) {
 
 TEST_CASE(LinuxSingleInstanceSocketPrefersStableRuntimeDirectory) {
 	auto runtimeDirectory = QTemporaryDir();
-	auto homeDirectory = QTemporaryDir();
 	CHECK(runtimeDirectory.isValid());
-	CHECK(homeDirectory.isValid());
-	if (!runtimeDirectory.isValid() || !homeDirectory.isValid()) {
+	if (!runtimeDirectory.isValid()) {
 		return;
 	}
 	CHECK(SetPrivatePermissions(runtimeDirectory.path()));
 
 	const auto path = Platform::Linux::SingleInstanceSocketPathForLaunch(
 		QString(), runtimeDirectory.path(), u"teagram-instance"_q, geteuid(),
-		homeDirectory.path());
+		QString());
 	CHECK_EQ(path,
 			 QDir(runtimeDirectory.path()).filePath(u"teagram-instance"_q));
 }
@@ -108,6 +106,18 @@ TEST_CASE(LinuxSingleInstanceProductionSocketPathIsPrivateAndAbsolute) {
 	CHECK(error.isEmpty());
 	if (path.isEmpty()) {
 		return;
+	}
+	const auto serverName = QFileInfo(path).fileName();
+	const auto stablePath
+		= Platform::Linux::SingleInstanceSocketPathInDirectory(
+			Platform::Linux::SingleInstanceSocketPathDetails::
+				SingleInstanceRuntimeDirectory(geteuid()),
+			serverName, geteuid());
+	if (stablePath.isEmpty()) {
+		const auto fallbackDirectory = homeDirectory.filePath(
+			u".teagram-runtime-%1"_q.arg(qulonglong(geteuid())));
+		CHECK_EQ(QFileInfo(path).absolutePath(),
+				 QFileInfo(fallbackDirectory).canonicalFilePath());
 	}
 	const auto directory = QFileInfo(path).absolutePath();
 	const auto encodedDirectory = QFile::encodeName(directory);
@@ -188,26 +198,46 @@ TEST_CASE(LinuxSingleInstanceSocketFallsBackWhenRuntimeDirectoryIsUnset) {
 	CHECK((status.st_mode & 07777) == 0700);
 }
 
-TEST_CASE(LinuxSingleInstanceSocketUsesHomeEnvironmentWithoutPasswdEntry) {
+TEST_CASE(LinuxSingleInstanceSocketKeepsFallbackAfterRuntimeAppears) {
+	auto runtimeParent = QTemporaryDir();
 	auto homeDirectory = QTemporaryDir();
+	CHECK(runtimeParent.isValid());
 	CHECK(homeDirectory.isValid());
-	if (!homeDirectory.isValid()) {
+	if (!runtimeParent.isValid() || !homeDirectory.isValid()) {
 		return;
 	}
-	namespace Details = Platform::Linux::SingleInstanceSocketPathDetails;
-	const auto fromEnvironment
-		= Details::UserHomeDirectory(uid_t(4294967294), homeDirectory.path());
-	CHECK_EQ(fromEnvironment, homeDirectory.path());
-	const auto fromPasswd
-		= Details::ChooseHomeDirectory(u"/home/user"_q, homeDirectory.path());
-	CHECK_EQ(fromPasswd, u"/home/user"_q);
-
+	CHECK(SetPrivatePermissions(runtimeParent.path()));
+	const auto stableRuntimeDirectory = runtimeParent.filePath(u"runtime"_q);
+	const auto serverName = u"teagram-instance"_q;
+	const auto firstPath = Platform::Linux::SingleInstanceSocketPathForLaunch(
+		QString(), stableRuntimeDirectory, serverName, geteuid(),
+		homeDirectory.path());
 	const auto fallbackDirectory = homeDirectory.filePath(
 		u".teagram-runtime-%1"_q.arg(qulonglong(geteuid())));
-	const auto path = Platform::Linux::SingleInstanceSocketPathForLaunch(
-		QString(), homeDirectory.filePath(u"missing-runtime"_q),
-		u"teagram-instance"_q, geteuid(), fromEnvironment);
-	CHECK_EQ(path, QDir(fallbackDirectory).filePath(u"teagram-instance"_q));
+	CHECK_EQ(firstPath, QDir(fallbackDirectory).filePath(serverName));
+	if (firstPath.isEmpty()) {
+		return;
+	}
+	auto primary = QLocalServer();
+	primary.setSocketOptions(QLocalServer::UserAccessOption);
+	CHECK(StartSingleInstanceServerAndWait(primary, firstPath)
+		  == Platform::Linux::SingleInstanceServerResult::Primary);
+	if (!primary.isListening()) {
+		return;
+	}
+	CHECK(QDir().mkdir(stableRuntimeDirectory));
+	CHECK(SetPrivatePermissions(stableRuntimeDirectory));
+	const auto secondPath = Platform::Linux::SingleInstanceSocketPathForLaunch(
+		QString(), stableRuntimeDirectory, serverName, geteuid(),
+		homeDirectory.path());
+	CHECK_EQ(secondPath, firstPath);
+	if (secondPath != firstPath) {
+		return;
+	}
+	auto secondary = QLocalServer();
+	secondary.setSocketOptions(QLocalServer::UserAccessOption);
+	CHECK(StartSingleInstanceServerAndWait(secondary, secondPath)
+		  == Platform::Linux::SingleInstanceServerResult::Secondary);
 }
 
 TEST_CASE(LinuxSingleInstanceSocketFallsBackFromAnUntrustedRuntimeDirectory) {

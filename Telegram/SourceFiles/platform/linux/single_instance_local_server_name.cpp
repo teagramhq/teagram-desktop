@@ -29,9 +29,8 @@ QString SingleInstanceLocalServerName(const QString &hash,
 	auto selectionWarning = QString();
 	const auto result = Platform::Linux::SingleInstanceSocketPath(
 		qEnvironmentVariable("XDG_RUNTIME_DIR"), serverName, geteuid(),
-		Platform::Linux::SingleInstanceSocketPathDetails::UserHomeDirectory(
-			geteuid(), qEnvironmentVariable("HOME")),
-		&failure, snap, &failureDetail, &selectionWarning);
+		qEnvironmentVariable("HOME"), &failure, snap, &failureDetail,
+		&selectionWarning);
 	if (!selectionWarning.isEmpty()) {
 		LOG((selectionWarning));
 	}
