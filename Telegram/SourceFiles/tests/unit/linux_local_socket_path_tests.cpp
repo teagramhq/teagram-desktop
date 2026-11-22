@@ -488,10 +488,22 @@ TEST_CASE(LinuxSingleInstanceStartupFindsDelayedEndpointWithoutHome) {
 		std::this_thread::sleep_for(std::chrono::milliseconds(80));
 		publicationSucceeded = primaryLock.setContents(primaryPath);
 	});
-	const auto activeEndpoint
-		= Platform::Linux::WaitForSingleInstanceServerPath(
-			[&] { return ProbeProfileLock(secondLock); }, lockIdentity,
-			geteuid(), false, 1'000, 20);
+	auto activeEndpoint = Platform::Linux::SingleInstanceEndpointResult();
+	auto loop = QEventLoop();
+	auto heartbeatCount = 0;
+	auto heartbeat = QTimer();
+	connect(&heartbeat, &QTimer::timeout, &loop, [&] { ++heartbeatCount; });
+	heartbeat.start(10);
+	QTimer::singleShot(2'000, &loop, &QEventLoop::quit);
+	Platform::Linux::StartSingleInstanceServerPathDiscovery(
+		&loop, [&] { return ProbeProfileLock(secondLock); }, lockIdentity,
+		geteuid(), false, 1'000, 20,
+		[&](Platform::Linux::SingleInstanceEndpointResult result) {
+			activeEndpoint = result;
+			loop.quit();
+		});
+	loop.exec();
+	heartbeat.stop();
 	publisher.join();
 	if (previousHome.isEmpty()) {
 		qunsetenv("HOME");
@@ -502,6 +514,7 @@ TEST_CASE(LinuxSingleInstanceStartupFindsDelayedEndpointWithoutHome) {
 		  == Platform::Linux::SingleInstanceEndpointStatus::Located);
 	CHECK_EQ(activeEndpoint.serverPath, primaryPath);
 	CHECK(publicationSucceeded);
+	CHECK(heartbeatCount > 0);
 }
 
 TEST_CASE(LinuxSingleInstanceCleanupPropagatesProfileLockError) {

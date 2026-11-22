@@ -16,6 +16,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <QtCore/QFileInfo>
 #include <QtCore/QLockFile>
 #include <QtCore/QObject>
+#include <QtCore/QPointer>
 #include <QtCore/QString>
 #include <QtCore/QThread>
 #include <QtCore/QTimer>
@@ -472,49 +473,106 @@ struct SingleInstanceEndpointResult {
 	QString error;
 };
 
-template <typename LockProbe>
-[[nodiscard]] SingleInstanceEndpointResult WaitForSingleInstanceServerPath(
-	LockProbe probe, const QString &profileLockIdentity, uid_t effectiveUid,
-	bool snap, int timeoutMs, int retryIntervalMs) {
-	auto timer = QElapsedTimer();
-	timer.start();
-	auto lastError = QString();
-	for (;;) {
-		const auto snapshot = probe();
+template <typename LockProbe, typename Finished>
+class SingleInstanceServerPathDiscovery final : public QObject {
+  public:
+	SingleInstanceServerPathDiscovery(QObject *context, LockProbe probe,
+									  QString profileLockIdentity,
+									  uid_t effectiveUid, bool snap,
+									  int timeoutMs, int retryIntervalMs,
+									  Finished finished)
+		: QObject(context), _probe(std::move(probe)),
+		  _profileLockIdentity(std::move(profileLockIdentity)),
+		  _effectiveUid(effectiveUid), _snap(snap), _timeoutMs(timeoutMs),
+		  _retryIntervalMs(retryIntervalMs), _finished(std::move(finished)),
+		  _timer(this) {
+		_timer.setSingleShot(true);
+		connect(&_timer, &QTimer::timeout, this,
+				[this] { checkProfileLock(); });
+	}
+
+	void start() {
+		_deadline.start();
+		_timer.start(0);
+	}
+
+  private:
+	void checkProfileLock() {
+		const auto snapshot = _probe();
 		switch (snapshot.state) {
 		case SingleInstanceProfileLockState::Unlocked:
-			return {SingleInstanceEndpointStatus::NotRunning, QString(),
-					QString()};
+			return finish({SingleInstanceEndpointStatus::NotRunning, QString(),
+						   QString()});
 		case SingleInstanceProfileLockState::Error:
-			return {SingleInstanceEndpointStatus::Failed, QString(),
-					snapshot.error.isEmpty()
-						? u"Could not read the single-instance profile lock."_q
-						: snapshot.error};
+			return finish(
+				{SingleInstanceEndpointStatus::Failed, QString(),
+				 snapshot.error.isEmpty()
+					 ? u"Could not read the single-instance profile lock."_q
+					 : snapshot.error});
 		case SingleInstanceProfileLockState::Locked: {
 			const auto path
 				= SingleInstanceServerPathFromLockContentsForIdentity(
-					snapshot.contents, profileLockIdentity, effectiveUid, snap);
+					snapshot.contents, _profileLockIdentity, _effectiveUid,
+					_snap);
 			if (!path.isEmpty()) {
-				return {SingleInstanceEndpointStatus::Located, path, QString()};
+				return finish(
+					{SingleInstanceEndpointStatus::Located, path, QString()});
 			}
-			lastError
+			_lastError
 				= u"The busy profile lock has not published a valid IPC path."_q;
 		} break;
 		}
-		const auto elapsed = int(timer.elapsed());
-		if (elapsed >= timeoutMs) {
-			return {
-				SingleInstanceEndpointStatus::Failed, QString(),
-				lastError.isEmpty()
-					? u"Timed out waiting for the single-instance profile lock."_q
-					: u"Timed out waiting for the profile lock to publish a "
-					  u"valid "
-					  u"IPC path: %1"_q.arg(lastError)};
+		const auto elapsed = int(_deadline.elapsed());
+		if (elapsed >= _timeoutMs) {
+			return finish(
+				{SingleInstanceEndpointStatus::Failed, QString(),
+				 _lastError.isEmpty()
+					 ? u"Timed out waiting for the single-instance profile lock."_q
+					 : u"Timed out waiting for the profile lock to publish a "
+					   u"valid IPC path: %1"_q.arg(_lastError)});
 		}
-		const auto delay
-			= std::min(std::max(retryIntervalMs, 1), timeoutMs - elapsed);
-		QThread::msleep(static_cast<unsigned long>(delay));
+		_timer.start(
+			std::min(std::max(_retryIntervalMs, 1), _timeoutMs - elapsed));
 	}
+
+	void finish(SingleInstanceEndpointResult result) {
+		if (_completed) {
+			return;
+		}
+		_completed = true;
+		auto finished = std::move(_finished);
+		_timer.stop();
+		auto guard = QPointer<SingleInstanceServerPathDiscovery>(this);
+		finished(std::move(result));
+		if (guard) {
+			guard->deleteLater();
+		}
+	}
+
+	LockProbe _probe;
+	const QString _profileLockIdentity;
+	const uid_t _effectiveUid = 0;
+	const bool _snap = false;
+	const int _timeoutMs = 0;
+	const int _retryIntervalMs = 0;
+	Finished _finished;
+	QElapsedTimer _deadline;
+	QTimer _timer;
+	QString _lastError;
+	bool _completed = false;
+};
+
+template <typename LockProbe, typename Finished>
+void StartSingleInstanceServerPathDiscovery(QObject *context, LockProbe probe,
+											const QString &profileLockIdentity,
+											uid_t effectiveUid, bool snap,
+											int timeoutMs, int retryIntervalMs,
+											Finished finished) {
+	const auto discovery
+		= new SingleInstanceServerPathDiscovery<LockProbe, Finished>(
+			context, std::move(probe), profileLockIdentity, effectiveUid, snap,
+			timeoutMs, retryIntervalMs, std::move(finished));
+	discovery->start();
 }
 
 template <typename LockProbe>

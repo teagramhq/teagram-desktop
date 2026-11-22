@@ -464,9 +464,12 @@ int Sandbox::start() {
 		}
 	};
 	auto localServerNameError = QString();
+	auto localServerNameDiscoveryPending = false;
 #ifdef Q_OS_LINUX
+	localServerNameDiscoveryPending = (cLaunchMode() != LaunchModeCleanup);
 	_singleInstanceProfileLockIdentity.clear();
 	_singleInstanceProfileLockSnap = false;
+	auto linuxServerNameHash = QString();
 #endif // Q_OS_LINUX
 	auto profileLockPath = QString();
 	const auto lockDirectory = QDir(cWorkingDir()).absolutePath();
@@ -475,9 +478,10 @@ int Sandbox::start() {
 		char h[33] = {0};
 		hashMd5Hex(d.constData(), d.size(), h);
 #ifdef Q_OS_LINUX
+		linuxServerNameHash = QString::fromLatin1(h);
 		_singleInstanceProfileLockSnap = KSandbox::isSnap();
 		const auto serverName = Platform::Linux::SingleInstanceLocalServerName(
-			QString::fromLatin1(h), QCoreApplication::applicationName(),
+			linuxServerNameHash, QCoreApplication::applicationName(),
 			_singleInstanceProfileLockSnap);
 		_singleInstanceProfileLockIdentity
 			= Platform::Linux::SingleInstanceProfileLockIdentityForServerName(
@@ -494,26 +498,9 @@ int Sandbox::start() {
 							  + QString::fromLatin1(lockHash) + u".lock"_q;
 			_singleInstanceLock
 				= std::make_unique<SingleInstanceLock>(profileLockPath);
-			if (cLaunchMode() != LaunchModeCleanup) {
-				const auto endpoint
-					= Platform::Linux::WaitForSingleInstanceServerPath(
-						[this] {
-							return ProbeSingleInstanceProfileLock(
-								_singleInstanceLock.get());
-						},
-						_singleInstanceProfileLockIdentity, geteuid(),
-						_singleInstanceProfileLockSnap, 2'000, 20);
-				if (endpoint.status
-					== Platform::Linux::SingleInstanceEndpointStatus::Located) {
-					_localServerName = endpoint.serverPath;
-				} else if (endpoint.status
-						   == Platform::Linux::SingleInstanceEndpointStatus::
-							   Failed) {
-					localServerNameError = endpoint.error;
-				}
-			}
 		}
-		if (_localServerName.isEmpty() && localServerNameError.isEmpty()
+		if (_localServerName.isEmpty() && !localServerNameDiscoveryPending
+			&& localServerNameError.isEmpty()
 			&& (cLaunchMode() != LaunchModeCleanup)) {
 			_localServerName = Platform::SingleInstanceLocalServerName(
 				h, &localServerNameError);
@@ -525,7 +512,8 @@ int Sandbox::start() {
 	}
 
 #if !defined Q_OS_WIN && !defined Q_OS_MAC
-	if (_localServerName.isEmpty() && (cLaunchMode() != LaunchModeCleanup)) {
+	if (_localServerName.isEmpty() && !localServerNameDiscoveryPending
+		&& (cLaunchMode() != LaunchModeCleanup)) {
 		const auto message
 			= localServerNameError.isEmpty()
 				  ? u"Could not determine a private local socket path."_q
@@ -751,14 +739,60 @@ int Sandbox::start() {
 		manager.setRestartHint(QSessionManager::RestartNever);
 	});
 
-	LOG(("Connecting local socket to %1...").arg(_localServerName));
 #ifdef Q_OS_MAC
 	if (!MacProtectedPath::CheckPath(MacProtectedPath::Operation::Open,
 									 _localServerName, Q_FUNC_INFO)) {
 		return 1;
 	}
 #endif // Q_OS_MAC
-#if defined(Q_OS_MAC) && defined(TDESKTOP_LIFECYCLE_REGRESSION)
+#ifdef Q_OS_LINUX
+	if (localServerNameDiscoveryPending) {
+		LOG(("Waiting for the single-instance profile endpoint..."));
+		Platform::Linux::StartSingleInstanceServerPathDiscovery(
+			this,
+			[this] {
+				return ProbeSingleInstanceProfileLock(
+					_singleInstanceLock.get());
+			},
+			_singleInstanceProfileLockIdentity, geteuid(),
+			_singleInstanceProfileLockSnap, 2'000, 20,
+			[this, linuxServerNameHash](
+				Platform::Linux::SingleInstanceEndpointResult endpoint) {
+				if (Quitting() || QuitOnStartRequested) {
+					return;
+				}
+				auto serverPath = QString();
+				auto error = QString();
+				if (endpoint.status
+					== Platform::Linux::SingleInstanceEndpointStatus::Located) {
+					serverPath = endpoint.serverPath;
+				} else if (endpoint.status
+						   == Platform::Linux::SingleInstanceEndpointStatus::
+							   NotRunning) {
+					serverPath = Platform::SingleInstanceLocalServerName(
+						linuxServerNameHash, &error);
+				} else {
+					error = endpoint.error;
+				}
+				if (serverPath.isEmpty()) {
+					if (error.isEmpty()) {
+						error
+							= u"Could not determine a private local socket path."_q;
+					}
+					LOG(("%1").arg(error));
+					ShowSingleInstanceStartupError(error);
+					return QCoreApplication::exit(1);
+				}
+				_localServerName = std::move(serverPath);
+				LOG(("Connecting local socket to %1...").arg(_localServerName));
+				_localSocket.connectToServer(_localServerName);
+			});
+	} else {
+		LOG(("Connecting local socket to %1...").arg(_localServerName));
+		_localSocket.connectToServer(_localServerName);
+	}
+#elif defined(Q_OS_MAC) && defined(TDESKTOP_LIFECYCLE_REGRESSION)
+	LOG(("Connecting local socket to %1...").arg(_localServerName));
 	if (qEnvironmentVariableIsSet("TDESKTOP_SOCKET_ERROR_REGRESSION")) {
 		QTimer::singleShot(0, this, [=] {
 			fprintf(stderr, "Socket error regression: injected=1\n");
@@ -784,11 +818,16 @@ int Sandbox::start() {
 					? QLocalSocket::ServerNotFoundError
 					: QLocalSocket::SocketTimeoutError);
 		});
-	} else
-#endif // Q_OS_MAC && TDESKTOP_LIFECYCLE_REGRESSION
-	{
+	} else {
 		_localSocket.connectToServer(_localServerName);
 	}
+#elif defined(Q_OS_MAC)
+	LOG(("Connecting local socket to %1...").arg(_localServerName));
+	_localSocket.connectToServer(_localServerName);
+#else
+	LOG(("Connecting local socket to %1...").arg(_localServerName));
+	_localSocket.connectToServer(_localServerName);
+#endif
 
 	if (QuitOnStartRequested) {
 		closeApplication();
