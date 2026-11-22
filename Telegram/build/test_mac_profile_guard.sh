@@ -1551,7 +1551,7 @@ function field_value(line, name, token) {
 	}
 	return -1
 }
-/^HARNESS ERROR: (startup|chat-switch|first-access|getDialogs) scheduler trace unavailable:/ && /runner_noise_eligible=1/ {
+/^HARNESS ERROR: (startup|chat-switch|first-access|getDialogs|attach-menu) scheduler trace unavailable:/ && /runner_noise_eligible=1/ {
 	start = field_value($0, "window_start_steady_ns")
 	wall = field_value($0, "wall_ns")
 	if ((start < 0) || (wall <= 0)) {
@@ -1586,7 +1586,7 @@ END {
 			current_end = ends[i]
 		}
 	}
-	print incidents
+	print incidents + 0
 }' "$AUTH_LOG")"
 printf 'untraced_wall_overrun_count=%s\n' "$untraced_wall_overruns"
 if (( untraced_wall_overruns > 1 )); then
@@ -1599,7 +1599,7 @@ for cache in cache media_cache; do
 		while IFS= read -r capture_error; do
 			printf '::warning:: %s\n' "$capture_error" >&2
 		done < <(grep -E \
-			'^HARNESS ERROR: (startup|chat-switch|first-access|getDialogs) scheduler trace unavailable:' \
+			'^HARNESS ERROR: (startup|chat-switch|first-access|getDialogs|attach-menu) scheduler trace unavailable:' \
 			"$AUTH_LOG" || true)
 	fi
 	local cache_latency_evidence

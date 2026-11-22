@@ -1388,8 +1388,13 @@ check_cache_latency_evidence() (
   local AUTH_LOG="$1"
   source "$temp_dir/cache-latency-check.sh"
 )
-if ! check_cache_latency_evidence "$temp_dir/cache-latency.log" >/dev/null 2>&1; then
+if ! check_cache_latency_evidence "$temp_dir/cache-latency.log" \
+  > "$temp_dir/cache-latency-clean-output.log" 2>&1; then
   contract_fail 'A 225 ms startup gap with scheduler evidence under the 100 ms work budget must pass.'
+fi
+if ! grep -Fqx 'untraced_wall_overrun_count=0' \
+  "$temp_dir/cache-latency-clean-output.log"; then
+  contract_fail 'A clean timing run must report a numeric zero untraced-overrun count.'
 fi
 sed '/^First messages.getDialogs handler latency regression:/ {
   s/max_handler_ns=9893666/max_handler_ns=60000000/
@@ -1656,6 +1661,37 @@ sed '/^Attach-menu callback work:/s/uncached_peer_estimated_work_ns=20000000/unc
   "$temp_dir/cache-latency-responsive.log" > "$temp_dir/cache-latency-blocked-uncached-hover.log"
 if check_cache_latency_evidence "$temp_dir/cache-latency-blocked-uncached-hover.log" >/dev/null 2>&1; then
   contract_fail 'A blocked uncached-peer callback must fail its estimated-work budget.'
+fi
+sed 's/first_hover_estimated_work_ns=12000000/first_hover_estimated_work_ns=1000000/' \
+  "$temp_dir/cache-latency-responsive.log" \
+  > "$temp_dir/cache-latency-attach-menu-runner-pause.log"
+printf '%s\n' \
+  'Attach menu callback work window: label=first hover callback window_start_steady_ns=2000000000 wall_ns=60000000 main_thread_cpu_ns=1000000 blocked_estimate_ns=-1 estimated_work_ns=1000000 budget_ns=50000000 trace=none within_budget=0 cpu_only_within_budget=1 runner_noise_eligible=1 scheduler_evidence_available=0.' \
+  'HARNESS ERROR: attach-menu scheduler trace unavailable: label=first hover callback window_start_steady_ns=2000000000 wall_ns=60000000 main_thread_cpu_ns=1000000 budget_ns=50000000 runner_noise_eligible=1 runner_noise_cpu_limit_ns=5000000.' \
+  >> "$temp_dir/cache-latency-attach-menu-runner-pause.log"
+if ! check_cache_latency_evidence \
+  "$temp_dir/cache-latency-attach-menu-runner-pause.log" \
+  > "$temp_dir/cache-latency-attach-menu-runner-pause-output.log" 2>&1; then
+  contract_fail 'A 60 ms attach-menu callback with 1 ms CPU and no trace must pass once as runner noise.'
+fi
+if ! grep -Fq 'untraced_wall_overrun_count=1' \
+  "$temp_dir/cache-latency-attach-menu-runner-pause-output.log"; then
+  contract_fail 'An attach-menu runner pause must count as one untraced incident.'
+fi
+if ! grep -Fq '::warning:: HARNESS ERROR: attach-menu scheduler trace unavailable' \
+  "$temp_dir/cache-latency-attach-menu-runner-pause-output.log"; then
+  contract_fail 'A missing attach-menu scheduler trace must be reported as a warning.'
+fi
+sed 's/first_hover_estimated_work_ns=12000000/first_hover_estimated_work_ns=60000000/' \
+  "$temp_dir/cache-latency-responsive.log" \
+  > "$temp_dir/cache-latency-attach-menu-traced-stall.log"
+printf '%s\n' \
+  'Attach menu callback work window: label=first hover callback window_start_steady_ns=2000000000 wall_ns=60000000 main_thread_cpu_ns=1000000 blocked_estimate_ns=60000000 estimated_work_ns=60000000 budget_ns=50000000 trace=WWWWWWWWWWWWW within_budget=0 cpu_only_within_budget=1 runner_noise_eligible=0 scheduler_evidence_available=1.' \
+  >> "$temp_dir/cache-latency-attach-menu-traced-stall.log"
+if check_cache_latency_evidence \
+  "$temp_dir/cache-latency-attach-menu-traced-stall.log" \
+  >/dev/null 2>&1; then
+  contract_fail 'A traced blocked attach-menu callback must fail its 50 ms gate.'
 fi
 for field in reactions=73 hydrated_documents=292 chat_switches=73; do
   sed "s/$field/${field%%=*}=0/" \
@@ -2138,6 +2174,21 @@ grep -Fq 'MainThreadCpuWorkWithinBudget' "$native_harness" \
   && grep -Fq 'attachMenuHoverEstimatedWorkNanoseconds' "$native_harness" \
   && grep -Fq 'premiumBuildCallbackCpuNanoseconds' "$native_harness" \
   || contract_fail 'Every attach-menu callback must use the CPU-plus-blocked estimate with wall times as diagnostics.'
+awk '
+  /for \(const auto &callback : attachMenuCallbacks\)/ { copy = 1 }
+  copy && /result.schedulerEvidenceSkippedRecords/ { exit }
+  copy { print }
+' "$native_harness" > "$temp_dir/attach-menu-callback-work.cpp"
+grep -Fq 'timingBudgetRun.Observe(' "$temp_dir/attach-menu-callback-work.cpp" \
+  && grep -Fq 'MainThreadWorkBudgetIsUntracedWallOverrun(' \
+    "$temp_dir/attach-menu-callback-work.cpp" \
+  && grep -Fq 'callback.startedAtSteadyNanoseconds' \
+    "$temp_dir/attach-menu-callback-work.cpp" \
+  && grep -Fq 'budgetAssessment.workNanoseconds' \
+    "$temp_dir/attach-menu-callback-work.cpp" \
+  && grep -Fq 'HARNESS ERROR: attach-menu scheduler trace unavailable:' \
+    "$temp_dir/attach-menu-callback-work.cpp" \
+  || contract_fail 'Attach-menu callbacks must use the shared incident verdict and report missing trace evidence.'
 grep -Fq 'const auto firstAccessWithinBudget = timingBudgetRun.Observe(' \
   "$native_harness" \
   && grep -Fq 'MainThreadCpuWorkWithinBudget(' "$native_harness" \

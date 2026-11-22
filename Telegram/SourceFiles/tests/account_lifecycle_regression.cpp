@@ -15575,6 +15575,16 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 			callback.mainThreadWorkNanoseconds, callback.durationNanoseconds,
 			schedulerSamples.trace, schedulerSamples.sampleOffsetsNanoseconds,
 			schedulerSamples.before, schedulerSamples.after);
+		const auto budgetAssessment = AssessMainThreadWorkBudget(
+			estimate, callback.mainThreadWorkNanoseconds,
+			kMaxChatSwitchNanoseconds);
+		const auto withinBudget = timingBudgetRun.Observe(
+			budgetAssessment, callback.durationNanoseconds,
+			kMaxChatSwitchNanoseconds, callback.startedAtSteadyNanoseconds);
+		const auto runnerNoiseEligible
+			= MainThreadWorkBudgetIsUntracedWallOverrun(
+				budgetAssessment, callback.durationNanoseconds,
+				kMaxChatSwitchNanoseconds);
 		auto offsets = QStringList();
 		for (const auto offset : schedulerSamples.sampleOffsetsNanoseconds) {
 			offsets.push_back(QString::number(offset));
@@ -15584,18 +15594,40 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 							   ? QByteArray("none")
 							   : schedulerSamples.trace.toLatin1();
 		const auto offsetsText = offsets.join(u',').toLatin1();
+		if ((callback.durationNanoseconds >= kMaxChatSwitchNanoseconds)
+			&& !budgetAssessment.schedulerEvidenceAvailable) {
+			std::fprintf(
+				stderr,
+				"HARNESS ERROR: attach-menu scheduler trace unavailable: "
+				"label=%s window_start_steady_ns=%lld wall_ns=%lld "
+				"main_thread_cpu_ns=%lld budget_ns=%lld "
+				"runner_noise_eligible=%d runner_noise_cpu_limit_ns=%lld.\n",
+				label.constData(),
+				static_cast<long long>(callback.startedAtSteadyNanoseconds),
+				static_cast<long long>(callback.durationNanoseconds),
+				static_cast<long long>(callback.mainThreadWorkNanoseconds),
+				static_cast<long long>(kMaxChatSwitchNanoseconds),
+				runnerNoiseEligible,
+				static_cast<long long>(
+					kMaxUntracedRunnerNoiseMainThreadCpuNanoseconds));
+		}
 		std::fprintf(
 			stderr,
-			"Attach menu callback work window: label=%s wall_ns=%lld "
+			"Attach menu callback work window: label=%s "
+			"window_start_steady_ns=%lld wall_ns=%lld "
 			"main_thread_cpu_ns=%lld blocked_estimate_ns=%lld "
-			"estimated_work_ns=%lld trace=%s offsets_ns=%s "
+			"estimated_work_ns=%lld budget_ns=%lld trace=%s offsets_ns=%s "
 			"before=%c before_distance_ns=%lld after=%c "
-			"after_distance_ns=%lld.\n",
+			"after_distance_ns=%lld within_budget=%d "
+			"cpu_only_within_budget=%d runner_noise_eligible=%d "
+			"scheduler_evidence_available=%d.\n",
 			label.constData(),
+			static_cast<long long>(callback.startedAtSteadyNanoseconds),
 			static_cast<long long>(callback.durationNanoseconds),
 			static_cast<long long>(callback.mainThreadWorkNanoseconds),
 			static_cast<long long>(estimate.blockedNanoseconds),
-			static_cast<long long>(estimate.estimatedWorkNanoseconds),
+			static_cast<long long>(budgetAssessment.workNanoseconds),
+			static_cast<long long>(kMaxChatSwitchNanoseconds),
 			trace.constData(), offsetsText.constData(),
 			schedulerSamples.before ? schedulerSamples.before->state : '-',
 			static_cast<long long>(
@@ -15606,7 +15638,11 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 			static_cast<long long>(
 				schedulerSamples.after
 					? schedulerSamples.after->distanceNanoseconds
-					: -1));
+					: -1),
+			withinBudget,
+			MainThreadCpuWorkWithinBudget(callback.mainThreadWorkNanoseconds,
+										  kMaxChatSwitchNanoseconds),
+			runnerNoiseEligible, budgetAssessment.schedulerEvidenceAvailable);
 		qint64 *destination = nullptr;
 		bool *seen = nullptr;
 		if (callback.label == u"first hover callback"_q) {
@@ -15626,11 +15662,11 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		}
 		if (destination && seen) {
 			if (!*seen) {
-				*destination = estimate.estimatedWorkNanoseconds;
+				*destination = budgetAssessment.workNanoseconds;
 				*seen = true;
 			} else {
 				AccumulateMainThreadWorkEstimate(
-					*destination, estimate.estimatedWorkNanoseconds);
+					*destination, budgetAssessment.workNanoseconds);
 			}
 		}
 	}
