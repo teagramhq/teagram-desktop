@@ -11454,10 +11454,15 @@ AssessMainThreadWorkBudget(const MainThreadWorkEstimate &estimate,
 			   || assessment.schedulerEvidenceAvailable);
 }
 
+constexpr auto kMaxUntracedRunnerNoiseMainThreadCpuNanoseconds
+	= 5'000'000;
+
 [[nodiscard]] bool MainThreadWorkBudgetIsUntracedWallOverrun(
 	const MainThreadWorkBudgetAssessment &assessment, qint64 wallNanoseconds,
 	qint64 budgetNanoseconds) {
 	return !assessment.schedulerEvidenceAvailable && assessment.withinBudget
+		   && (assessment.workNanoseconds
+			   <= kMaxUntracedRunnerNoiseMainThreadCpuNanoseconds)
 		   && (budgetNanoseconds > 0) && (wallNanoseconds >= budgetNanoseconds);
 }
 
@@ -11690,15 +11695,25 @@ void AccumulateMainThreadWorkEstimate(qint64 &aggregateNanoseconds,
 	const auto missingTraceInitialSelectionAssessment
 		= AssessMainThreadWorkBudget(missingTraceInitialSelection, 40'000'000,
 									 kMaxChatSwitchNanoseconds);
+	const auto missingTraceLowCpuInitialSelection = EstimateMainThreadWork(
+		1'138'000, 135'000'000, u"none"_q, {});
+	const auto missingTraceLowCpuInitialSelectionAssessment
+		= AssessMainThreadWorkBudget(missingTraceLowCpuInitialSelection,
+									 1'138'000, kMaxChatSwitchNanoseconds);
+	auto untracedInitialSelectionWithHighCpu = MainThreadWorkBudgetRun();
+	const auto missingTraceHighCpuInitialSelectionGateWithinBudget
+		= untracedInitialSelectionWithHighCpu.Observe(
+			missingTraceInitialSelectionAssessment, 135'000'000,
+			kMaxChatSwitchNanoseconds);
 	auto oneUntracedWallOverrun = MainThreadWorkBudgetRun();
-	const auto missingTraceInitialSelectionGateWithinBudget
-		= oneUntracedWallOverrun.Observe(missingTraceInitialSelectionAssessment,
-										 135'000'000,
-										 kMaxChatSwitchNanoseconds);
+	const auto missingTraceLowCpuInitialSelectionGateWithinBudget
+		= oneUntracedWallOverrun.Observe(
+			missingTraceLowCpuInitialSelectionAssessment, 135'000'000,
+			kMaxChatSwitchNanoseconds);
 	auto twoUntracedWallOverruns = MainThreadWorkBudgetRun();
-	twoUntracedWallOverruns.Observe(missingTraceInitialSelectionAssessment,
+	twoUntracedWallOverruns.Observe(missingTraceLowCpuInitialSelectionAssessment,
 									135'000'000, kMaxChatSwitchNanoseconds);
-	twoUntracedWallOverruns.Observe(missingTraceInitialSelectionAssessment,
+	twoUntracedWallOverruns.Observe(missingTraceLowCpuInitialSelectionAssessment,
 									135'000'000, kMaxChatSwitchNanoseconds);
 	auto tracedBlockedRun = MainThreadWorkBudgetRun();
 	tracedBlockedRun.Observe(blockedSelectionAssessment, 60'000'000,
@@ -12311,7 +12326,14 @@ void AccumulateMainThreadWorkEstimate(qint64 &aggregateNanoseconds,
 		   && !MainThreadWorkBudgetEvidenceWithinBudget(
 			   missingTraceInitialSelectionAssessment, 135'000'000,
 			   kMaxChatSwitchNanoseconds)
-		   && !missingTraceInitialSelectionGateWithinBudget
+		   && !MainThreadWorkBudgetIsUntracedWallOverrun(
+			   missingTraceInitialSelectionAssessment, 135'000'000,
+			   kMaxChatSwitchNanoseconds)
+		   && !missingTraceHighCpuInitialSelectionGateWithinBudget
+		   && !untracedInitialSelectionWithHighCpu.WithinBudget()
+		   && (missingTraceLowCpuInitialSelectionAssessment.workNanoseconds
+			   == 1'138'000)
+		   && !missingTraceLowCpuInitialSelectionGateWithinBudget
 		   && oneUntracedWallOverrun.WithinBudget()
 		   && !twoUntracedWallOverruns.WithinBudget()
 		   && !tracedBlockedRun.WithinBudget()
@@ -14003,11 +14025,12 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		const auto withinBudget = timingBudgetRun.Observe(
 			budgetAssessment, chatSwitchWindows[i].durationNanoseconds,
 			kMaxChatSwitchNanoseconds);
+		const auto runnerNoiseEligible
+			= MainThreadWorkBudgetIsUntracedWallOverrun(
+				budgetAssessment, chatSwitchWindows[i].durationNanoseconds,
+				kMaxChatSwitchNanoseconds);
 		const auto withinBudgetWithNoiseAllowance
-			= withinBudget
-			  || MainThreadWorkBudgetIsUntracedWallOverrun(
-				  budgetAssessment, chatSwitchWindows[i].durationNanoseconds,
-				  kMaxChatSwitchNanoseconds);
+			= withinBudget || runnerNoiseEligible;
 		if ((chatSwitchWindows[i].durationNanoseconds
 			 >= kMaxChatSwitchNanoseconds)
 			&& !budgetAssessment.schedulerEvidenceAvailable) {
@@ -14016,14 +14039,17 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 				stderr,
 				"HARNESS ERROR: chat-switch scheduler trace unavailable: "
 				"index=%zu label=%s wall_ns=%lld main_thread_cpu_ns=%lld "
-				"budget_ns=%lld; this sample fails its individual gate and "
-				"uses the single-sample runner-noise allowance.\n",
+				"budget_ns=%lld runner_noise_eligible=%d "
+				"runner_noise_cpu_limit_ns=%lld.\n",
 				static_cast<std::size_t>(i), label.constData(),
 				static_cast<long long>(
 					chatSwitchWindows[i].durationNanoseconds),
 				static_cast<long long>(
 					chatSwitchWindows[i].mainThreadWorkNanoseconds),
-				static_cast<long long>(kMaxChatSwitchNanoseconds));
+				static_cast<long long>(kMaxChatSwitchNanoseconds),
+				runnerNoiseEligible,
+				static_cast<long long>(
+					kMaxUntracedRunnerNoiseMainThreadCpuNanoseconds));
 		}
 		if ((estimate.estimatedWorkNanoseconds >= kMaxChatSwitchNanoseconds)
 			|| (chatSwitchWindows[i].durationNanoseconds
@@ -15065,18 +15091,25 @@ void RunAuthenticatedCacheSymlinkCases(
 			const auto firstAccessWithinBudget = timingBudgetRun.Observe(
 				firstAccessBudgetAssessment, firstAccessNanoseconds,
 				kMaxChatSwitchNanoseconds);
+			const auto firstAccessRunnerNoiseEligible
+				= MainThreadWorkBudgetIsUntracedWallOverrun(
+					firstAccessBudgetAssessment, firstAccessNanoseconds,
+					kMaxChatSwitchNanoseconds);
 			if (firstAccessSchedulerCaptureRequired
 				&& !firstAccessBudgetAssessment.schedulerEvidenceAvailable) {
 				std::fprintf(
 					stderr,
 					"HARNESS ERROR: first-access scheduler trace unavailable: "
-					"wall_ns=%lld main_thread_cpu_ns=%lld budget_ns=%lld; "
-					"this sample fails its individual gate and uses the "
-					"single-sample runner-noise allowance.\n",
+					"wall_ns=%lld main_thread_cpu_ns=%lld budget_ns=%lld "
+					"runner_noise_eligible=%d "
+					"runner_noise_cpu_limit_ns=%lld.\n",
 					static_cast<long long>(firstAccessNanoseconds),
 					static_cast<long long>(
 						firstAccessMainThreadWorkNanoseconds),
-					static_cast<long long>(kMaxChatSwitchNanoseconds));
+					static_cast<long long>(kMaxChatSwitchNanoseconds),
+					firstAccessRunnerNoiseEligible,
+					static_cast<long long>(
+						kMaxUntracedRunnerNoiseMainThreadCpuNanoseconds));
 			}
 			auto corroboratedStartupStalls
 				= std::vector<CorroboratedStartupStall>();
@@ -15217,11 +15250,11 @@ void RunAuthenticatedCacheSymlinkCases(
 					estimate, gap.mainThreadWorkNanoseconds, 100'000'000);
 				const auto withinBudget = timingBudgetRun.Observe(
 					budgetAssessment, gap.durationNanoseconds, 100'000'000);
+				const auto runnerNoiseEligible
+					= MainThreadWorkBudgetIsUntracedWallOverrun(
+						budgetAssessment, gap.durationNanoseconds, 100'000'000);
 				const auto withinBudgetWithNoiseAllowance
-					= withinBudget
-					  || MainThreadWorkBudgetIsUntracedWallOverrun(
-						  budgetAssessment, gap.durationNanoseconds,
-						  100'000'000);
+					= withinBudget || runnerNoiseEligible;
 				maxStartupEstimatedWorkNanoseconds
 					= std::max(maxStartupEstimatedWorkNanoseconds,
 							   budgetAssessment.workNanoseconds);
@@ -15235,14 +15268,16 @@ void RunAuthenticatedCacheSymlinkCases(
 						stderr,
 						"HARNESS ERROR: startup scheduler trace unavailable: "
 						"started_at=%s wall_ns=%lld main_thread_cpu_ns=%lld "
-						"budget_ns=100000000; this sample fails its individual "
-						"gate and uses the single-sample runner-noise "
-						"allowance.\n",
+						"budget_ns=100000000 runner_noise_eligible=%d "
+						"runner_noise_cpu_limit_ns=%lld.\n",
 						gap.startedAt.toString(Qt::ISODateWithMs)
 							.toUtf8()
 							.constData(),
 						static_cast<long long>(gap.durationNanoseconds),
-						static_cast<long long>(gap.mainThreadWorkNanoseconds));
+						static_cast<long long>(gap.mainThreadWorkNanoseconds),
+						runnerNoiseEligible,
+						static_cast<long long>(
+							kMaxUntracedRunnerNoiseMainThreadCpuNanoseconds));
 				}
 				const auto gapStartedAtUtf8
 					= gap.startedAt.toString(Qt::ISODateWithMs).toUtf8();

@@ -1545,9 +1545,10 @@ local untraced_wall_overruns
 untraced_wall_overruns="$(grep -E -c \
 	'^HARNESS ERROR: (startup|chat-switch|first-access) scheduler trace unavailable:' \
 	"$AUTH_LOG" || true)"
+printf 'untraced_wall_overrun_count=%s\n' "$untraced_wall_overruns"
 if (( untraced_wall_overruns > 1 )); then
 	cat "$AUTH_LOG" >&2
-	echo "multiple untraced wall-only timing overruns exceeded the single-sample allowance." >&2
+	echo "multiple untraced timing overruns exceeded the single-sample allowance." >&2
 	exit 1
 fi
 for cache in cache media_cache; do

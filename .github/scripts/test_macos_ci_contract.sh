@@ -1389,7 +1389,7 @@ check_cache_latency_evidence() (
   source "$temp_dir/cache-latency-check.sh"
 )
 if ! check_cache_latency_evidence "$temp_dir/cache-latency.log" >/dev/null 2>&1; then
-  contract_fail 'A 225 ms startup gap with 17.9 ms main-thread CPU must pass without scheduler proof.'
+  contract_fail 'A 225 ms startup gap with scheduler evidence under the 100 ms work budget must pass.'
 fi
 cp "$temp_dir/cache-latency.log" "$temp_dir/cache-latency-responsive.log"
 sed -e 's/startup_stall_count=1/startup_stall_count=0/' \
@@ -1409,7 +1409,7 @@ sed -e 's/startup_stall_count=1/startup_stall_count=0/' \
   "$temp_dir/cache-latency-responsive.log" > "$temp_dir/cache-latency-no-watchdog-evidence.log"
 printf '%s\n' \
   'Cache startup work window: started_at=2026-11-06T00:47:53.000Z wall_ns=105113167 main_thread_cpu_ns=1138000 blocked_estimate_ns=-1 estimated_work_ns=1138000 budget_ns=100000000 trace=none within_budget=0 cpu_work_within_budget=1 scheduler_evidence_available=0.' \
-  'HARNESS ERROR: startup scheduler trace unavailable: this sample fails its individual gate and uses the single-sample runner-noise allowance.' \
+  'HARNESS ERROR: startup scheduler trace unavailable: runner_noise_eligible=1 runner_noise_cpu_limit_ns=5000000.' \
   >> "$temp_dir/cache-latency-no-watchdog-evidence.log"
 if ! check_cache_latency_evidence "$temp_dir/cache-latency-no-watchdog-evidence.log" \
   > "$temp_dir/cache-latency-no-watchdog-error.log" 2>&1; then
@@ -1428,7 +1428,7 @@ sed \
   > "$temp_dir/cache-latency-attempt-1.log"
 printf '%s\n' \
   'Cache startup work window: started_at=2026-11-06T00:47:53.000Z wall_ns=105113167 main_thread_cpu_ns=1138000 blocked_estimate_ns=-1 estimated_work_ns=1138000 budget_ns=100000000 capture_pending=0 trace_samples=0 trace=none within_budget=0 cpu_only_within_budget=1 scheduler_capture_required=1 scheduler_evidence_available=0.' \
-  'HARNESS ERROR: startup scheduler trace unavailable: started_at=2026-11-06T00:47:53.000Z wall_ns=105113167 main_thread_cpu_ns=1138000 budget_ns=100000000; this sample fails its individual gate and uses the single-sample runner-noise allowance.' \
+  'HARNESS ERROR: startup scheduler trace unavailable: started_at=2026-11-06T00:47:53.000Z wall_ns=105113167 main_thread_cpu_ns=1138000 budget_ns=100000000 runner_noise_eligible=1 runner_noise_cpu_limit_ns=5000000.' \
   >> "$temp_dir/cache-latency-attempt-1.log"
 if ! check_cache_latency_evidence "$temp_dir/cache-latency-attempt-1.log" \
   > "$temp_dir/cache-latency-attempt-1-output.log" 2>&1; then
@@ -1438,15 +1438,23 @@ if ! grep -Fq '::warning:: HARNESS ERROR: startup scheduler trace unavailable' \
   "$temp_dir/cache-latency-attempt-1-output.log"; then
   contract_fail 'The attempt-1 startup sample must report the missing trace as a warning.'
 fi
+if ! grep -Fq 'untraced_wall_overrun_count=1' \
+  "$temp_dir/cache-latency-attempt-1-output.log"; then
+  contract_fail 'The profile step must report the attempt-1 untraced overrun count.'
+fi
 cp "$temp_dir/cache-latency-attempt-1.log" \
   "$temp_dir/cache-latency-two-untraced-overruns.log"
 printf '%s\n' \
-  'HARNESS ERROR: chat-switch scheduler trace unavailable: index=0 label=initial-history-selection wall_ns=135000000 main_thread_cpu_ns=40000000 budget_ns=50000000; this sample fails its individual gate and uses the single-sample runner-noise allowance.' \
+  'HARNESS ERROR: chat-switch scheduler trace unavailable: index=0 label=initial-history-selection wall_ns=135000000 main_thread_cpu_ns=1138000 budget_ns=50000000 runner_noise_eligible=1 runner_noise_cpu_limit_ns=5000000.' \
   >> "$temp_dir/cache-latency-two-untraced-overruns.log"
 if check_cache_latency_evidence \
   "$temp_dir/cache-latency-two-untraced-overruns.log" \
   > "$temp_dir/cache-latency-two-untraced-overruns-output.log" 2>&1; then
-  contract_fail 'Two untraced wall-only overruns in one profile step must fail.'
+  contract_fail 'Two untraced negligible-CPU overruns in one profile step must fail.'
+fi
+if ! grep -Fq 'untraced_wall_overrun_count=2' \
+  "$temp_dir/cache-latency-two-untraced-overruns-output.log"; then
+  contract_fail 'The profile step must report both untraced overrun windows.'
 fi
 sed \
   -e '/^Cache access latency regression: cache=cache / { s/first_access_ns=86917/first_access_ns=105113167/; s/first_access_main_thread_cpu_ns=80000/first_access_main_thread_cpu_ns=1138000/; s/first_access_blocked_estimate_ns=0/first_access_blocked_estimate_ns=-1/; s/first_access_estimated_work_ns=80000/first_access_estimated_work_ns=1138000/; s/first_access_within_budget=1/first_access_within_budget=0/; s/first_access_trace=R/first_access_trace=none/; s/under_50ms=1/under_50ms=0/; }' \
@@ -1456,7 +1464,7 @@ if ! grep -Fq 'first_access_ns=105113167 first_access_main_thread_cpu_ns=1138000
   contract_fail 'First access must report the wall threshold and CPU-only assessment separately.'
 fi
 printf '%s\n' \
-  'HARNESS ERROR: first-access scheduler trace unavailable: this sample fails its individual gate and uses the single-sample runner-noise allowance.' \
+  'HARNESS ERROR: first-access scheduler trace unavailable: runner_noise_eligible=1 runner_noise_cpu_limit_ns=5000000.' \
   >> "$temp_dir/cache-latency-first-access-cpu-only.log"
 if ! check_cache_latency_evidence \
   "$temp_dir/cache-latency-first-access-cpu-only.log" \
@@ -1495,8 +1503,13 @@ sed -e 's/max_switch_ns=135344750/max_switch_ns=227000000/' \
   -e 's/max_switch_estimated_work_ns=40000000/max_switch_estimated_work_ns=45500000/' \
   -e 's/max_recurring_switch_estimated_work_ns=40000000/max_recurring_switch_estimated_work_ns=45500000/' \
   "$temp_dir/cache-latency-responsive.log" > "$temp_dir/cache-latency-long-wall-switch.log"
-if ! check_cache_latency_evidence "$temp_dir/cache-latency-long-wall-switch.log" >/dev/null 2>&1; then
-  contract_fail 'A 227 ms chat switch with 45.5 ms main-thread CPU must pass without scheduler proof.'
+sed '/^Cache chat switch latency regression:/s/within_budgets=1/within_budgets=0/' \
+  "$temp_dir/cache-latency-long-wall-switch.log" > "$temp_dir/cache-latency-long-wall-switch-untraced-cpu-stall.log"
+printf '%s\n' \
+  'HARNESS ERROR: chat-switch scheduler trace unavailable: index=1 label=chat-switch wall_ns=227000000 main_thread_cpu_ns=45500000 budget_ns=50000000 runner_noise_eligible=0 runner_noise_cpu_limit_ns=5000000.' \
+  >> "$temp_dir/cache-latency-long-wall-switch-untraced-cpu-stall.log"
+if check_cache_latency_evidence "$temp_dir/cache-latency-long-wall-switch-untraced-cpu-stall.log" >/dev/null 2>&1; then
+	contract_fail 'A 227 ms chat switch with 45.5 ms untraced CPU must fail.'
 fi
 sed '/^Initial history selection:/s/estimated_work_ns=40000000/estimated_work_ns=52107000/' \
   "$temp_dir/cache-latency-responsive.log" > "$temp_dir/cache-latency-initial-selection-over-budget.log"
@@ -1510,13 +1523,33 @@ if ! grep -Fq 'within_budget=0 cpu_only_within_budget=1' \
   contract_fail 'The initial-selection gate must reject an untraced 135 ms window with 40 ms CPU.'
 fi
 printf '%s\n' \
-  'HARNESS ERROR: chat-switch scheduler trace unavailable: index=0 label=initial-history-selection wall_ns=135344750 main_thread_cpu_ns=40000000 budget_ns=50000000; this sample fails its individual gate and uses the single-sample runner-noise allowance.' \
+  'HARNESS ERROR: chat-switch scheduler trace unavailable: index=0 label=initial-history-selection wall_ns=135344750 main_thread_cpu_ns=40000000 budget_ns=50000000 runner_noise_eligible=0 runner_noise_cpu_limit_ns=5000000.' \
   >> "$temp_dir/cache-latency-initial-selection-cpu-only.log"
-if ! check_cache_latency_evidence "$temp_dir/cache-latency-initial-selection-cpu-only.log" >/dev/null 2>&1; then
-	contract_fail 'A single untraced 135 ms initial selection must warn without failing the profile step.'
+sed '/^Cache chat switch latency regression:/s/within_budgets=1/within_budgets=0/' \
+  "$temp_dir/cache-latency-initial-selection-cpu-only.log" > "$temp_dir/cache-latency-initial-selection-high-cpu.log"
+if check_cache_latency_evidence "$temp_dir/cache-latency-initial-selection-high-cpu.log" >/dev/null 2>&1; then
+	contract_fail 'A 135 ms untraced initial selection with 40 ms CPU must fail.'
+fi
+sed '/^Initial history selection:/ { s/main_thread_work_ns=40000000/main_thread_work_ns=1138000/; s/blocked_estimate_ns=0/blocked_estimate_ns=-1/; s/estimated_work_ns=40000000/estimated_work_ns=1138000/; s/trace=R/trace=none/; s/within_budget=1/within_budget=0/; }' \
+  "$temp_dir/cache-latency-responsive.log" > "$temp_dir/cache-latency-initial-selection-negligible-cpu.log"
+printf '%s\n' \
+  'HARNESS ERROR: chat-switch scheduler trace unavailable: index=0 label=initial-history-selection wall_ns=135344750 main_thread_cpu_ns=1138000 budget_ns=50000000 runner_noise_eligible=1 runner_noise_cpu_limit_ns=5000000.' \
+  >> "$temp_dir/cache-latency-initial-selection-negligible-cpu.log"
+if ! check_cache_latency_evidence \
+  "$temp_dir/cache-latency-initial-selection-negligible-cpu.log" \
+  > "$temp_dir/cache-latency-initial-selection-negligible-cpu-output.log" 2>&1; then
+	contract_fail 'One 135 ms untraced initial selection with 1.138 ms CPU must pass.'
+fi
+if ! grep -Fq 'untraced_wall_overrun_count=1' \
+  "$temp_dir/cache-latency-initial-selection-negligible-cpu-output.log"; then
+	contract_fail 'The profile step must report the single untraced overrun count.'
+fi
+if ! grep -Fq '::warning:: HARNESS ERROR: chat-switch scheduler trace unavailable' \
+  "$temp_dir/cache-latency-initial-selection-negligible-cpu-output.log"; then
+	contract_fail 'An initial-selection sample without a scheduler trace must be reported as a warning.'
 fi
 sed '/^Initial history selection:/ { s/main_thread_work_ns=40000000/main_thread_work_ns=52107000/; s/estimated_work_ns=40000000/estimated_work_ns=52107000/; s/cpu_only_within_budget=1/cpu_only_within_budget=0/; }' \
-  "$temp_dir/cache-latency-initial-selection-cpu-only.log" > "$temp_dir/cache-latency-initial-selection-cpu-over-budget.log"
+  "$temp_dir/cache-latency-initial-selection-high-cpu.log" > "$temp_dir/cache-latency-initial-selection-cpu-over-budget.log"
 if check_cache_latency_evidence "$temp_dir/cache-latency-initial-selection-cpu-over-budget.log" >/dev/null 2>&1; then
 	contract_fail 'A 52 ms initial selection CPU stall must fail without scheduler evidence.'
 fi
