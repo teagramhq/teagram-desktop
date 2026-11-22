@@ -56,6 +56,22 @@ EXTENDED_REPORT = REPORT.replace(
     "search=1/1 updates=1/1.\nOutcome: PASS",
 )
 
+COLD_CHAT_REPORT = EXTENDED_REPORT.replace(
+    "| updates.getDifference (1,000 messages; 50 / 5,000 dialogs) | 10.00 ms | "
+    "12.00 ms | 1.20x | 50 ms | calibrating |\n",
+    "| updates.getDifference (1,000 messages; 50 / 5,000 dialogs) | 10.00 ms | "
+    "12.00 ms | 1.20x | 50 ms | calibrating |\n"
+    "| cold chat open (1 / 100 loaded messages) | 14.00 ms | 28.00 ms | "
+    "2.00x | 50 ms | calibrating |\n",
+).replace(
+    "search=1/1 updates=1/1.\nOutcome: PASS",
+    "search=1/1 updates=1/1.\n"
+    "Cold chat open check: 1/1.\nOutcome: PASS",
+).replace(
+    "update burst 1x=0, 100x=0; total=0.",
+    "update burst 1x=0, 100x=0; cold chat open 1x=0, 100x=0; total=0.",
+)
+
 
 def make_sample(one_ms=10.0, hundred_ms=12.0, stalls=0):
     scenarios = {}
@@ -67,7 +83,7 @@ def make_sample(one_ms=10.0, hundred_ms=12.0, stalls=0):
             "hundred_stalls": stalls,
         }
     return {
-        "schema_version": 2,
+        "schema_version": 3,
         "created_at": "2026-11-10T00:00:00Z",
         "valid": True,
         "scenario_checks_passed": True,
@@ -276,6 +292,33 @@ class DesktopScaleCheckTests(unittest.TestCase):
         self.assertEqual(row["one_stalls"], 0)
         self.assertEqual(sample["directory_enumerations"], {"one": 0, "hundred": 0})
         self.assertTrue(sample["valid"])
+
+    def test_cold_chat_open_scenario_is_parsed_and_stalls_fail_the_gate(self):
+        self.require_implementation()
+        sample = scale_check.parse_report(COLD_CHAT_REPORT)
+        scenario = "cold chat open (1 / 100 loaded messages)"
+        self.assertEqual(sample["schema_version"], 3)
+        self.assertEqual(sample["scenarios"][scenario]["one_ms"], 14.0)
+        self.assertEqual(sample["scenarios"][scenario]["hundred_ms"], 28.0)
+        self.assertTrue(sample["valid"])
+
+        records = [make_sample() for _ in range(scale_check.MIN_DEV_RUNS)]
+        for record in records:
+            record["scenarios"][scenario]["one_stalls"] = 1
+        base = [make_sample(), make_sample()]
+        head = [make_sample(), make_sample()]
+        for head_sample in head:
+            head_sample["scenarios"][scenario]["one_stalls"] = 1
+
+        result = scale_check.evaluate(records, base, head)
+
+        self.assertNotIn(scenario, result["exceptions"])
+        self.assertTrue(
+            any(
+                scenario in failure and "exceeded 50 ms" in failure
+                for failure in result["failures"]
+            )
+        )
 
     def test_failed_dialog_state_check_fails_the_scale_step(self):
         self.require_implementation()

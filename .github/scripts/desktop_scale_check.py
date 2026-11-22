@@ -24,6 +24,7 @@ APP_ARTIFACT_NAME = "Teagram"
 SAMPLE_FILE_NAME = "desktop-scale-sample.json"
 MAX_DEV_ARTIFACT_READS = 40
 CONTACT_LOAD_SCENARIO = "contacts.getContacts full response"
+COLD_CHAT_OPEN_SCENARIO = "cold chat open (1 / 100 loaded messages)"
 LEGACY_SCENARIOS = {
     "messages.getDialogs page (100 dialogs)": "dialogs",
     CONTACT_LOAD_SCENARIO: "contacts.getContacts",
@@ -35,8 +36,9 @@ NO_BASELINE_EXEMPTION_SCENARIOS = {
     CONTACT_LOAD_SCENARIO,
     "contact change + name lookup",
     "updates.getDifference (1,000 messages; 50 / 5,000 dialogs)",
+    COLD_CHAT_OPEN_SCENARIO,
 }
-RATIO_EXEMPT_SCENARIOS = {CONTACT_LOAD_SCENARIO}
+RATIO_EXEMPT_SCENARIOS = {CONTACT_LOAD_SCENARIO, COLD_CHAT_OPEN_SCENARIO}
 CALIBRATION_RATIO_SCENARIOS = (
     "messages.getDialogs page (100 dialogs)",
     "contact change + name lookup",
@@ -49,7 +51,11 @@ ADDITIONAL_SCENARIOS = {
     "messages.searchGlobal page (100 hits; 50 / 5,000 dialogs)": "search",
     "updates.getDifference (1,000 messages; 50 / 5,000 dialogs)": "update burst",
 }
-SCENARIOS = {**LEGACY_SCENARIOS, **ADDITIONAL_SCENARIOS}
+COLD_CHAT_SCENARIOS = {
+    COLD_CHAT_OPEN_SCENARIO: "cold chat open",
+}
+SCHEMA_V2_SCENARIOS = {**LEGACY_SCENARIOS, **ADDITIONAL_SCENARIOS}
+SCENARIOS = {**SCHEMA_V2_SCENARIOS, **COLD_CHAT_SCENARIOS}
 STATIC_EXCEPTIONS = {
 }
 
@@ -154,14 +160,23 @@ def parse_report(report):
         report,
         re.MULTILINE,
     )
+    cold_chat_checks = re.search(
+        r"^Cold chat open check: (\d)/(\d)\.$", report, re.MULTILINE
+    )
     outcome = re.search(r"^Outcome: (PASS|FAIL)$", report, re.MULTILINE)
     if not checks or not outcome:
         raise ScaleCheckError("scale-check report is missing its outcome")
     if bool(additional_rows) != bool(additional_checks):
         raise ScaleCheckError("scale-check report is missing additional scenario checks")
+    cold_chat_rows = set(scenario_rows) & set(COLD_CHAT_SCENARIOS)
+    if bool(cold_chat_rows) != bool(cold_chat_checks):
+        raise ScaleCheckError("scale-check report is missing cold chat checks")
     checks_passed = all(value == "1" for value in checks.groups()) and (
         not additional_rows
         or all(value == "1" for value in additional_checks.groups())
+    ) and (
+        not cold_chat_rows
+        or all(value == "1" for value in cold_chat_checks.groups())
     )
     metrics_present = all(
         row[field] is not None
@@ -181,7 +196,7 @@ def parse_report(report):
         and enumerations == {"one": 0, "hundred": 0}
     )
     return {
-        "schema_version": 2 if additional_rows else 1,
+        "schema_version": 3 if cold_chat_rows else 2 if additional_rows else 1,
         "valid": valid,
         "scenario_checks_passed": checks_passed,
         "outcome": outcome.group(1),
@@ -199,7 +214,7 @@ def _is_valid_record(record):
     if (
         not isinstance(record, dict)
         or isinstance(schema_version, bool)
-        or schema_version not in (1, 2)
+        or schema_version not in (1, 2, 3)
         or record.get("valid") is not True
         or not isinstance(record.get("created_at"), str)
         or not record.get("created_at")
@@ -212,7 +227,11 @@ def _is_valid_record(record):
             schema_version == 1
             and set(record["scenarios"]) != set(LEGACY_SCENARIOS)
         )
-        or (schema_version == 2 and set(record["scenarios"]) != set(SCENARIOS))
+        or (
+            schema_version == 2
+            and set(record["scenarios"]) != set(SCHEMA_V2_SCENARIOS)
+        )
+        or (schema_version == 3 and set(record["scenarios"]) != set(SCENARIOS))
     ):
         return False
     for row in record["scenarios"].values():
