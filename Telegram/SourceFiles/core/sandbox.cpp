@@ -12,6 +12,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #if !defined Q_OS_WIN && !defined Q_OS_MAC
 #include "platform/linux/local_socket_path.h"
 #endif // !Q_OS_WIN && !Q_OS_MAC
+#ifdef Q_OS_LINUX
+#include "platform/linux/desktop_identity.h"
+#endif // Q_OS_LINUX
 #include "mainwidget.h"
 #include "mainwindow.h"
 #include "storage/localstorage.h"
@@ -423,16 +426,61 @@ int Sandbox::start() {
 		}
 	};
 	auto localServerNameError = QString();
+#ifdef Q_OS_LINUX
+	auto linuxProfileLockIdentity = QString();
+#endif // Q_OS_LINUX
+	auto profileLockPath = QString();
+	const auto lockDirectory = QDir(cWorkingDir()).absolutePath();
 	{
 		const auto d = QFile::encodeName(QDir(cWorkingDir()).absolutePath());
 		char h[33] = {0};
 		hashMd5Hex(d.constData(), d.size(), h);
+#ifdef Q_OS_LINUX
+		const auto snap = KSandbox::isSnap();
+		const auto serverName = Platform::Linux::SingleInstanceLocalServerName(
+			QString::fromLatin1(h), QCoreApplication::applicationName(), snap);
+		linuxProfileLockIdentity
+			= Platform::Linux::SingleInstanceProfileLockIdentityForServerName(
+				serverName, qEnvironmentVariable("XDG_RUNTIME_DIR"), geteuid(),
+				snap);
+		if (!linuxProfileLockIdentity.isEmpty()) {
+			const auto encodedIdentity
+				= QFile::encodeName(linuxProfileLockIdentity);
+			char lockHash[33] = {0};
+			hashMd5Hex(encodedIdentity.constData(), encodedIdentity.size(),
+					   lockHash);
+			profileLockPath = QDir(cWorkingDir()).absolutePath()
+				+ u"/Teagram-profile-"_q + QString::fromLatin1(lockHash)
+				+ u".lock"_q;
+			_singleInstanceLock
+				= std::make_unique<SingleInstanceLock>(profileLockPath);
+			const auto lockResult = _singleInstanceLock->tryAcquire();
+			if (lockResult == SingleInstanceLock::Result::Acquired) {
+				_singleInstanceLock->release();
+			} else if (lockResult == SingleInstanceLock::Result::Busy) {
+				const auto activeServerPath
+					= Platform::Linux::SingleInstanceServerPathFromLockContentsForIdentity(
+						_singleInstanceLock->contents(),
+						linuxProfileLockIdentity, geteuid(), snap);
+				if (!activeServerPath.isEmpty()) {
+					_localServerName = activeServerPath;
+				}
+			}
+		}
+		if (_localServerName.isEmpty()
+			&& (cLaunchMode() != LaunchModeCleanup)) {
+			_localServerName
+				= Platform::SingleInstanceLocalServerName(h, &localServerNameError);
+		}
+	#else // Q_OS_LINUX
 		_localServerName
 			= Platform::SingleInstanceLocalServerName(h, &localServerNameError);
+	#endif // Q_OS_LINUX
 	}
 
 #if !defined Q_OS_WIN && !defined Q_OS_MAC
-	if (_localServerName.isEmpty()) {
+	if (_localServerName.isEmpty()
+		&& (cLaunchMode() != LaunchModeCleanup)) {
 		const auto message
 			= localServerNameError.isEmpty()
 				  ? u"Could not determine a private local socket path."_q
@@ -484,15 +532,16 @@ int Sandbox::start() {
 		auto lockIdentity = _localServerName;
 #ifdef Q_OS_LINUX
 		// The endpoint can differ if session runtime creation races startup.
-		lockIdentity = Platform::Linux::SingleInstanceProfileLockIdentity(
-			_localServerName, KSandbox::isSnap());
+		lockIdentity = linuxProfileLockIdentity;
 #endif // Q_OS_LINUX
-		const auto encoded = QFile::encodeName(lockIdentity);
-		char hash[33] = {0};
-		hashMd5Hex(encoded.constData(), encoded.size(), hash);
-		const auto lockDirectory = QDir(cWorkingDir()).absolutePath();
-		auto lockPath = lockDirectory + u"/Teagram-profile-"_q
-						+ QString::fromLatin1(hash) + u".lock"_q;
+		if (profileLockPath.isEmpty()) {
+			const auto encoded = QFile::encodeName(lockIdentity);
+			char hash[33] = {0};
+			hashMd5Hex(encoded.constData(), encoded.size(), hash);
+			profileLockPath = lockDirectory + u"/Teagram-profile-"_q
+							  + QString::fromLatin1(hash) + u".lock"_q;
+		}
+		auto lockPath = profileLockPath;
 #if defined(Q_OS_MAC) && defined(TDESKTOP_LIFECYCLE_REGRESSION)
 		if (qEnvironmentVariableIsSet("TDESKTOP_PROFILE_LOCK_REGRESSION")) {
 			lockPath = lockDirectory;
@@ -542,7 +591,9 @@ int Sandbox::start() {
 			return 1;
 		}
 #endif // Q_OS_MAC
-		_singleInstanceLock = std::make_unique<SingleInstanceLock>(lockPath);
+		if (!_singleInstanceLock) {
+			_singleInstanceLock = std::make_unique<SingleInstanceLock>(lockPath);
+		}
 	}
 
 	if (!Core::UpdaterDisabled()) {
@@ -721,6 +772,10 @@ int Sandbox::start() {
 }
 
 int Sandbox::stopRunningInstance() {
+	if (_localServerName.isEmpty()) {
+		LOG(("Cleanup: no running instance found."));
+		return 0;
+	}
 	LOG(("Cleanup: connecting to %1...").arg(_localServerName));
 #ifdef Q_OS_MAC
 	if (!MacProtectedPath::CheckPath(MacProtectedPath::Operation::Open,

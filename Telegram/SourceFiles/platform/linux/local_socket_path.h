@@ -281,18 +281,42 @@ SingleInstanceProfileLockIdentity(const QString &serverPath, bool snap) {
 				: info.fileName();
 }
 
-[[nodiscard]] inline QString SingleInstanceServerPathFromLockContents(
-	const QString &contents, const QString &candidatePath, uid_t effectiveUid,
-	bool snap = false) {
-	if (!QDir::isAbsolutePath(contents)
+[[nodiscard]] inline QString SingleInstanceProfileLockIdentityForServerName(
+	const QString &serverName, const QString &runtimeDirectory,
+	uid_t effectiveUid, bool snap) {
+	if (!snap) {
+		return SingleInstanceSocketPathDetails::IsValidServerName(serverName)
+				   ? serverName
+				   : QString();
+	}
+	const auto serverPath = SingleInstanceSocketPathInDirectory(
+		runtimeDirectory, serverName, effectiveUid);
+	return serverPath.isEmpty()
+			   ? QString()
+			   : SingleInstanceProfileLockIdentity(serverPath, true);
+}
+
+[[nodiscard]] inline QString
+SingleInstanceServerPathFromLockContentsForIdentity(
+	const QString &contents, const QString &profileLockIdentity,
+	uid_t effectiveUid, bool snap = false) {
+	if (profileLockIdentity.isEmpty() || !QDir::isAbsolutePath(contents)
 		|| (SingleInstanceProfileLockIdentity(contents, snap)
-			!= SingleInstanceProfileLockIdentity(candidatePath, snap))) {
+			!= profileLockIdentity)) {
 		return QString();
 	}
 	const auto validatedPath = SingleInstanceSocketPathInDirectory(
 		QFileInfo(contents).absolutePath(), QFileInfo(contents).fileName(),
 		effectiveUid);
 	return (validatedPath == contents) ? validatedPath : QString();
+}
+
+[[nodiscard]] inline QString SingleInstanceServerPathFromLockContents(
+	const QString &contents, const QString &candidatePath, uid_t effectiveUid,
+	bool snap = false) {
+	return SingleInstanceServerPathFromLockContentsForIdentity(
+		contents, SingleInstanceProfileLockIdentity(candidatePath, snap),
+		effectiveUid, snap);
 }
 
 [[nodiscard]] inline QString SingleInstanceSocketPathForLaunch(
