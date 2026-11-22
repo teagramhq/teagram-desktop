@@ -8,7 +8,10 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from macos_timeout_capture import capture_hang_sample
+from macos_timeout_capture import (
+    authorization_timeout_report,
+    capture_hang_sample,
+)
 
 
 class TimeoutCaptureTests(unittest.TestCase):
@@ -53,6 +56,74 @@ class TimeoutCaptureTests(unittest.TestCase):
 
         self.assertFalse(result.ok)
         self.assertIn("timed out after 12 seconds", result.error)
+
+    def test_timeout_bytes_are_preserved_in_command_output(self) -> None:
+        def runner(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+            raise subprocess.TimeoutExpired(
+                command,
+                kwargs["timeout"],
+                output=b"partial stdout",
+                stderr=b"partial stderr",
+            )
+
+        result = capture_hang_sample(123, self.sample_path, 12, runner=runner)
+
+        self.assertFalse(result.ok)
+        self.assertEqual(
+            result.command_output, "partial stdout\npartial stderr"
+        )
+
+    def test_authorization_timeout_report_formats_capture_failure(self) -> None:
+        def runner(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+            raise subprocess.TimeoutExpired(
+                command,
+                kwargs["timeout"],
+                output=b"partial sample output",
+                stderr=b"sample timed out",
+            )
+
+        report = authorization_timeout_report(
+            123, "runtime", self.sample_path, 12, runner=runner
+        )
+
+        self.assertFalse(report.stack_capture_ok)
+        self.assertEqual(
+            report.command_output, "partial sample output\nsample timed out"
+        )
+        self.assertIn("HARNESS ERROR: authorization timeout stack capture failed", report.log_output)
+        self.assertIn(
+            "authorization_timeout=FAIL phase=runtime stack_capture=FAIL",
+            report.console_output,
+        )
+        self.assertIn("reason=sample timed out after 12 seconds", report.console_output)
+
+    def test_authorization_timeout_report_handles_missing_pid(self) -> None:
+        def runner(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+            self.fail("sample must not run without a process ID")
+
+        report = authorization_timeout_report(
+            None, "startup", self.sample_path, runner=runner
+        )
+
+        self.assertFalse(report.stack_capture_ok)
+        self.assertIn("failed because the Teagram PID was not found", report.log_output)
+        self.assertIn("reason=missing_pid", report.console_output)
+
+    def test_authorization_timeout_report_limits_success_excerpt_to_80_lines(self) -> None:
+        sample_text = "\n".join(f"frame {index}" for index in range(85))
+
+        def runner(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+            self.sample_path.write_text(sample_text, encoding="utf-8")
+            return subprocess.CompletedProcess(command, 0, "sample complete", "")
+
+        report = authorization_timeout_report(
+            123, "runtime", self.sample_path, runner=runner
+        )
+
+        self.assertTrue(report.stack_capture_ok)
+        self.assertIn("Authorization timeout stack capture: PASS", report.log_output)
+        self.assertIn("frame 79", report.console_output)
+        self.assertNotIn("frame 80", report.console_output)
 
     def test_empty_sample_file_is_capture_failure(self) -> None:
         def runner(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:

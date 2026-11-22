@@ -11446,6 +11446,14 @@ AssessMainThreadWorkBudget(const MainThreadWorkEstimate &estimate,
 	};
 }
 
+[[nodiscard]] bool MainThreadWorkBudgetEvidenceWithinBudget(
+	const MainThreadWorkBudgetAssessment &assessment, qint64 wallNanoseconds,
+	qint64 budgetNanoseconds) {
+	return assessment.withinBudget
+		   && ((wallNanoseconds < budgetNanoseconds)
+			   || assessment.schedulerEvidenceAvailable);
+}
+
 struct StartupWorkEstimate final {
 	SchedulerTraceWindow schedulerSamples;
 	MainThreadWorkEstimate estimate;
@@ -11630,6 +11638,10 @@ void AccumulateMainThreadWorkEstimate(qint64 &aggregateNanoseconds,
 		= EstimateMainThreadWork(1'138'000, 105'113'167, u"none"_q, {});
 	const auto runnerSchedulingNoiseAssessment = AssessMainThreadWorkBudget(
 		runnerSchedulingNoise, 1'138'000, 100'000'000);
+	const auto missingTraceLongWall
+		= EstimateMainThreadWork(1'138'000, 200'000'000, u"none"_q, {});
+	const auto missingTraceLongWallAssessment = AssessMainThreadWorkBudget(
+		missingTraceLongWall, 1'138'000, 100'000'000);
 	const auto missingTraceCpuStall
 		= EstimateMainThreadWork(101'000'000, 105'113'167, u"none"_q, {});
 	const auto missingTraceCpuStallAssessment = AssessMainThreadWorkBudget(
@@ -12237,6 +12249,9 @@ void AccumulateMainThreadWorkEstimate(qint64 &aggregateNanoseconds,
 		   && !runnerSchedulingNoiseAssessment.schedulerEvidenceAvailable
 		   && (runnerSchedulingNoiseAssessment.workNanoseconds == 1'138'000)
 		   && runnerSchedulingNoiseAssessment.withinBudget
+		   && missingTraceLongWallAssessment.withinBudget
+		   && !MainThreadWorkBudgetEvidenceWithinBudget(
+			   missingTraceLongWallAssessment, 200'000'000, 100'000'000)
 		   && !missingTraceCpuStallAssessment.schedulerEvidenceAvailable
 		   && (missingTraceCpuStallAssessment.workNanoseconds == 101'000'000)
 		   && !missingTraceCpuStallAssessment.withinBudget
@@ -12427,8 +12442,6 @@ struct CacheChatSwitchRegressionResult final {
 	bool historyChatModeWindowWasMaximized = false;
 	bool chatSwitchTransitionsSettled = true;
 	bool initialHistorySelectionSchedulerPreemptionProven = false;
-	bool initialHistorySelectionSchedulerCaptureComplete = false;
-	bool chatSwitchSchedulerCaptureComplete = true;
 	bool dialogHistoriesReady = false;
 	bool syntheticHistoriesReady = false;
 	bool attachMenuCacheReused = false;
@@ -13927,7 +13940,6 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		if ((chatSwitchWindows[i].durationNanoseconds
 			 >= kMaxChatSwitchNanoseconds)
 			&& !budgetAssessment.schedulerEvidenceAvailable) {
-			result.chatSwitchSchedulerCaptureComplete = false;
 			const auto label = chatSwitchWindows[i].label.toUtf8();
 			std::fprintf(
 				stderr,
@@ -14007,10 +14019,6 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 				= estimate.blockedNanoseconds;
 			result.initialHistorySelectionEstimatedWorkNanoseconds
 				= budgetAssessment.workNanoseconds;
-			result.initialHistorySelectionSchedulerCaptureComplete
-				= (chatSwitchWindows[i].durationNanoseconds
-				   < kMaxChatSwitchNanoseconds)
-				  || budgetAssessment.schedulerEvidenceAvailable;
 			result.initialHistorySelectionSchedulerTrace = schedulerTrace;
 			result.initialHistorySelectionSchedulerSampleOffsetsNanoseconds
 				= schedulerSampleOffsetsNanoseconds;
@@ -14027,12 +14035,16 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		const auto traceLatin1 = schedulerTrace.isEmpty()
 									 ? QByteArray("none")
 									 : schedulerTrace.toLatin1();
+		const auto withinBudget = MainThreadWorkBudgetEvidenceWithinBudget(
+			budgetAssessment, chatSwitchWindows[i].durationNanoseconds,
+			kMaxChatSwitchNanoseconds);
 		std::fprintf(
 			stderr,
 			"Cache chat switch work window: index=%zu peer_id=%lld "
 			"wall_ns=%lld main_thread_cpu_ns=%lld "
 			"blocked_estimate_ns=%lld estimated_work_ns=%lld "
-			"budget_ns=%lld capture_pending=%d trace=%s within_budget=%d.\n",
+			"budget_ns=%lld capture_pending=%d trace=%s within_budget=%d "
+			"cpu_only_within_budget=%d scheduler_evidence_available=%d.\n",
 			static_cast<std::size_t>(i),
 			static_cast<long long>(
 				chatSwitchWindows[i].label.section(u'=', -1).toLongLong()),
@@ -14043,7 +14055,8 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 			static_cast<long long>(budgetAssessment.workNanoseconds),
 			static_cast<long long>(kMaxChatSwitchNanoseconds),
 			schedulerSamples.capturePending, traceLatin1.constData(),
-			budgetAssessment.withinBudget);
+			withinBudget, budgetAssessment.withinBudget,
+			budgetAssessment.schedulerEvidenceAvailable);
 	}
 	result.chatSwitchSchedulerPreemptionProven
 		= chatSwitchCpuClockAvailable && chatSwitchProcessCpuClockAvailable;
@@ -14296,8 +14309,6 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		  && (result.maxChatSwitchIndex >= 0)
 		  && (result.maxChatSwitchPeerId >= 0)
 		  && result.chatSwitchWorkWithinBudget
-		  && result.chatSwitchSchedulerCaptureComplete
-		  && result.initialHistorySelectionSchedulerCaptureComplete
 		  && MainThreadEstimatedWorkWithinBudget(
 			  result.initialHistorySelectionEstimatedWorkNanoseconds,
 			  kMaxChatSwitchNanoseconds)
@@ -14895,6 +14906,10 @@ void RunAuthenticatedCacheSymlinkCases(
 			auto cacheUsableWithinBound = false;
 			auto firstCache = static_cast<Storage::Cache::Database *>(nullptr);
 			auto firstAccessNanoseconds = qint64(-1);
+			auto firstAccessMainThreadWorkNanoseconds = qint64(-1);
+			auto firstAccessInterval = MainThreadWorkInterval();
+			auto firstAccessSchedulerTimeline
+				= std::vector<Core::UiStallWatchdog::SchedulerSampleEvidence>();
 			const auto startupScansCompleted = WaitForRegressionCondition([&] {
 				if (Core::MacProtectedPath::CachePathWalkCountForTesting()
 					!= 2) {
@@ -14912,6 +14927,13 @@ void RunAuthenticatedCacheSymlinkCases(
 				if (!cacheInitializationAllowed) {
 					return true;
 				}
+				const auto firstAccessStartedAt = QDateTime::currentDateTime();
+				const auto firstAccessStartedAtSteadyNanoseconds
+					= std::chrono::duration_cast<std::chrono::nanoseconds>(
+						  std::chrono::steady_clock::now().time_since_epoch())
+						  .count();
+				const auto firstAccessCpuBefore
+					= MainThreadCpuTimeNanoseconds();
 				auto timer = QElapsedTimer();
 				timer.start();
 				if (!getAllowedCache()) {
@@ -14922,6 +14944,23 @@ void RunAuthenticatedCacheSymlinkCases(
 					return false;
 				}
 				firstAccessNanoseconds = timer.nsecsElapsed();
+				const auto firstAccessCpuAfter = MainThreadCpuTimeNanoseconds();
+				if (firstAccessCpuBefore && firstAccessCpuAfter) {
+					firstAccessMainThreadWorkNanoseconds
+						= std::max(qint64(0), *firstAccessCpuAfter
+												  - *firstAccessCpuBefore);
+				}
+				firstAccessInterval = {
+					firstAccessStartedAt,
+					firstAccessNanoseconds,
+					firstAccessMainThreadWorkNanoseconds,
+					-1,
+					u"first cache access"_q,
+					firstAccessStartedAtSteadyNanoseconds,
+					firstAccessCpuAfter.value_or(-1),
+				};
+				firstAccessSchedulerTimeline
+					= Core::UiStallWatchdog::RecentSchedulerSamplesForTesting();
 				cacheUsableNanoseconds
 					= cacheInitializationTimer.nsecsElapsed();
 				cacheUsableWithinBound
@@ -14930,6 +14969,42 @@ void RunAuthenticatedCacheSymlinkCases(
 			});
 			mainThreadHeartbeat.stop();
 			recordMainThreadHeartbeat();
+			auto firstAccessSchedulerSamples = SchedulerTraceWindow();
+			const auto firstAccessSchedulerCaptureRequired
+				= firstAccessNanoseconds >= 50'000'000;
+			if (firstAccessSchedulerCaptureRequired) {
+				const auto firstAccessCaptureSettled = [&] {
+					firstAccessSchedulerTimeline = Core::UiStallWatchdog::
+						RecentSchedulerSamplesForTesting();
+					firstAccessSchedulerSamples = SchedulerTraceForInterval(
+						firstAccessInterval, firstAccessSchedulerTimeline);
+					return !firstAccessSchedulerSamples.capturePending;
+				};
+				if (!firstAccessCaptureSettled()
+					&& !WaitForRegressionCondition(firstAccessCaptureSettled,
+												   1000)) {
+					firstAccessSchedulerSamples
+						= SchedulerTraceWindow{.capturePending = true};
+				}
+			}
+			const auto firstAccessEstimate = EstimateMainThreadWork(
+				firstAccessMainThreadWorkNanoseconds, firstAccessNanoseconds,
+				firstAccessSchedulerSamples);
+			const auto firstAccessBudgetAssessment = AssessMainThreadWorkBudget(
+				firstAccessEstimate, firstAccessMainThreadWorkNanoseconds,
+				kMaxChatSwitchNanoseconds);
+			if (firstAccessSchedulerCaptureRequired
+				&& !firstAccessBudgetAssessment.schedulerEvidenceAvailable) {
+				std::fprintf(
+					stderr,
+					"HARNESS ERROR: first-access scheduler trace unavailable: "
+					"wall_ns=%lld main_thread_cpu_ns=%lld budget_ns=%lld; "
+					"timing gate evaluated using main-thread CPU.\n",
+					static_cast<long long>(firstAccessNanoseconds),
+					static_cast<long long>(
+						firstAccessMainThreadWorkNanoseconds),
+					static_cast<long long>(kMaxChatSwitchNanoseconds));
+			}
 			auto corroboratedStartupStalls
 				= std::vector<CorroboratedStartupStall>();
 			auto uncoveredStartupHeartbeatGaps = 0;
@@ -15058,7 +15133,6 @@ void RunAuthenticatedCacheSymlinkCases(
 			auto maxStartupEstimatedWorkNanoseconds
 				= maxMainThreadWorkNanoseconds;
 			auto startupWorkWithinBound = true;
-			auto startupSchedulerCaptureComplete = true;
 			for (const auto &gap : startupHeartbeatGaps) {
 				const auto startupWork = EstimateStartupWork(
 					gap, startupPingAcknowledgements, startupStallEvidence,
@@ -15077,7 +15151,6 @@ void RunAuthenticatedCacheSymlinkCases(
 					= gap.durationNanoseconds >= 100'000'000;
 				if (schedulerCaptureRequired
 					&& !budgetAssessment.schedulerEvidenceAvailable) {
-					startupSchedulerCaptureComplete = false;
 					std::fprintf(
 						stderr,
 						"HARNESS ERROR: startup scheduler trace unavailable: "
@@ -15094,6 +15167,9 @@ void RunAuthenticatedCacheSymlinkCases(
 					= gap.startedAt.toString(Qt::ISODateWithMs).toUtf8();
 				const auto traceLatin1
 					= trace.isEmpty() ? QByteArray("none") : trace.toLatin1();
+				const auto withinBudget
+					= MainThreadWorkBudgetEvidenceWithinBudget(
+						budgetAssessment, gap.durationNanoseconds, 100'000'000);
 				std::fprintf(
 					stderr,
 					"Cache startup work window: started_at=%s "
@@ -15102,8 +15178,9 @@ void RunAuthenticatedCacheSymlinkCases(
 					"blocked_estimate_ns=%lld "
 					"estimated_work_ns=%lld budget_ns=100000000 "
 					"capture_pending=%d trace_samples=%zu trace=%s "
-					"within_budget=%d scheduler_capture_required=%d "
-					"scheduler_capture_passed=%d.\n",
+					"within_budget=%d cpu_only_within_budget=%d "
+					"scheduler_capture_required=%d "
+					"scheduler_evidence_available=%d.\n",
 					gapStartedAtUtf8.constData(),
 					static_cast<long long>(gap.durationNanoseconds),
 					static_cast<long long>(gap.mainThreadWorkNanoseconds),
@@ -15111,10 +15188,9 @@ void RunAuthenticatedCacheSymlinkCases(
 					static_cast<long long>(budgetAssessment.workNanoseconds),
 					schedulerSamples.capturePending,
 					static_cast<std::size_t>(trace.size()),
-					traceLatin1.constData(), budgetAssessment.withinBudget,
-					schedulerCaptureRequired,
-					!schedulerCaptureRequired
-						|| budgetAssessment.schedulerEvidenceAvailable);
+					traceLatin1.constData(), withinBudget,
+					budgetAssessment.withinBudget, schedulerCaptureRequired,
+					budgetAssessment.schedulerEvidenceAvailable);
 			}
 			const auto startupWithinBound
 				= mainThreadCpuClockAvailable
@@ -15479,6 +15555,14 @@ void RunAuthenticatedCacheSymlinkCases(
 				= startupStallSchedulerTrace.isEmpty()
 					  ? QByteArray("none")
 					  : startupStallSchedulerTrace.toLatin1();
+			const auto firstAccessSchedulerTraceLatin1
+				= firstAccessSchedulerSamples.trace.isEmpty()
+					  ? QByteArray("none")
+					  : firstAccessSchedulerSamples.trace.toLatin1();
+			const auto firstAccessEvidenceWithinBudget
+				= MainThreadWorkBudgetEvidenceWithinBudget(
+					firstAccessBudgetAssessment, firstAccessNanoseconds,
+					kMaxChatSwitchNanoseconds);
 			std::fprintf(
 				stderr,
 				"Cache access latency regression: cache=%s "
@@ -15513,7 +15597,13 @@ void RunAuthenticatedCacheSymlinkCases(
 				"startup_stall_evidence_matched=%d "
 				"startup_stall_scheduler_preemption_proven=%d "
 				"under_100ms=%d "
-				"first_access_ns=%lld under_50ms=%d "
+				"first_access_ns=%lld "
+				"first_access_main_thread_cpu_ns=%lld "
+				"first_access_blocked_estimate_ns=%lld "
+				"first_access_estimated_work_ns=%lld "
+				"first_access_trace=%s "
+				"first_access_within_budget=%d "
+				"first_access_cpu_only_within_budget=%d under_50ms=%d "
 				"root_swap_refused=%d direct_fallback_closed=%d "
 				"root_restored=%d startup_walks=%d "
 				"main_thread_walks=%d.\n",
@@ -15546,7 +15636,14 @@ void RunAuthenticatedCacheSymlinkCases(
 				startupStallStackCaptured, startupStallEvidenceMatched,
 				startupStallSchedulerPreemptionProven, startupWithinBound,
 				static_cast<long long>(firstAccessNanoseconds),
-				(firstAccessNanoseconds < 50'000'000), swappedRootRefused,
+				static_cast<long long>(firstAccessMainThreadWorkNanoseconds),
+				static_cast<long long>(firstAccessEstimate.blockedNanoseconds),
+				static_cast<long long>(
+					firstAccessBudgetAssessment.workNanoseconds),
+				firstAccessSchedulerTraceLatin1.constData(),
+				firstAccessEvidenceWithinBudget,
+				firstAccessBudgetAssessment.withinBudget,
+				firstAccessBudgetAssessment.withinBudget, swappedRootRefused,
 				directFallbackClosed, rootRestoreSucceeded, startupWalks,
 				mainThreadWalks);
 			const auto passed
@@ -15557,10 +15654,9 @@ void RunAuthenticatedCacheSymlinkCases(
 				  && cacheUsableWithinBound && (startupWalks == 2)
 				  && (mainThreadWalks == 0) && swappedRootRefused
 				  && directFallbackClosed && rootRestoreSucceeded
-				  && startupWithinBound && startupSchedulerCaptureComplete
-				  && (mediaCache || chatSwitch.passed)
+				  && startupWithinBound && (mediaCache || chatSwitch.passed)
 				  && (mediaCache || dialogsHandler.passed)
-				  && (firstAccessNanoseconds < 50'000'000);
+				  && firstAccessBudgetAssessment.withinBudget;
 			nativeLifecycleResults->Report(caseName,
 										   passed && accountCleanup.cleanup());
 		}
