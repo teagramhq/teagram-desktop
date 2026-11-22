@@ -13723,8 +13723,9 @@ struct CacheReactionProbe final {
 	const auto group = requestLabel(parent);
 	const auto groupText = group ? group->accessibilityName() : QString();
 	const auto requestButton = [&] {
-		for (const auto button : parent.findChildren<Ui::RippleButton *>()) {
-			if (!button->isHidden() && button->isEnabled()) {
+		for (const auto child : parent.findChildren<QWidget *>()) {
+			const auto button = dynamic_cast<Ui::RippleButton *>(child);
+			if (button && !button->isHidden() && button->isEnabled()) {
 				return button;
 			}
 		}
@@ -13733,7 +13734,7 @@ struct CacheReactionProbe final {
 	const auto noLayerBeforeRequest = !controller->window().isLayerShown();
 	auto requestInfoDialogOpened = false;
 	if (requestButton && noLayerBeforeRequest) {
-		requestButton->click();
+		Test::Click(requestButton);
 		requestInfoDialogOpened = WaitForRegressionCondition(
 			[&] { return controller->window().isLayerShown(); }, 1000);
 		if (requestInfoDialogOpened) {
