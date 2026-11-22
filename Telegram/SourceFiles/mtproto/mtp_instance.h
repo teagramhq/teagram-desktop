@@ -14,7 +14,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include <atomic>
 #include <map>
+#include <optional>
 #include <utility>
+#include <vector>
 
 #include <QtCore/QMutex>
 #include <QtCore/QObject>
@@ -41,6 +43,11 @@ enum class Environment : uchar;
 		const Error &error) {
 	return error.code() == Error::NoError
 		&& error.type() == u"CLIENT_SERVER_ENROLLMENT_PAUSED"_q;
+}
+
+[[nodiscard]] inline bool IsMainDcServerEndpointRefresh(ShiftedDcId shiftedDcId,
+														DcId mainDcId) {
+	return shiftedDcId == mainDcId;
 }
 
 // A pinned endpoint failure together with the session that reported
@@ -71,13 +78,68 @@ struct PinnedServerFailureReport {
 	}
 };
 
+enum class EndpointVerificationFailureReason {
+	None,
+	TestModeMismatch,
+	MissingMainDcId,
+	PinnedServerConfigMismatch,
+	TimedOut,
+};
+
+[[nodiscard]] inline const char *EndpointVerificationFailureReasonName(
+	EndpointVerificationFailureReason reason) {
+	switch (reason) {
+	case EndpointVerificationFailureReason::None:
+		return "none";
+	case EndpointVerificationFailureReason::TestModeMismatch:
+		return "test-mode mismatch";
+	case EndpointVerificationFailureReason::MissingMainDcId:
+		return "missing main DC id";
+	case EndpointVerificationFailureReason::PinnedServerConfigMismatch:
+		return "pinned server config mismatch";
+	case EndpointVerificationFailureReason::TimedOut:
+		return "verification timed out";
+	}
+	Unexpected("EndpointVerificationFailureReason value.");
+}
+
+struct EndpointVerificationConfigResult {
+	bool authenticated = false;
+	std::optional<PinnedServerFailure> failure;
+	EndpointVerificationFailureReason reason
+		= EndpointVerificationFailureReason::None;
+};
+
+[[nodiscard]] inline EndpointVerificationConfigResult
+CheckEndpointVerificationConfig(bool responseTestMode, bool expectedTestMode,
+								bool hasMainDcId, DcId thisDc,
+								const std::vector<DcId> &advertisedDcIds,
+								const CustomServer &pin) {
+	const auto matchingMode = responseTestMode == expectedTestMode;
+	auto failure = std::optional<PinnedServerFailure>();
+	auto reason = EndpointVerificationFailureReason::None;
+	if (!matchingMode) {
+		reason = EndpointVerificationFailureReason::TestModeMismatch;
+	} else if (!hasMainDcId) {
+		reason = EndpointVerificationFailureReason::MissingMainDcId;
+	} else {
+		failure = CheckPinnedServerConfig(thisDc, advertisedDcIds, pin);
+		if (failure) {
+			reason
+				= EndpointVerificationFailureReason::PinnedServerConfigMismatch;
+		}
+	}
+	return {
+		.authenticated = matchingMode && hasMainDcId && !failure.has_value(),
+		.failure = failure,
+		.reason = reason,
+	};
+}
+
 [[nodiscard]] inline PinnedServerFailureReport MakePinnedServerFailureReport(
-		ShiftedDcId shiftedDcId,
-		PinnedServerFailure failure,
-		uint64 presentedFingerprint,
-		const CustomServer &customServer,
-		const QString &pinnedHostname,
-		const QString &dialledAddress) {
+	ShiftedDcId shiftedDcId, PinnedServerFailure failure,
+	uint64 presentedFingerprint, const CustomServer &customServer,
+	const QString &pinnedHostname, const QString &dialledAddress) {
 	const auto hostname = pinnedHostname.isEmpty()
 		? QString::fromStdString(customServer.hostname)
 		: pinnedHostname;
@@ -307,6 +369,7 @@ public:
 	enum class Mode {
 		Normal,
 		KeysDestroyer,
+		EndpointVerifier,
 	};
 
 	Instance(Mode mode, Fields &&fields);
@@ -329,6 +392,8 @@ public:
 
 	[[nodiscard]] rpl::producer<> writeKeysRequests() const;
 	[[nodiscard]] rpl::producer<> allKeysDestroyed() const;
+	[[nodiscard]] rpl::producer<ShiftedDcId>
+	serverEndpointRefreshRequested() const;
 
 	// A pinned endpoint that failed on its face: a key the account was
 	// not given, or a server DC id that does not confirm the pin.
@@ -343,6 +408,8 @@ public:
 		const QString &dialledAddress = {});
 	[[nodiscard]] auto pinnedServerFailure() const
 		-> rpl::producer<std::optional<PinnedServerFailureReport>>;
+	[[nodiscard]] rpl::producer<EndpointVerificationConfigResult>
+	endpointVerificationResult() const;
 	void onBrowserOnlyServerRefused();
 	[[nodiscard]] rpl::producer<> browserOnlyServerRefused() const;
 	[[nodiscard]] bool hasBrowserOnlyServerRefusal() const;
@@ -379,6 +446,8 @@ public:
 	// A subsequent setCustomServer() followed by resume() lets the sessions
 	// try the newly confirmed endpoint again.
 	void stopForServerEnrollment();
+	void pauseForServerEndpointRefresh();
+	void requestServerEndpointRefresh(ShiftedDcId shiftedDcId);
 	void restart(ShiftedDcId shiftedDcId);
 	int32 dcstate(ShiftedDcId shiftedDcId = 0);
 	QString dctransport(ShiftedDcId shiftedDcId = 0);
@@ -415,6 +484,7 @@ public:
 
 	// Thread-safe.
 	bool isKeysDestroyer() const;
+	bool isEndpointVerifier() const;
 	void keyWasPossiblyDestroyed(ShiftedDcId shiftedDcId);
 
 	// Main thread.
