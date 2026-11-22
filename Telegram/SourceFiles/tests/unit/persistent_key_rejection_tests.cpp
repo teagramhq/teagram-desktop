@@ -112,6 +112,12 @@ TEST_CASE(CurrentDirectPinnedTcp404DiscardsPresentedPersistentKey) {
 		== PersistentKeyErrorDecision::Discard);
 }
 
+TEST_CASE(UnprovenEndpoint404KeepsStoredKeyAndStopsWithoutRetry) {
+	auto context = CurrentTcpRejection();
+	context.unprovenEndpoint = true;
+	CHECK(Decide(context) == PersistentKeyErrorDecision::KeepAndStop);
+}
+
 TEST_CASE(Http404KeepsStoredKeyAndSchedulesSessionRetry) {
 	auto storedKey = MakePersistentKey();
 	auto dc = Dcenter(DcId(2), AuthKeyPtr(storedKey));
