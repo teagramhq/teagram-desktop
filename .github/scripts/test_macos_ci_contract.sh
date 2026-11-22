@@ -17,11 +17,15 @@ ccache_profile_script=".github/scripts/mac_ccache_profile.sh"
 temp_dir="$(mktemp -d)"
 trap 'rm -rf "$temp_dir"' EXIT
 
+PYTHONDONTWRITEBYTECODE=1 python3 "$scripts_dir/test_macos_timeout_capture.py"
+
 require_contract_tests_in_lint
 for trigger in push pull_request; do
   paths="$(workflow_field .github/workflows/workflow_lint.yml ".on.$trigger.paths[]")"
   for script_path in \
     .github/scripts/test_macos_launch_smoke.py \
+    .github/scripts/macos_timeout_capture.py \
+    .github/scripts/test_macos_timeout_capture.py \
     .github/scripts/extract_dwarf_subprogram_address.py \
     .github/scripts/symbolicate_macos_minidump.py; do
     grep -Fxq -- "$script_path" <<< "$paths" \
@@ -899,6 +903,10 @@ done
 
 require_step_script "$mac_workflow" build-macos \
   'Full chat info session regression.' \
+  'capture_hang_sample(' \
+  'HARNESS ERROR: authorization timeout stack capture failed' \
+  'authorization_timeout=FAIL' \
+  'Hang sample excerpt:' \
   'application_profile="$regression_home/Library/Application Support/Teagram"' \
   'HOME="$regression_home"' \
   'TDESKTOP_MAC_PROFILE_TEST_HOME="$regression_home"' \
@@ -1193,9 +1201,9 @@ if ! main_thread_work_estimate_within_budget \
   0 100000000 RRRRR 50000000 0,25000000,50000000,75000000,100000000; then
   contract_fail 'Runnable samples 25 ms apart must cover the window.'
 fi
-if main_thread_work_estimate_within_budget \
+if ! main_thread_work_estimate_within_budget \
   0 104000000 RRRRR 50000000 0,26000000,52000000,78000000,104000000; then
-  contract_fail 'A 26 ms sample gap must fall back to wall time.'
+  contract_fail 'An uncovered 26 ms sample gap must use main-thread CPU work.'
 fi
 if main_thread_work_estimate_within_budget \
   0 100000000 RRRRW 25000000 0,25000000,50000000,75000000,100000000; then
@@ -1221,9 +1229,9 @@ if ! main_thread_work_estimate_within_budget \
   0 100000000 RRRR 25000001 10000000,35000000,60000000,85000000; then
   contract_fail 'Unobserved window edges must be charged exactly once.'
 fi
-if main_thread_work_estimate_within_budget \
+if ! main_thread_work_estimate_within_budget \
   0 100000000 RRRR 50000000 26000000,50000000,75000000,100000000; then
-  contract_fail 'A 26 ms uncovered edge must fall back to wall time.'
+	contract_fail 'A 26 ms uncovered edge must use main-thread CPU work.'
 fi
 if ! main_thread_work_estimate_within_budget \
   45000000 60000000 RRRR 50000000 5000000,25000000,45000000,55000000 \
@@ -1245,20 +1253,20 @@ if ! main_thread_work_estimate_within_budget \
   R 20000000 R 5000000; then
   contract_fail 'A bracketing gap of 25 ms must cover the window edge.'
 fi
-if main_thread_work_estimate_within_budget \
+if ! main_thread_work_estimate_within_budget \
   45000000 60000000 RRRR 50000000 5000000,25000000,45000000,55000000 \
   R 21000000 R 5000000; then
-  contract_fail 'A bracketing gap of 26 ms must fall back to wall time.'
+	contract_fail 'A bracketing gap of 26 ms must use main-thread CPU work.'
 fi
-if main_thread_work_estimate_within_budget \
+if ! main_thread_work_estimate_within_budget \
   45000000 60000000 RRRR 50000000 5000000,25000000,45000000,55000000 \
   '?' 5000000 R 5000000; then
-  contract_fail 'An unknown bracketing state must fall back to wall time.'
+	contract_fail 'An unknown bracketing state must use main-thread CPU work.'
 fi
-if main_thread_work_estimate_within_budget \
+if ! main_thread_work_estimate_within_budget \
   45000000 60000000 RRRR 50000000 5000000,25000000,45000000,55000000 \
   R -1 R 5000000; then
-  contract_fail 'A negative bracketing distance must fall back to wall time.'
+	contract_fail 'A negative bracketing distance must use main-thread CPU work.'
 fi
 if main_thread_work_estimate_within_budget \
   52000000 60000000 RRRR 50000000 5000000,25000000,45000000,55000000 \
@@ -1307,32 +1315,32 @@ if ! main_thread_work_estimate_within_budget \
   "$six_millisecond_offsets"; then
   contract_fail 'A 6 ms sample gap must remain covered.'
 fi
-if main_thread_work_estimate_within_budget \
+if ! main_thread_work_estimate_within_budget \
   18000000 225000000 RRRW 100000000 0,75000000,150000000,225000000; then
-  contract_fail 'A four-sample 75 ms gap must fall back to wall time.'
+	contract_fail 'A four-sample 75 ms gap must use main-thread CPU work.'
 fi
-if main_thread_work_estimate_within_budget 0 101000000 none 100000000 ""; then
-  contract_fail 'A window without scheduler samples must fall back to wall time.'
+if ! main_thread_work_estimate_within_budget 0 101000000 none 100000000 ""; then
+	contract_fail 'A window without scheduler samples must use main-thread CPU work.'
 fi
 callback_runnable_trace="$(printf '%41s' '' | tr ' ' R)"
 callback_unknown_trace="${callback_runnable_trace:0:20}?${callback_runnable_trace:21}"
-if main_thread_work_estimate_within_budget \
+if ! main_thread_work_estimate_within_budget \
   12000000 200000000 "$callback_unknown_trace" 50000000 "$callback_offsets"; then
-  contract_fail 'An unknown scheduler state must fall back to wall time.'
+	contract_fail 'An unknown scheduler state must use main-thread CPU work.'
 fi
 callback_negative_offsets="-1${callback_offsets#0}"
-if main_thread_work_estimate_within_budget \
+if ! main_thread_work_estimate_within_budget \
   12000000 200000000 "$callback_runnable_trace" 50000000 \
   "$callback_negative_offsets"; then
-  contract_fail 'A negative scheduler offset must fall back to wall time.'
+	contract_fail 'An invalid scheduler offset must use main-thread CPU work.'
 fi
-if main_thread_work_estimate_within_budget \
+if ! main_thread_work_estimate_within_budget \
 	0 200000000 RRR 100000000 0,1000000,2000000; then
-	contract_fail 'A clustered runnable trace must fall back to wall time.'
+	contract_fail 'A clustered runnable trace must use main-thread CPU work.'
 fi
-if main_thread_work_estimate_within_budget \
+if ! main_thread_work_estimate_within_budget \
   0 200000000 RRRRR 100000000 0,5000000,10000000,190000000,200000000; then
-  contract_fail 'A long unobserved middle interval must fall back to wall time.'
+  contract_fail 'A long unobserved middle interval must use main-thread CPU work.'
 fi
 if main_thread_work_estimate_within_budget \
   18000000 225000000 \
@@ -1345,14 +1353,22 @@ if ! main_thread_work_estimate_within_budget \
   "$chat_switch_offsets"; then
   contract_fail 'A covered runnable window with 17.99 ms CPU must pass.'
 fi
+if ! main_thread_work_estimate_within_budget \
+  1138000 105113167 none 100000000 ''; then
+  contract_fail 'A long wall delay with 1.138 ms CPU and no trace must pass the timing budget.'
+fi
+if main_thread_work_estimate_within_budget \
+  101000000 105113167 none 100000000 ''; then
+  contract_fail 'A 101 ms main-thread CPU stall must fail without scheduler evidence.'
+fi
 if main_thread_work_estimate_within_budget \
   12000000 200000000 "$(printf '%41s' '' | tr ' ' W)" 50000000 \
   "$callback_offsets"; then
   contract_fail 'A 200 ms blocked attach-menu callback must fail its 50 ms budget.'
 fi
-if main_thread_work_estimate_within_budget \
+if ! main_thread_work_estimate_within_budget \
   12000000 200000000 none 50000000 ""; then
-  contract_fail 'An attach-menu callback without scheduler evidence must use wall time.'
+	contract_fail 'An attach-menu callback without scheduler evidence must use main-thread CPU work.'
 fi
 cat > "$temp_dir/cache-latency.log" <<'EOF'
 Cache access latency regression: cache=cache seeded_directories=125 seeded_files=169 closed_clear_missing_active=1 cache_initialization_ns=585165042 initialization_allowed=1 queued_ops_before_ready=1 queued_ops_passed=1 cache_usable_ns=585252834 under_10s=1 max_main_thread_work_ns=17990000 max_startup_estimated_work_ns=66903043 max_heartbeat_gap_ns=230059167 max_heartbeat_gap_work_ns=17990000 heartbeat_gap_process_work_ns=117600000 heartbeat_gap_started_at=2026-11-06T00:47:53.000Z startup_heartbeat_gap_count=1 startup_uncovered_heartbeat_gaps=1 startup_heartbeat_gap_coverage_proven=0 startup_stall_count=1 max_startup_stall_ns=225000000 startup_stall_main_thread_work_ns=17990000 startup_stall_process_work_ns=117600000 startup_stall_started_at=2026-11-06T00:47:53.000Z startup_stall_heartbeat_gap_started_at=2026-11-06T00:47:53.000Z startup_stall_scheduler_samples=46 startup_stall_scheduler_running=36 startup_stall_scheduler_waiting=10 startup_stall_scheduler_uninterruptible=0 startup_stall_scheduler_other=0 startup_stall_scheduler_trace=RRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRWWWWWWWWWW startup_stall_stack_captured=1 startup_stall_evidence_matched=1 startup_stall_scheduler_preemption_proven=0 under_100ms=1 first_access_ns=86917 under_50ms=1 root_swap_refused=1 direct_fallback_closed=1 root_restored=1 startup_walks=2 main_thread_walks=0.
@@ -1383,11 +1399,18 @@ sed -e 's/startup_stall_count=1/startup_stall_count=0/' \
   -e 's/startup_stall_scheduler_trace=RRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRWWWWWWWWWW/startup_stall_scheduler_trace=none/' \
   -e 's/startup_stall_stack_captured=1/startup_stall_stack_captured=0/' \
   -e 's/startup_stall_evidence_matched=1/startup_stall_evidence_matched=0/' \
-  -e 's/max_startup_estimated_work_ns=66903043/max_startup_estimated_work_ns=230059167/' \
+  -e 's/max_startup_estimated_work_ns=66903043/max_startup_estimated_work_ns=17990000/' \
   -e '/^Cache startup watchdog stall:/d' \
   "$temp_dir/cache-latency-responsive.log" > "$temp_dir/cache-latency-no-watchdog-evidence.log"
-if check_cache_latency_evidence "$temp_dir/cache-latency-no-watchdog-evidence.log" >/dev/null 2>&1; then
-  contract_fail 'A long startup wall gap without trace samples must fall back to wall time and fail.'
+printf '%s\n' 'HARNESS ERROR: startup scheduler trace unavailable: timing gate evaluated using main-thread CPU.' \
+  >> "$temp_dir/cache-latency-no-watchdog-evidence.log"
+if check_cache_latency_evidence "$temp_dir/cache-latency-no-watchdog-evidence.log" \
+  > "$temp_dir/cache-latency-no-watchdog-error.log" 2>&1; then
+  contract_fail 'A missing startup trace must fail as a harness error.'
+fi
+if ! grep -Fq 'HARNESS ERROR: scheduler capture incomplete' \
+  "$temp_dir/cache-latency-no-watchdog-error.log"; then
+  contract_fail 'A missing startup trace must be reported separately from the timing gate.'
 fi
 sed -e 's/heartbeat_gap_process_work_ns=117600000/heartbeat_gap_process_work_ns=200000000/' \
   -e 's/startup_stall_process_work_ns=117600000/startup_stall_process_work_ns=200000000/' \
@@ -1425,15 +1448,15 @@ sed '/^Initial history selection:/s/estimated_work_ns=40000000/estimated_work_ns
 if check_cache_latency_evidence "$temp_dir/cache-latency-initial-selection-over-budget.log" >/dev/null 2>&1; then
 	contract_fail 'The initial history selection must reject 52 ms of main-thread work even with scheduler proof.'
 fi
-sed '/^Initial history selection:/ { s/wall_ns=135344750/wall_ns=49000000/; s/blocked_estimate_ns=0/blocked_estimate_ns=-1/; s/estimated_work_ns=40000000/estimated_work_ns=49000000/; s/trace=R/trace=none/; }' \
+sed '/^Initial history selection:/ { s/blocked_estimate_ns=0/blocked_estimate_ns=-1/; s/trace=R/trace=none/; }' \
   "$temp_dir/cache-latency-responsive.log" > "$temp_dir/cache-latency-initial-selection-unmeasured.log"
 if ! check_cache_latency_evidence "$temp_dir/cache-latency-initial-selection-unmeasured.log" >/dev/null 2>&1; then
-	contract_fail 'An unmeasured initial selection with wall time below 50 ms must pass.'
+	contract_fail 'A 135 ms initial selection with 40 ms CPU and no trace must pass the timing gate.'
 fi
-sed '/^Initial history selection:/s/wall_ns=49000000/wall_ns=50000000/; s/estimated_work_ns=49000000/estimated_work_ns=50000000/' \
+sed '/^Initial history selection:/ { s/main_thread_work_ns=40000000/main_thread_work_ns=52107000/; s/estimated_work_ns=40000000/estimated_work_ns=52107000/; }' \
   "$temp_dir/cache-latency-initial-selection-unmeasured.log" > "$temp_dir/cache-latency-initial-selection-unmeasured-over-budget.log"
 if check_cache_latency_evidence "$temp_dir/cache-latency-initial-selection-unmeasured-over-budget.log" >/dev/null 2>&1; then
-	contract_fail 'An unmeasured initial selection at the 50 ms wall budget must fail.'
+	contract_fail 'A 52 ms initial selection CPU stall must fail without scheduler evidence.'
 fi
 sed 's/max_hydration_ns=5210625/max_hydration_ns=92000000/' \
   "$temp_dir/cache-latency-responsive.log" > "$temp_dir/cache-latency-long-wall-hydration.log"
@@ -2559,7 +2582,7 @@ fi
 # Only a heredoc that is the stdin program of a python3 command counts; the
 # same Python handed to any other command is inert data.
 inert_mutation="$temp_dir/mac-inert-python.yml"
-sed 's/^\( *\)python3 - "$executable"/\1echo python3 - "$executable"/' "$mac_workflow" > "$inert_mutation"
+sed 's|^\( *\)python3 - "$repo/.github/scripts"|\1echo python3 - "$repo/.github/scripts"|' "$mac_workflow" > "$inert_mutation"
 if cmp -s "$mac_workflow" "$inert_mutation"; then
   contract_fail 'The inert-heredoc mutation must change the regression step.'
 fi

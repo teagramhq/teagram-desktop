@@ -105,7 +105,7 @@ main_thread_work_estimate_within_budget() {
 	local after_distance="${9:-}"
 	local estimate_ns
 	if [[ "$trace" == none || -z "$trace" ]]; then
-		estimate_ns="$wall_ns"
+		estimate_ns="$main_thread_cpu_ns"
 	else
 		(( main_thread_cpu_ns >= 0 )) || return 1
 		local sample_count="${#trace}"
@@ -188,10 +188,10 @@ main_thread_work_estimate_within_budget() {
 			if [[ "$samples_valid" == true ]]; then
 				estimate_ns="$((main_thread_cpu_ns + blocked_ns))"
 			else
-				estimate_ns="$wall_ns"
+				estimate_ns="$main_thread_cpu_ns"
 			fi
 		else
-			estimate_ns="$wall_ns"
+			estimate_ns="$main_thread_cpu_ns"
 		fi
 	fi
 	(( estimate_ns >= 0 && estimate_ns < budget_ns ))
@@ -1542,6 +1542,14 @@ if ! grep -F -q \
 	exit 1
 fi
 for cache in cache media_cache; do
+	if grep -Eq \
+		'^HARNESS ERROR: (startup|chat-switch) scheduler trace unavailable:' \
+		"$AUTH_LOG"; then
+		cat "$AUTH_LOG" >&2
+		printf 'HARNESS ERROR: scheduler capture incomplete for %s; timing gate result is separate.\n' \
+			"$cache" >&2
+		exit 1
+	fi
 	local cache_latency_evidence
 	cache_latency_evidence="$(grep -E \
 		"^Cache access latency regression: cache=$cache seeded_directories=125 seeded_files=169 closed_clear_missing_active=1 cache_initialization_ns=[0-9]+ initialization_allowed=1 queued_ops_before_ready=1 queued_ops_passed=1 cache_usable_ns=[0-9]+ under_10s=1 max_main_thread_work_ns=[0-9]+ max_startup_estimated_work_ns=[0-9]+ max_heartbeat_gap_ns=[0-9]+ max_heartbeat_gap_work_ns=[0-9]+ heartbeat_gap_process_work_ns=[0-9]+ heartbeat_gap_started_at=[^ ]+ startup_heartbeat_gap_count=[0-9]+ startup_uncovered_heartbeat_gaps=[0-9]+ startup_heartbeat_gap_coverage_proven=[01] startup_stall_count=[0-9]+ max_startup_stall_ns=[0-9]+ startup_stall_main_thread_work_ns=[0-9]+ startup_stall_process_work_ns=[0-9]+ startup_stall_started_at=([^ ]+) startup_stall_heartbeat_gap_started_at=([^ ]+) startup_stall_scheduler_samples=[0-9]+ startup_stall_scheduler_running=[0-9]+ startup_stall_scheduler_waiting=[0-9]+ startup_stall_scheduler_uninterruptible=[0-9]+ startup_stall_scheduler_other=[0-9]+ startup_stall_scheduler_trace=([[:alpha:]?]+|none) startup_stall_stack_captured=[01] startup_stall_evidence_matched=[01] startup_stall_scheduler_preemption_proven=[01] under_100ms=[01] first_access_ns=[0-9]+ under_50ms=1 root_swap_refused=1 direct_fallback_closed=1 root_restored=1 startup_walks=2 main_thread_walks=0\\.$" \
@@ -1590,15 +1598,6 @@ local initial_history_selection_work_ns
 initial_history_selection_work_ns="$(sed -E \
 	's/.*estimated_work_ns=([0-9]+).*/\1/' \
 	<<<"$initial_history_selection")"
-local initial_history_selection_blocked_ns
-initial_history_selection_blocked_ns="$(sed -E \
-	's/.*blocked_estimate_ns=(-?[0-9]+).*/\1/' \
-	<<<"$initial_history_selection")"
-if [[ "$initial_history_selection_blocked_ns" == -1 ]]; then
-	initial_history_selection_work_ns="$(sed -E \
-		's/.*wall_ns=([0-9]+).*/\1/' \
-		<<<"$initial_history_selection")"
-fi
 if ! work_value_within_budget \
 	"$initial_history_selection_work_ns" 50000000; then
 	cat "$AUTH_LOG" >&2

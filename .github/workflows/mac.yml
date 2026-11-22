@@ -1022,7 +1022,7 @@ jobs:
             TDESKTOP_MAC_PROFILE_TEST_HOME="$regression_home" \
             ALSOFT_DRIVERS=null \
             TDESKTOP_AUTH_LIFECYCLE_REGRESSION=1 \
-            python3 - "$executable" "$regression_work" \
+            python3 - "$repo/.github/scripts" "$executable" "$regression_work" \
               "$diagnostics/stdout.log" "$diagnostics/stderr.log" \
               "$diagnostics/lldb.log" "$symbol_file" <<'PY'
           import os
@@ -1032,8 +1032,13 @@ jobs:
           import subprocess
           import sys
           import time
+          from pathlib import Path
 
-          executable, workdir, stdout_path, stderr_path, log_path, symbol_file = sys.argv[1:]
+          scripts_dir = sys.argv[1]
+          executable, workdir, stdout_path, stderr_path, log_path, symbol_file = sys.argv[2:]
+          sys.path.insert(0, scripts_dir)
+          sys.dont_write_bytecode = True
+          from macos_timeout_capture import capture_hang_sample
           command = ["arch", "-arm64", "lldb", "--batch"]
           if symbol_file:
               command.extend(["-o", f"target symbols add {shlex.quote(symbol_file)}"])
@@ -1104,22 +1109,47 @@ jobs:
                       sample_path = os.path.join(
                           os.path.dirname(log_path), "hang-sample.txt"
                       )
-                      try:
-                          sample = subprocess.run(
-                              ["sample", str(app_pid), "1", "5", "-file", sample_path],
-                              stdout=log,
-                              stderr=subprocess.STDOUT,
-                              timeout=12,
-                              check=False,
-                          )
+                      sample = capture_hang_sample(
+                          app_pid, Path(sample_path), timeout_seconds=12
+                      )
+                      if sample.command_output:
+                          log.write(sample.command_output + "\n")
+                      if sample.ok:
                           log.write(
-                              f"Hang sample exit: {sample.returncode}; "
+                              "Authorization timeout stack capture: PASS; "
                               f"sample: {sample_path}\n"
                           )
-                      except (OSError, subprocess.TimeoutExpired) as error:
-                          log.write(f"Hang sample failed: {error}\n")
+                          excerpt = "\n".join(sample.sample_text.splitlines()[:80])
+                          log.write("Hang sample excerpt:\n" + excerpt + "\n")
+                          print(
+                              "authorization_timeout=FAIL "
+                              f"phase={timeout_phase} stack_capture=PASS "
+                              f"sample={sample_path}"
+                          )
+                          print("Hang sample excerpt:")
+                          print(excerpt)
+                      else:
+                          error_prefix = "HARNESS ERROR: authorization timeout stack capture failed"
+                          error_detail = f"{error_prefix}: {sample.error}"
+                          log.write(f"{error_detail}; sample: {sample_path}\n")
+                          print(f"::error::{error_detail}")
+                          print(
+                              "authorization_timeout=FAIL "
+                              f"phase={timeout_phase} stack_capture=FAIL "
+                              f"reason={sample.error}"
+                          )
                   else:
-                      log.write("Hang sample skipped: Teagram PID was not found.\n")
+                      error = (
+                          "HARNESS ERROR: authorization timeout stack capture "
+                          "failed because the Teagram PID was not found"
+                      )
+                      log.write(error + "\n")
+                      print(f"::error::{error}")
+                      print(
+                          "authorization_timeout=FAIL "
+                          f"phase={timeout_phase} stack_capture=FAIL "
+                          "reason=missing_pid"
+                      )
 
                   for cleanup_signal in (signal.SIGTERM, signal.SIGKILL):
                       signal_pid(app_pid, "Teagram", cleanup_signal)

@@ -11287,6 +11287,12 @@ struct MainThreadWorkEstimate final {
 	qint64 estimatedWorkNanoseconds = -1;
 };
 
+struct MainThreadWorkBudgetAssessment final {
+	bool schedulerEvidenceAvailable = false;
+	qint64 workNanoseconds = -1;
+	bool withinBudget = false;
+};
+
 [[nodiscard]] MainThreadWorkEstimate EstimateMainThreadWork(
 	qint64 mainThreadCpuNanoseconds, qint64 wallNanoseconds,
 	const QString &schedulerTrace,
@@ -11424,6 +11430,22 @@ EstimateMainThreadWork(qint64 mainThreadCpuNanoseconds, qint64 wallNanoseconds,
 		schedulerSamples.mainThreadCpuEndNanoseconds);
 }
 
+[[nodiscard]] MainThreadWorkBudgetAssessment
+AssessMainThreadWorkBudget(const MainThreadWorkEstimate &estimate,
+						   qint64 mainThreadCpuNanoseconds,
+						   qint64 budgetNanoseconds) {
+	const auto schedulerEvidenceAvailable = estimate.blockedNanoseconds >= 0;
+	const auto workNanoseconds = schedulerEvidenceAvailable
+									 ? estimate.estimatedWorkNanoseconds
+									 : mainThreadCpuNanoseconds;
+	return {
+		schedulerEvidenceAvailable,
+		workNanoseconds,
+		(budgetNanoseconds > 0) && (workNanoseconds >= 0)
+			&& (workNanoseconds < budgetNanoseconds),
+	};
+}
+
 struct StartupWorkEstimate final {
 	SchedulerTraceWindow schedulerSamples;
 	MainThreadWorkEstimate estimate;
@@ -11520,6 +11542,7 @@ void AccumulateMainThreadWorkEstimate(qint64 &aggregateNanoseconds,
 	const auto startupOffsets = coveredOffsets(101'000'000);
 	const auto switchOffsets = coveredOffsets(225'000'000);
 	const auto slowSwitchOffsets = coveredOffsets(227'000'000);
+	const auto selectionOffsets = coveredOffsets(60'000'000);
 	const auto gap25 = EstimateMainThreadWork(
 		0, 100'000'000, u"RRRRR"_q,
 		{0, 25'000'000, 50'000'000, 75'000'000, 100'000'000});
@@ -11603,6 +11626,21 @@ void AccumulateMainThreadWorkEstimate(qint64 &aggregateNanoseconds,
 		18'000'000, 225'000'000, u"RRRW"_q, sparseBlockedTailOffsets);
 	const auto noSamples
 		= EstimateMainThreadWork(0, 101'000'000, u"none"_q, {});
+	const auto runnerSchedulingNoise
+		= EstimateMainThreadWork(1'138'000, 105'113'167, u"none"_q, {});
+	const auto runnerSchedulingNoiseAssessment = AssessMainThreadWorkBudget(
+		runnerSchedulingNoise, 1'138'000, 100'000'000);
+	const auto missingTraceCpuStall
+		= EstimateMainThreadWork(101'000'000, 105'113'167, u"none"_q, {});
+	const auto missingTraceCpuStallAssessment = AssessMainThreadWorkBudget(
+		missingTraceCpuStall, 101'000'000, 100'000'000);
+	const auto blockedStartupAssessment
+		= AssessMainThreadWorkBudget(blocked, 0, 100'000'000);
+	const auto blockedHistorySelection = EstimateMainThreadWork(
+		0, 60'000'000, QString(int(selectionOffsets.size()), QChar(u'W')),
+		selectionOffsets);
+	const auto blockedSelectionAssessment = AssessMainThreadWorkBudget(
+		blockedHistorySelection, 0, kMaxChatSwitchNanoseconds);
 	const auto noInWindowSamples
 		= EstimateMainThreadWork(18'000'000, 225'000'000, u"RRR"_q,
 								 {226'000'000, 227'000'000, 228'000'000});
@@ -12196,6 +12234,18 @@ void AccumulateMainThreadWorkEstimate(qint64 &aggregateNanoseconds,
 		   && completedWithoutTraceWindow.capturePending
 		   && (noSamples.blockedNanoseconds == -1)
 		   && (noSamples.estimatedWorkNanoseconds == 101'000'000)
+		   && !runnerSchedulingNoiseAssessment.schedulerEvidenceAvailable
+		   && (runnerSchedulingNoiseAssessment.workNanoseconds == 1'138'000)
+		   && runnerSchedulingNoiseAssessment.withinBudget
+		   && !missingTraceCpuStallAssessment.schedulerEvidenceAvailable
+		   && (missingTraceCpuStallAssessment.workNanoseconds == 101'000'000)
+		   && !missingTraceCpuStallAssessment.withinBudget
+		   && blockedStartupAssessment.schedulerEvidenceAvailable
+		   && (blockedStartupAssessment.workNanoseconds == 101'000'000)
+		   && !blockedStartupAssessment.withinBudget
+		   && blockedSelectionAssessment.schedulerEvidenceAvailable
+		   && (blockedSelectionAssessment.workNanoseconds == 60'000'000)
+		   && !blockedSelectionAssessment.withinBudget
 		   && !MainThreadWorkEstimateWithinBudget(0, 101'000'000, u"none"_q, {},
 												  100'000'000)
 		   && (noInWindowSamples.blockedNanoseconds == -1)
@@ -12377,6 +12427,8 @@ struct CacheChatSwitchRegressionResult final {
 	bool historyChatModeWindowWasMaximized = false;
 	bool chatSwitchTransitionsSettled = true;
 	bool initialHistorySelectionSchedulerPreemptionProven = false;
+	bool initialHistorySelectionSchedulerCaptureComplete = false;
+	bool chatSwitchSchedulerCaptureComplete = true;
 	bool dialogHistoriesReady = false;
 	bool syntheticHistoriesReady = false;
 	bool attachMenuCacheReused = false;
@@ -13869,6 +13921,27 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		const auto estimate = EstimateMainThreadWork(
 			chatSwitchWindows[i].mainThreadWorkNanoseconds,
 			chatSwitchWindows[i].durationNanoseconds, schedulerSamples);
+		const auto budgetAssessment = AssessMainThreadWorkBudget(
+			estimate, chatSwitchWindows[i].mainThreadWorkNanoseconds,
+			kMaxChatSwitchNanoseconds);
+		if ((chatSwitchWindows[i].durationNanoseconds
+			 >= kMaxChatSwitchNanoseconds)
+			&& !budgetAssessment.schedulerEvidenceAvailable) {
+			result.chatSwitchSchedulerCaptureComplete = false;
+			const auto label = chatSwitchWindows[i].label.toUtf8();
+			std::fprintf(
+				stderr,
+				"HARNESS ERROR: chat-switch scheduler trace unavailable: "
+				"index=%zu label=%s wall_ns=%lld main_thread_cpu_ns=%lld "
+				"budget_ns=%lld; timing gate evaluated using main-thread "
+				"CPU.\n",
+				static_cast<std::size_t>(i), label.constData(),
+				static_cast<long long>(
+					chatSwitchWindows[i].durationNanoseconds),
+				static_cast<long long>(
+					chatSwitchWindows[i].mainThreadWorkNanoseconds),
+				static_cast<long long>(kMaxChatSwitchNanoseconds));
+		}
 		if ((estimate.estimatedWorkNanoseconds >= kMaxChatSwitchNanoseconds)
 			|| (chatSwitchWindows[i].durationNanoseconds
 				>= kMaxChatSwitchNanoseconds)) {
@@ -13927,27 +14000,29 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		if (i > 0) {
 			result.maxChatSwitchEstimatedWorkNanoseconds
 				= std::max(result.maxChatSwitchEstimatedWorkNanoseconds,
-						   estimate.estimatedWorkNanoseconds);
+						   budgetAssessment.workNanoseconds);
 		}
 		if (i == 0) {
 			result.initialHistorySelectionBlockedNanoseconds
 				= estimate.blockedNanoseconds;
 			result.initialHistorySelectionEstimatedWorkNanoseconds
-				= estimate.estimatedWorkNanoseconds;
+				= budgetAssessment.workNanoseconds;
+			result.initialHistorySelectionSchedulerCaptureComplete
+				= (chatSwitchWindows[i].durationNanoseconds
+				   < kMaxChatSwitchNanoseconds)
+				  || budgetAssessment.schedulerEvidenceAvailable;
 			result.initialHistorySelectionSchedulerTrace = schedulerTrace;
 			result.initialHistorySelectionSchedulerSampleOffsetsNanoseconds
 				= schedulerSampleOffsetsNanoseconds;
 		} else {
 			result.maxRecurringChatSwitchEstimatedWorkNanoseconds = std::max(
 				result.maxRecurringChatSwitchEstimatedWorkNanoseconds,
-				estimate.estimatedWorkNanoseconds);
+				budgetAssessment.workNanoseconds);
 		}
 		if (i > 0) {
 			result.chatSwitchWorkWithinBudget
 				= result.chatSwitchWorkWithinBudget
-				  && (estimate.estimatedWorkNanoseconds >= 0)
-				  && (estimate.estimatedWorkNanoseconds
-					  < kMaxChatSwitchNanoseconds);
+				  && budgetAssessment.withinBudget;
 		}
 		const auto traceLatin1 = schedulerTrace.isEmpty()
 									 ? QByteArray("none")
@@ -13965,11 +14040,10 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 			static_cast<long long>(
 				chatSwitchWindows[i].mainThreadWorkNanoseconds),
 			static_cast<long long>(estimate.blockedNanoseconds),
-			static_cast<long long>(estimate.estimatedWorkNanoseconds),
+			static_cast<long long>(budgetAssessment.workNanoseconds),
 			static_cast<long long>(kMaxChatSwitchNanoseconds),
 			schedulerSamples.capturePending, traceLatin1.constData(),
-			(estimate.estimatedWorkNanoseconds >= 0
-			 && estimate.estimatedWorkNanoseconds < kMaxChatSwitchNanoseconds));
+			budgetAssessment.withinBudget);
 	}
 	result.chatSwitchSchedulerPreemptionProven
 		= chatSwitchCpuClockAvailable && chatSwitchProcessCpuClockAvailable;
@@ -14222,6 +14296,8 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		  && (result.maxChatSwitchIndex >= 0)
 		  && (result.maxChatSwitchPeerId >= 0)
 		  && result.chatSwitchWorkWithinBudget
+		  && result.chatSwitchSchedulerCaptureComplete
+		  && result.initialHistorySelectionSchedulerCaptureComplete
 		  && MainThreadEstimatedWorkWithinBudget(
 			  result.initialHistorySelectionEstimatedWorkNanoseconds,
 			  kMaxChatSwitchNanoseconds)
@@ -14982,6 +15058,7 @@ void RunAuthenticatedCacheSymlinkCases(
 			auto maxStartupEstimatedWorkNanoseconds
 				= maxMainThreadWorkNanoseconds;
 			auto startupWorkWithinBound = true;
+			auto startupSchedulerCaptureComplete = true;
 			for (const auto &gap : startupHeartbeatGaps) {
 				const auto startupWork = EstimateStartupWork(
 					gap, startupPingAcknowledgements, startupStallEvidence,
@@ -14989,13 +15066,30 @@ void RunAuthenticatedCacheSymlinkCases(
 				const auto &schedulerSamples = startupWork.schedulerSamples;
 				const auto &trace = schedulerSamples.trace;
 				const auto &estimate = startupWork.estimate;
+				const auto budgetAssessment = AssessMainThreadWorkBudget(
+					estimate, gap.mainThreadWorkNanoseconds, 100'000'000);
 				maxStartupEstimatedWorkNanoseconds
 					= std::max(maxStartupEstimatedWorkNanoseconds,
-							   estimate.estimatedWorkNanoseconds);
+							   budgetAssessment.workNanoseconds);
 				startupWorkWithinBound
-					= startupWorkWithinBound
-					  && (estimate.estimatedWorkNanoseconds >= 0)
-					  && (estimate.estimatedWorkNanoseconds < 100'000'000);
+					= startupWorkWithinBound && budgetAssessment.withinBudget;
+				const auto schedulerCaptureRequired
+					= gap.durationNanoseconds >= 100'000'000;
+				if (schedulerCaptureRequired
+					&& !budgetAssessment.schedulerEvidenceAvailable) {
+					startupSchedulerCaptureComplete = false;
+					std::fprintf(
+						stderr,
+						"HARNESS ERROR: startup scheduler trace unavailable: "
+						"started_at=%s wall_ns=%lld main_thread_cpu_ns=%lld "
+						"budget_ns=100000000; timing gate evaluated using "
+						"main-thread CPU.\n",
+						gap.startedAt.toString(Qt::ISODateWithMs)
+							.toUtf8()
+							.constData(),
+						static_cast<long long>(gap.durationNanoseconds),
+						static_cast<long long>(gap.mainThreadWorkNanoseconds));
+				}
 				const auto gapStartedAtUtf8
 					= gap.startedAt.toString(Qt::ISODateWithMs).toUtf8();
 				const auto traceLatin1
@@ -15008,17 +15102,19 @@ void RunAuthenticatedCacheSymlinkCases(
 					"blocked_estimate_ns=%lld "
 					"estimated_work_ns=%lld budget_ns=100000000 "
 					"capture_pending=%d trace_samples=%zu trace=%s "
-					"within_budget=%d.\n",
+					"within_budget=%d scheduler_capture_required=%d "
+					"scheduler_capture_passed=%d.\n",
 					gapStartedAtUtf8.constData(),
 					static_cast<long long>(gap.durationNanoseconds),
 					static_cast<long long>(gap.mainThreadWorkNanoseconds),
 					static_cast<long long>(estimate.blockedNanoseconds),
-					static_cast<long long>(estimate.estimatedWorkNanoseconds),
+					static_cast<long long>(budgetAssessment.workNanoseconds),
 					schedulerSamples.capturePending,
 					static_cast<std::size_t>(trace.size()),
-					traceLatin1.constData(),
-					(estimate.estimatedWorkNanoseconds >= 0
-					 && estimate.estimatedWorkNanoseconds < 100'000'000));
+					traceLatin1.constData(), budgetAssessment.withinBudget,
+					schedulerCaptureRequired,
+					!schedulerCaptureRequired
+						|| budgetAssessment.schedulerEvidenceAvailable);
 			}
 			const auto startupWithinBound
 				= mainThreadCpuClockAvailable
@@ -15461,7 +15557,8 @@ void RunAuthenticatedCacheSymlinkCases(
 				  && cacheUsableWithinBound && (startupWalks == 2)
 				  && (mainThreadWalks == 0) && swappedRootRefused
 				  && directFallbackClosed && rootRestoreSucceeded
-				  && startupWithinBound && (mediaCache || chatSwitch.passed)
+				  && startupWithinBound && startupSchedulerCaptureComplete
+				  && (mediaCache || chatSwitch.passed)
 				  && (mediaCache || dialogsHandler.passed)
 				  && (firstAccessNanoseconds < 50'000'000);
 			nativeLifecycleResults->Report(caseName,
