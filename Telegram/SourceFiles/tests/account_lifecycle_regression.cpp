@@ -13790,9 +13790,8 @@ struct CacheReactionProbe final {
 			"controls_deferred=%d photo_deferred=%d photo_ready=%d.\n",
 			groupReady, requestInfoDialogOpened, bool(requestButton),
 			requestButton ? requestButton->width() : -1,
-			requestButton ? requestButton->height() : -1,
-			noLayerBeforeRequest, channelReady, controlsDeferred,
-			botPhotoDeferred, botPhotoReady);
+			requestButton ? requestButton->height() : -1, noLayerBeforeRequest,
+			channelReady, controlsDeferred, botPhotoDeferred, botPhotoReady);
 	}
 	return groupReady && requestInfoDialogOpened && channelReady
 		   && controlsDeferred && botPhotoDeferred && botPhotoReady;
