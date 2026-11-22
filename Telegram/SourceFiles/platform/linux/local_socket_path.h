@@ -17,10 +17,12 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <QtCore/QLockFile>
 #include <QtCore/QObject>
 #include <QtCore/QString>
+#include <QtCore/QThread>
 #include <QtCore/QTimer>
 #include <QtNetwork/QLocalServer>
 #include <QtNetwork/QLocalSocket>
 
+#include <algorithm>
 #include <cerrno>
 #include <cstring>
 #include <functional>
@@ -443,6 +445,146 @@ enum class SingleInstanceServerResult {
 	Secondary,
 	Failed,
 };
+
+enum class SingleInstanceProfileLockState {
+	Unlocked,
+	Locked,
+	Error,
+};
+
+struct SingleInstanceProfileLockSnapshot {
+	SingleInstanceProfileLockState state
+		= SingleInstanceProfileLockState::Error;
+	QString contents;
+	QString error;
+};
+
+enum class SingleInstanceEndpointStatus {
+	NotRunning,
+	Located,
+	Connected,
+	Failed,
+};
+
+struct SingleInstanceEndpointResult {
+	SingleInstanceEndpointStatus status = SingleInstanceEndpointStatus::Failed;
+	QString serverPath;
+	QString error;
+};
+
+template <typename LockProbe>
+[[nodiscard]] SingleInstanceEndpointResult WaitForSingleInstanceServerPath(
+	LockProbe probe, const QString &profileLockIdentity, uid_t effectiveUid,
+	bool snap, int timeoutMs, int retryIntervalMs) {
+	auto timer = QElapsedTimer();
+	timer.start();
+	auto lastError = QString();
+	for (;;) {
+		const auto snapshot = probe();
+		switch (snapshot.state) {
+		case SingleInstanceProfileLockState::Unlocked:
+			return {SingleInstanceEndpointStatus::NotRunning, QString(),
+					QString()};
+		case SingleInstanceProfileLockState::Error:
+			return {SingleInstanceEndpointStatus::Failed, QString(),
+					snapshot.error.isEmpty()
+						? u"Could not read the single-instance profile lock."_q
+						: snapshot.error};
+		case SingleInstanceProfileLockState::Locked: {
+			const auto path
+				= SingleInstanceServerPathFromLockContentsForIdentity(
+					snapshot.contents, profileLockIdentity, effectiveUid, snap);
+			if (!path.isEmpty()) {
+				return {SingleInstanceEndpointStatus::Located, path, QString()};
+			}
+			lastError
+				= u"The busy profile lock has not published a valid IPC path."_q;
+		} break;
+		}
+		const auto elapsed = int(timer.elapsed());
+		if (elapsed >= timeoutMs) {
+			return {
+				SingleInstanceEndpointStatus::Failed, QString(),
+				lastError.isEmpty()
+					? u"Timed out waiting for the single-instance profile lock."_q
+					: u"Timed out waiting for the profile lock to publish a "
+					  u"valid "
+					  u"IPC path: %1"_q.arg(lastError)};
+		}
+		const auto delay
+			= std::min(std::max(retryIntervalMs, 1), timeoutMs - elapsed);
+		QThread::msleep(static_cast<unsigned long>(delay));
+	}
+}
+
+template <typename LockProbe>
+[[nodiscard]] SingleInstanceEndpointResult ConnectToSingleInstanceServer(
+	QLocalSocket &socket, LockProbe probe, const QString &profileLockIdentity,
+	uid_t effectiveUid, bool snap, int timeoutMs, int retryIntervalMs) {
+	auto timer = QElapsedTimer();
+	timer.start();
+	auto lastError = QString();
+	for (;;) {
+		const auto snapshot = probe();
+		switch (snapshot.state) {
+		case SingleInstanceProfileLockState::Unlocked:
+			return {SingleInstanceEndpointStatus::NotRunning, QString(),
+					QString()};
+		case SingleInstanceProfileLockState::Error:
+			return {SingleInstanceEndpointStatus::Failed, QString(),
+					snapshot.error.isEmpty()
+						? u"Could not read the single-instance profile lock."_q
+						: snapshot.error};
+		case SingleInstanceProfileLockState::Locked: {
+			const auto path
+				= SingleInstanceServerPathFromLockContentsForIdentity(
+					snapshot.contents, profileLockIdentity, effectiveUid, snap);
+			if (!path.isEmpty()) {
+				const auto elapsed = int(timer.elapsed());
+				const auto remaining = timeoutMs - elapsed;
+				if (remaining <= 0) {
+					lastError
+						= u"Timed out connecting to the single-instance server at '%1'."_q
+							  .arg(path);
+					break;
+				}
+				socket.abort();
+				socket.connectToServer(path);
+				const auto connectTimeout
+					= std::min(std::max(retryIntervalMs, 1), remaining);
+				if (socket.waitForConnected(connectTimeout)) {
+					return {SingleInstanceEndpointStatus::Connected, path,
+							QString()};
+				}
+				const auto socketError = socket.error();
+				lastError = socket.errorString();
+				socket.abort();
+				if (socketError != QLocalSocket::ServerNotFoundError
+					&& socketError != QLocalSocket::ConnectionRefusedError
+					&& socketError != QLocalSocket::SocketTimeoutError) {
+					return {SingleInstanceEndpointStatus::Failed, path,
+							lastError};
+				}
+			} else {
+				lastError
+					= u"The busy profile lock has not published a valid IPC path."_q;
+			}
+		} break;
+		}
+		const auto elapsed = int(timer.elapsed());
+		if (elapsed >= timeoutMs) {
+			return {
+				SingleInstanceEndpointStatus::Failed, QString(),
+				lastError.isEmpty()
+					? u"Timed out waiting for the single-instance server."_q
+					: u"Timed out connecting to the single-instance server: %1"_q
+						  .arg(lastError)};
+		}
+		const auto delay
+			= std::min(std::max(retryIntervalMs, 1), timeoutMs - elapsed);
+		QThread::msleep(static_cast<unsigned long>(delay));
+	}
+}
 
 inline void QueueSingleInstanceSocketReconnect(QObject *context,
 											   QLocalSocket *socket,

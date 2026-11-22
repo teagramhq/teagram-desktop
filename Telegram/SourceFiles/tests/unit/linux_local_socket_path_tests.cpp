@@ -19,7 +19,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <QtCore/QTimer>
 
 #include <cerrno>
+#include <chrono>
 #include <cstring>
+#include <thread>
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <unistd.h>
@@ -53,25 +55,29 @@ StartSingleInstanceServerAndWait(QLocalServer &server,
 	return result;
 }
 
-QByteArray SendSingleInstanceCommand(QLocalServer &server,
-									 const QString &serverPath,
-									 const QByteArray &command) {
-	auto client = QLocalSocket();
-	client.connectToServer(serverPath);
-	if (!client.waitForConnected(1'000)
-		|| !server.waitForNewConnection(1'000)) {
-		return QByteArray();
+Platform::Linux::SingleInstanceProfileLockSnapshot
+ProbeProfileLock(Core::SingleInstanceLock &lock) {
+	const auto result = lock.tryAcquire();
+	if (result == Core::SingleInstanceLock::Result::Acquired) {
+		lock.release();
+		return {
+			Platform::Linux::SingleInstanceProfileLockState::Unlocked,
+			QString(),
+			QString(),
+		};
 	}
-	auto peer = server.nextPendingConnection();
-	if (!peer) {
-		return QByteArray();
+	if (result == Core::SingleInstanceLock::Result::Busy) {
+		return {
+			Platform::Linux::SingleInstanceProfileLockState::Locked,
+			lock.contents(),
+			QString(),
+		};
 	}
-	client.write(command);
-	client.flush();
-	if (!peer->waitForReadyRead(1'000)) {
-		return QByteArray();
-	}
-	return peer->readAll();
+	return {
+		Platform::Linux::SingleInstanceProfileLockState::Error,
+		QString(),
+		lock.errorString(),
+	};
 }
 
 } // namespace
@@ -371,7 +377,7 @@ TEST_CASE(LinuxSingleInstanceSocketUsesOneEndpointWithMixedXdgRuntimeDirs) {
 	CHECK(second.waitForConnected(1'000));
 }
 
-TEST_CASE(LinuxSingleInstanceCleanupUsesPublishedEndpointAfterRuntimeAppears) {
+TEST_CASE(LinuxSingleInstanceCleanupRetriesDelayedEndpointAndListener) {
 	auto homeDirectory = QTemporaryDir();
 	auto runtimeParent = QTemporaryDir();
 	CHECK(homeDirectory.isValid());
@@ -390,12 +396,6 @@ TEST_CASE(LinuxSingleInstanceCleanupUsesPublishedEndpointAfterRuntimeAppears) {
 	if (primaryPath.isEmpty()) {
 		return;
 	}
-	auto primary = QLocalServer();
-	primary.setSocketOptions(QLocalServer::UserAccessOption);
-	CHECK(primary.listen(primaryPath));
-	if (!primary.isListening()) {
-		return;
-	}
 	CHECK(QDir().mkdir(stableRuntimeDirectory));
 	CHECK(SetPrivatePermissions(stableRuntimeDirectory));
 	const auto newLaunchCandidate
@@ -410,18 +410,54 @@ TEST_CASE(LinuxSingleInstanceCleanupUsesPublishedEndpointAfterRuntimeAppears) {
 	auto primaryLock = Core::SingleInstanceLock(profileLockPath);
 	CHECK(primaryLock.tryAcquire()
 		  == Core::SingleInstanceLock::Result::Acquired);
-	CHECK(primaryLock.setContents(primaryPath));
 	auto cleanupLock = Core::SingleInstanceLock(profileLockPath);
 	CHECK(cleanupLock.tryAcquire() == Core::SingleInstanceLock::Result::Busy);
-	const auto activePath
-		= Platform::Linux::SingleInstanceServerPathFromLockContentsForIdentity(
-			cleanupLock.contents(), lockIdentity, geteuid());
-	CHECK_EQ(activePath, primaryPath);
-	CHECK_EQ(SendSingleInstanceCommand(primary, activePath, "CMD:quit;"),
-			 QByteArray("CMD:quit;"));
+	auto command = QByteArray();
+	auto listenerStarted = false;
+	auto publicationSucceeded = false;
+	auto primaryThread = std::thread([&] {
+		std::this_thread::sleep_for(std::chrono::milliseconds(80));
+		publicationSucceeded = primaryLock.setContents(primaryPath);
+		std::this_thread::sleep_for(std::chrono::milliseconds(80));
+		auto primary = QLocalServer();
+		primary.setSocketOptions(QLocalServer::UserAccessOption);
+		listenerStarted = primary.listen(primaryPath);
+		if (!listenerStarted || !primary.waitForNewConnection(2'000)) {
+			return;
+		}
+		const auto peer = primary.nextPendingConnection();
+		if (!peer || !peer->waitForReadyRead(2'000)) {
+			return;
+		}
+		command = peer->readAll();
+		peer->write("RES:123_456;");
+		peer->flush();
+	});
+	auto socket = QLocalSocket();
+	const auto connected = Platform::Linux::ConnectToSingleInstanceServer(
+		socket, [&] { return ProbeProfileLock(cleanupLock); }, lockIdentity,
+		geteuid(), false, 2'000, 20);
+	auto response = QByteArray();
+	if (connected.status
+		== Platform::Linux::SingleInstanceEndpointStatus::Connected) {
+		socket.write("CMD:quit;");
+		socket.flush();
+		socket.waitForBytesWritten(1'000);
+		if (socket.waitForReadyRead(1'000)) {
+			response = socket.readAll();
+		}
+	}
+	primaryThread.join();
+	CHECK_EQ(connected.status,
+			 Platform::Linux::SingleInstanceEndpointStatus::Connected);
+	CHECK_EQ(connected.serverPath, primaryPath);
+	CHECK(publicationSucceeded);
+	CHECK(listenerStarted);
+	CHECK_EQ(command, QByteArray("CMD:quit;"));
+	CHECK(response.contains("RES:123_456;"));
 }
 
-TEST_CASE(LinuxSingleInstanceSecondLaunchFindsEndpointWithoutHome) {
+TEST_CASE(LinuxSingleInstanceStartupFindsDelayedEndpointWithoutHome) {
 	auto homeDirectory = QTemporaryDir();
 	CHECK(homeDirectory.isValid());
 	if (!homeDirectory.isValid()) {
@@ -436,12 +472,6 @@ TEST_CASE(LinuxSingleInstanceSecondLaunchFindsEndpointWithoutHome) {
 	if (primaryPath.isEmpty()) {
 		return;
 	}
-	auto primary = QLocalServer();
-	primary.setSocketOptions(QLocalServer::UserAccessOption);
-	CHECK(primary.listen(primaryPath));
-	if (!primary.isListening()) {
-		return;
-	}
 	const auto previousHome = qgetenv("HOME");
 	CHECK(qunsetenv("HOME"));
 	const auto lockIdentity
@@ -451,21 +481,48 @@ TEST_CASE(LinuxSingleInstanceSecondLaunchFindsEndpointWithoutHome) {
 	auto primaryLock = Core::SingleInstanceLock(profileLockPath);
 	CHECK(primaryLock.tryAcquire()
 		  == Core::SingleInstanceLock::Result::Acquired);
-	CHECK(primaryLock.setContents(primaryPath));
 	auto secondLock = Core::SingleInstanceLock(profileLockPath);
 	CHECK(secondLock.tryAcquire() == Core::SingleInstanceLock::Result::Busy);
-	const auto activePath
-		= Platform::Linux::SingleInstanceServerPathFromLockContentsForIdentity(
-			secondLock.contents(), lockIdentity, geteuid());
-	CHECK_EQ(activePath, primaryPath);
-	const auto received
-		= SendSingleInstanceCommand(primary, activePath, "CMD:show;");
+	auto publicationSucceeded = false;
+	auto publisher = std::thread([&] {
+		std::this_thread::sleep_for(std::chrono::milliseconds(80));
+		publicationSucceeded = primaryLock.setContents(primaryPath);
+	});
+	const auto activeEndpoint
+		= Platform::Linux::WaitForSingleInstanceServerPath(
+			[&] { return ProbeProfileLock(secondLock); }, lockIdentity,
+			geteuid(), false, 1'000, 20);
+	publisher.join();
 	if (previousHome.isEmpty()) {
 		qunsetenv("HOME");
 	} else {
 		qputenv("HOME", previousHome);
 	}
-	CHECK_EQ(received, QByteArray("CMD:show;"));
+	CHECK_EQ(activeEndpoint.status,
+			 Platform::Linux::SingleInstanceEndpointStatus::Located);
+	CHECK_EQ(activeEndpoint.serverPath, primaryPath);
+	CHECK(publicationSucceeded);
+}
+
+TEST_CASE(LinuxSingleInstanceCleanupPropagatesProfileLockError) {
+	auto directory = QTemporaryDir();
+	CHECK(directory.isValid());
+	if (!directory.isValid()) {
+		return;
+	}
+	const auto serverName = u"teagram-instance"_q;
+	const auto lockIdentity
+		= Platform::Linux::SingleInstanceProfileLockIdentityForServerName(
+			serverName, QString(), geteuid(), false);
+	auto invalidLock = Core::SingleInstanceLock(directory.path());
+	auto socket = QLocalSocket();
+	const auto result = Platform::Linux::ConnectToSingleInstanceServer(
+		socket, [&] { return ProbeProfileLock(invalidLock); }, lockIdentity,
+		geteuid(), false, 1'000, 20);
+	CHECK_EQ(result.status,
+			 Platform::Linux::SingleInstanceEndpointStatus::Failed);
+	CHECK(!result.error.isEmpty());
+	CHECK(result.error.contains(directory.path()));
 }
 
 TEST_CASE(LinuxSingleInstanceSocketUsesSnapRuntimeDirectory) {

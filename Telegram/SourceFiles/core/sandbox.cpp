@@ -154,6 +154,44 @@ void ShowSingleInstanceStartupError(const QString &error) {
 	QMessageBox::critical(nullptr, QApplication::applicationName(), message);
 }
 #endif // !Q_OS_WIN && !Q_OS_MAC
+#ifdef Q_OS_LINUX
+[[nodiscard]] Platform::Linux::SingleInstanceProfileLockSnapshot
+ProbeSingleInstanceProfileLock(SingleInstanceLock *lock) {
+	if (!lock) {
+		return {
+			Platform::Linux::SingleInstanceProfileLockState::Error,
+			QString(),
+			u"The single-instance profile lock is unavailable."_q,
+		};
+	}
+	switch (lock->tryAcquire()) {
+	case SingleInstanceLock::Result::Acquired:
+		lock->release();
+		return {
+			Platform::Linux::SingleInstanceProfileLockState::Unlocked,
+			QString(),
+			QString(),
+		};
+	case SingleInstanceLock::Result::Busy:
+		return {
+			Platform::Linux::SingleInstanceProfileLockState::Locked,
+			lock->contents(),
+			QString(),
+		};
+	case SingleInstanceLock::Result::Error:
+		return {
+			Platform::Linux::SingleInstanceProfileLockState::Error,
+			QString(),
+			lock->errorString(),
+		};
+	}
+	return {
+		Platform::Linux::SingleInstanceProfileLockState::Error,
+		QString(),
+		u"Unknown single-instance profile lock state."_q,
+	};
+}
+#endif // Q_OS_LINUX
 #ifdef Q_OS_MAC
 constexpr auto kFontStartupSplashExposureTimeout = 1000;
 #endif // Q_OS_MAC
@@ -427,7 +465,8 @@ int Sandbox::start() {
 	};
 	auto localServerNameError = QString();
 #ifdef Q_OS_LINUX
-	auto linuxProfileLockIdentity = QString();
+	_singleInstanceProfileLockIdentity.clear();
+	_singleInstanceProfileLockSnap = false;
 #endif // Q_OS_LINUX
 	auto profileLockPath = QString();
 	const auto lockDirectory = QDir(cWorkingDir()).absolutePath();
@@ -436,16 +475,17 @@ int Sandbox::start() {
 		char h[33] = {0};
 		hashMd5Hex(d.constData(), d.size(), h);
 #ifdef Q_OS_LINUX
-		const auto snap = KSandbox::isSnap();
+		_singleInstanceProfileLockSnap = KSandbox::isSnap();
 		const auto serverName = Platform::Linux::SingleInstanceLocalServerName(
-			QString::fromLatin1(h), QCoreApplication::applicationName(), snap);
-		linuxProfileLockIdentity
+			QString::fromLatin1(h), QCoreApplication::applicationName(),
+			_singleInstanceProfileLockSnap);
+		_singleInstanceProfileLockIdentity
 			= Platform::Linux::SingleInstanceProfileLockIdentityForServerName(
 				serverName, qEnvironmentVariable("XDG_RUNTIME_DIR"), geteuid(),
-				snap);
-		if (!linuxProfileLockIdentity.isEmpty()) {
+				_singleInstanceProfileLockSnap);
+		if (!_singleInstanceProfileLockIdentity.isEmpty()) {
 			const auto encodedIdentity
-				= QFile::encodeName(linuxProfileLockIdentity);
+				= QFile::encodeName(_singleInstanceProfileLockIdentity);
 			char lockHash[33] = {0};
 			hashMd5Hex(encodedIdentity.constData(), encodedIdentity.size(),
 					   lockHash);
@@ -454,20 +494,26 @@ int Sandbox::start() {
 							  + QString::fromLatin1(lockHash) + u".lock"_q;
 			_singleInstanceLock
 				= std::make_unique<SingleInstanceLock>(profileLockPath);
-			const auto lockResult = _singleInstanceLock->tryAcquire();
-			if (lockResult == SingleInstanceLock::Result::Acquired) {
-				_singleInstanceLock->release();
-			} else if (lockResult == SingleInstanceLock::Result::Busy) {
-				const auto activeServerPath = Platform::Linux::
-					SingleInstanceServerPathFromLockContentsForIdentity(
-						_singleInstanceLock->contents(),
-						linuxProfileLockIdentity, geteuid(), snap);
-				if (!activeServerPath.isEmpty()) {
-					_localServerName = activeServerPath;
+			if (cLaunchMode() != LaunchModeCleanup) {
+				const auto endpoint
+					= Platform::Linux::WaitForSingleInstanceServerPath(
+						[this] {
+							return ProbeSingleInstanceProfileLock(
+								_singleInstanceLock.get());
+						},
+						_singleInstanceProfileLockIdentity, geteuid(),
+						_singleInstanceProfileLockSnap, 2'000, 20);
+				if (endpoint.status
+					== Platform::Linux::SingleInstanceEndpointStatus::Located) {
+					_localServerName = endpoint.serverPath;
+				} else if (endpoint.status
+						   == Platform::Linux::SingleInstanceEndpointStatus::
+							   Failed) {
+					localServerNameError = endpoint.error;
 				}
 			}
 		}
-		if (_localServerName.isEmpty()
+		if (_localServerName.isEmpty() && localServerNameError.isEmpty()
 			&& (cLaunchMode() != LaunchModeCleanup)) {
 			_localServerName = Platform::SingleInstanceLocalServerName(
 				h, &localServerNameError);
@@ -531,7 +577,7 @@ int Sandbox::start() {
 		auto lockIdentity = _localServerName;
 #ifdef Q_OS_LINUX
 		// The endpoint can differ if session runtime creation races startup.
-		lockIdentity = linuxProfileLockIdentity;
+		lockIdentity = _singleInstanceProfileLockIdentity;
 #endif // Q_OS_LINUX
 		if (profileLockPath.isEmpty()) {
 			const auto encoded = QFile::encodeName(lockIdentity);
@@ -772,6 +818,29 @@ int Sandbox::start() {
 }
 
 int Sandbox::stopRunningInstance() {
+#ifdef Q_OS_LINUX
+	LOG(("Cleanup: locating the active single-instance endpoint..."));
+	const auto endpoint = Platform::Linux::ConnectToSingleInstanceServer(
+		_localSocket,
+		[this] {
+			return ProbeSingleInstanceProfileLock(_singleInstanceLock.get());
+		},
+		_singleInstanceProfileLockIdentity, geteuid(),
+		_singleInstanceProfileLockSnap, int(kCleanupIpcTimeout), 50);
+	if (endpoint.status
+		== Platform::Linux::SingleInstanceEndpointStatus::NotRunning) {
+		LOG(("Cleanup: no running instance found."));
+		return 0;
+	} else if (endpoint.status
+			   == Platform::Linux::SingleInstanceEndpointStatus::Failed) {
+		LOG(("Cleanup: could not determine or connect to the running instance: "
+			 "%1")
+				.arg(endpoint.error));
+		return 1;
+	}
+	_localServerName = endpoint.serverPath;
+	LOG(("Cleanup: connected to %1...").arg(_localServerName));
+#else // Q_OS_LINUX
 	if (_localServerName.isEmpty()) {
 		LOG(("Cleanup: no running instance found."));
 		return 0;
@@ -792,6 +861,7 @@ int Sandbox::stopRunningInstance() {
 		LOG(("Cleanup: connect error %1.").arg(_localSocket.error()));
 		return 1;
 	}
+#endif // Q_OS_LINUX
 	_localSocket.write("CMD:quit;");
 	if (!_localSocket.waitForBytesWritten(int(kCleanupIpcTimeout))) {
 		LOG(("Cleanup: could not send the quit command."));
