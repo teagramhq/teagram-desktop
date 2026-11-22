@@ -61,6 +61,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <cerrno>
 #include <sys/stat.h>
 #endif // Q_OS_UNIX
+#ifdef Q_OS_LINUX
+#include <unistd.h>
+#endif // Q_OS_LINUX
 #if !defined Q_OS_WIN && !defined Q_OS_MAC
 #include <QtWidgets/QMessageBox>
 #endif // !Q_OS_WIN && !Q_OS_MAC
@@ -477,7 +480,12 @@ int Sandbox::start() {
 		return result;
 	}
 	{
-		const auto encoded = QFile::encodeName(_localServerName);
+		auto lockIdentity = _localServerName;
+#ifdef Q_OS_LINUX
+		// The endpoint can differ if session runtime creation races startup.
+		lockIdentity = QFileInfo(_localServerName).fileName();
+#endif // Q_OS_LINUX
+		const auto encoded = QFile::encodeName(lockIdentity);
 		char hash[33] = {0};
 		hashMd5Hex(encoded.constData(), encoded.size(), hash);
 		const auto lockDirectory = QDir(cWorkingDir()).absolutePath();
@@ -1524,6 +1532,25 @@ void Sandbox::socketError(QLocalSocket::LocalSocketError e) {
 		}
 		// Another process may have started its server after our previous
 		// connection attempt. A successful acquire allows an immediate recheck.
+#ifdef Q_OS_LINUX
+		if (result == SingleInstanceLock::Result::Acquired) {
+			if (!_singleInstanceLock->setContents(_localServerName)) {
+				const auto diagnostic
+					= u"Could not record the single instance IPC path: %1"_q
+						  .arg(_singleInstanceLock->errorString());
+				LOG((diagnostic));
+				return showSingleInstanceError(diagnostic);
+			}
+		} else {
+			const auto selectedPath
+				= Platform::Linux::SingleInstanceServerPathFromLockContents(
+					_singleInstanceLock->contents(), _localServerName,
+					geteuid());
+			if (!selectedPath.isEmpty()) {
+				_localServerName = selectedPath;
+			}
+		}
+#endif // Q_OS_LINUX
 		_retryingSingleInstance = true;
 		return retrySingleInstance(
 			result == Core::SingleInstanceLock::Result::Acquired);

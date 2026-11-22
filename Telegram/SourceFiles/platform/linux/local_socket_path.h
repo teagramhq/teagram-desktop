@@ -274,6 +274,19 @@ SingleInstanceSocketPathFailureMessage(SingleInstanceSocketPathFailure failure,
 	return socketPath;
 }
 
+[[nodiscard]] inline QString SingleInstanceServerPathFromLockContents(
+	const QString &contents, const QString &candidatePath, uid_t effectiveUid) {
+	if (!QDir::isAbsolutePath(contents)
+		|| (QFileInfo(contents).fileName()
+			!= QFileInfo(candidatePath).fileName())) {
+		return QString();
+	}
+	const auto validatedPath = SingleInstanceSocketPathInDirectory(
+		QFileInfo(contents).absolutePath(), QFileInfo(contents).fileName(),
+		effectiveUid);
+	return (validatedPath == contents) ? validatedPath : QString();
+}
+
 [[nodiscard]] inline QString SingleInstanceSocketPathForLaunch(
 	const QString &xdgRuntimeDirectory, const QString &stableRuntimeDirectory,
 	const QString &serverName, uid_t effectiveUid, const QString &homeDirectory,
@@ -313,35 +326,16 @@ SingleInstanceSocketPathFailureMessage(SingleInstanceSocketPathFailure failure,
 				xdgFailureDetail));
 		return QString();
 	}
-	auto homeFailureDetail = QString();
-	const auto verifiedHomeDirectory
-		= SingleInstanceSocketPathDetails::VerifiedUserHomeDirectory(
-			homeDirectory, effectiveUid, &homeFailureDetail);
-	if (!verifiedHomeDirectory.isEmpty()) {
-		// A previous launch may have selected this before the session runtime
-		// existed.
-		const auto existingFallbackDirectory
-			= QDir(verifiedHomeDirectory)
-				  .filePath(
-					  u".teagram-runtime-%1"_q.arg(qulonglong(effectiveUid)));
-		auto existingFallbackFailureDetail = QString();
-		const auto existingFallbackPath = SingleInstanceSocketPathInDirectory(
-			existingFallbackDirectory, serverName, effectiveUid,
-			&existingFallbackFailureDetail);
-		if (!existingFallbackPath.isEmpty()) {
-			SingleInstanceSocketPathDetails::SetFailureDetail(
-				selectionWarning,
-				u"Existing private fallback '%1' keeps the single-instance endpoint stable instead of switching to runtime candidate '%2'."_q
-					.arg(existingFallbackPath, stableRuntimeDirectory));
-			return existingFallbackPath;
-		}
-	}
 	auto stableFailureDetail = QString();
 	const auto stableRuntimePath = SingleInstanceSocketPathInDirectory(
 		stableRuntimeDirectory, serverName, effectiveUid, &stableFailureDetail);
 	if (!stableRuntimePath.isEmpty()) {
 		return stableRuntimePath;
 	}
+	auto homeFailureDetail = QString();
+	const auto verifiedHomeDirectory
+		= SingleInstanceSocketPathDetails::VerifiedUserHomeDirectory(
+			homeDirectory, effectiveUid, &homeFailureDetail);
 	if (verifiedHomeDirectory.isEmpty()) {
 		if (failure) {
 			*failure

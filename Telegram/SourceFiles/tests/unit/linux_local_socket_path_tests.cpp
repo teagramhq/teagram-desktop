@@ -8,6 +8,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "platform/linux/local_socket_path.h"
 #include "platform/linux/desktop_identity.h"
 #include "platform/platform_specific.h"
+#include "core/single_instance_lock.h"
 #include "tests/unit/unit_test.h"
 
 #include <QtCore/QDir>
@@ -198,47 +199,66 @@ TEST_CASE(LinuxSingleInstanceSocketFallsBackWhenRuntimeDirectoryIsUnset) {
 	CHECK((status.st_mode & 07777) == 0700);
 }
 
-TEST_CASE(LinuxSingleInstanceSocketKeepsFallbackAfterRuntimeAppears) {
+#ifdef Q_OS_LINUX
+TEST_CASE(LinuxSingleInstanceElectionSharesEndpointAcrossRuntimeRace) {
 	auto runtimeParent = QTemporaryDir();
 	auto homeDirectory = QTemporaryDir();
+	auto profileDirectory = QTemporaryDir();
 	CHECK(runtimeParent.isValid());
 	CHECK(homeDirectory.isValid());
-	if (!runtimeParent.isValid() || !homeDirectory.isValid()) {
+	CHECK(profileDirectory.isValid());
+	if (!runtimeParent.isValid() || !homeDirectory.isValid()
+		|| !profileDirectory.isValid()) {
 		return;
 	}
 	CHECK(SetPrivatePermissions(runtimeParent.path()));
 	const auto stableRuntimeDirectory = runtimeParent.filePath(u"runtime"_q);
 	const auto serverName = u"teagram-instance"_q;
-	const auto firstPath = Platform::Linux::SingleInstanceSocketPathForLaunch(
+	const auto primaryPath = Platform::Linux::SingleInstanceSocketPathForLaunch(
 		QString(), stableRuntimeDirectory, serverName, geteuid(),
 		homeDirectory.path());
 	const auto fallbackDirectory = homeDirectory.filePath(
 		u".teagram-runtime-%1"_q.arg(qulonglong(geteuid())));
-	CHECK_EQ(firstPath, QDir(fallbackDirectory).filePath(serverName));
-	if (firstPath.isEmpty()) {
+	CHECK_EQ(primaryPath, QDir(fallbackDirectory).filePath(serverName));
+	if (primaryPath.isEmpty()) {
 		return;
 	}
+	auto profileLock = Core::SingleInstanceLock(
+		profileDirectory.filePath(u"profile.lock"_q));
+	CHECK(profileLock.tryAcquire()
+		  == Core::SingleInstanceLock::Result::Acquired);
+	CHECK(profileLock.setContents(primaryPath));
 	auto primary = QLocalServer();
 	primary.setSocketOptions(QLocalServer::UserAccessOption);
-	CHECK(StartSingleInstanceServerAndWait(primary, firstPath)
+	CHECK(StartSingleInstanceServerAndWait(primary, primaryPath)
 		  == Platform::Linux::SingleInstanceServerResult::Primary);
 	if (!primary.isListening()) {
 		return;
 	}
 	CHECK(QDir().mkdir(stableRuntimeDirectory));
 	CHECK(SetPrivatePermissions(stableRuntimeDirectory));
-	const auto secondPath = Platform::Linux::SingleInstanceSocketPathForLaunch(
-		QString(), stableRuntimeDirectory, serverName, geteuid(),
-		homeDirectory.path());
-	CHECK_EQ(secondPath, firstPath);
-	if (secondPath != firstPath) {
+	const auto secondCandidate
+		= Platform::Linux::SingleInstanceSocketPathForLaunch(
+			QString(), stableRuntimeDirectory, serverName, geteuid(),
+			homeDirectory.path());
+	CHECK_EQ(secondCandidate,
+			 QDir(stableRuntimeDirectory).filePath(serverName));
+	CHECK(primaryPath != secondCandidate);
+	auto competingLock = Core::SingleInstanceLock(
+		profileDirectory.filePath(u"profile.lock"_q));
+	CHECK(competingLock.tryAcquire() == Core::SingleInstanceLock::Result::Busy);
+	const auto selectedPath
+		= Platform::Linux::SingleInstanceServerPathFromLockContents(
+			competingLock.contents(), secondCandidate, geteuid());
+	CHECK_EQ(selectedPath, primaryPath);
+	if (selectedPath.isEmpty()) {
 		return;
 	}
-	auto secondary = QLocalServer();
-	secondary.setSocketOptions(QLocalServer::UserAccessOption);
-	CHECK(StartSingleInstanceServerAndWait(secondary, secondPath)
-		  == Platform::Linux::SingleInstanceServerResult::Secondary);
+	auto handoff = QLocalSocket();
+	handoff.connectToServer(selectedPath);
+	CHECK(handoff.waitForConnected(1'000));
 }
+#endif // Q_OS_LINUX
 
 TEST_CASE(LinuxSingleInstanceSocketFallsBackFromAnUntrustedRuntimeDirectory) {
 	auto runtimeDirectory = QTemporaryDir();
