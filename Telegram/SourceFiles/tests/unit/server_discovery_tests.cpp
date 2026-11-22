@@ -10,6 +10,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "intro/intro_server_discovery.h"
 #include "lang/lang_keys.h"
 #include "mtproto/mtproto_dc_options.h"
+#include "mtproto/mtproto_proxy_data.h"
 #include "mtproto/mtproto_server_discovery.h"
 
 #include <QtCore/QEventLoop>
@@ -21,6 +22,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <QtCore/QTimer>
 #include <QtCore/QUrl>
 #include <QtNetwork/QHostInfo>
+#include <QtNetwork/QNetworkProxy>
+#include <QtNetwork/QNetworkReply>
 #include <QtNetwork/QNetworkRequest>
 #include <QtNetwork/QTcpServer>
 #include <QtNetwork/QTcpSocket>
@@ -82,6 +85,20 @@ void AppendBigEndian(QByteArray &target, quint16 value) {
 	target.append(char(value >> 8));
 	target.append(char(value));
 }
+
+class RedirectReplyStub final : public QNetworkReply {
+  public:
+	explicit RedirectReplyStub(const QUrl &target) {
+		setAttribute(QNetworkRequest::RedirectionTargetAttribute, target);
+		setAttribute(QNetworkRequest::HttpStatusCodeAttribute, 302);
+		setFinished(true);
+	}
+
+	void abort() override {}
+
+  protected:
+	qint64 readData(char *, qint64) override { return -1; }
+};
 
 [[nodiscard]] QByteArray LocalResponse(const QByteArray &nonce) {
 	const auto der = TestKey().getSubjectPublicKeyInfo();
@@ -253,6 +270,61 @@ TEST_CASE(LocalSelectionRequiresExplicitPort) {
 	CHECK(withPort.valid());
 	CHECK(withPort.policy == ServerDiscoveryPolicy::LocalDirect);
 	CHECK_EQ(withPort.normalizedSelection, u"localhost:443"_q);
+}
+
+TEST_CASE(EndpointRefreshDiscoveryPreservesTheInvalidResponseStatus) {
+	using Intro::details::ServerEndpointRefreshDiscovery;
+	QTcpServer server;
+	CHECK(server.listen(QHostAddress::LocalHost));
+	if (!server.isListening()) {
+		return;
+	}
+	const auto selection = CheckServerSelection(
+		u"127.0.0.1:"_q + QString::number(server.serverPort()));
+	const auto wrongNonce = QByteArray(32, '\x09');
+	auto failure
+		= std::optional<Intro::details::ServerEndpointRefreshFailure>();
+	QEventLoop loop;
+	QTimer::singleShot(5000, &loop, &QEventLoop::quit);
+	QObject::connect(&server, &QTcpServer::newConnection, &server, [&] {
+		while (server.hasPendingConnections()) {
+			auto socket = server.nextPendingConnection();
+			auto request = std::make_shared<QByteArray>();
+			auto responded = std::make_shared<bool>(false);
+			QObject::connect(socket, &QTcpSocket::readyRead, socket,
+							 [socket, request, responded, wrongNonce] {
+								 *request += socket->readAll();
+								 if (*responded || request->size() < 48) {
+									 return;
+								 }
+								 *responded = true;
+								 socket->write(LocalResponse(wrongNonce));
+								 socket->disconnectFromHost();
+							 });
+		}
+	});
+	ServerEndpointRefreshDiscovery discovery;
+	const auto origin = u"local:"_q + selection.normalizedSelection;
+	CHECK(discovery.start(
+		selection, origin, std::nullopt,
+		{
+			.failed =
+				[&](Intro::details::ServerEndpointRefreshFailure value) {
+					failure = value;
+					loop.quit();
+				},
+		}));
+	loop.exec();
+	CHECK(failure.has_value());
+	if (failure) {
+		CHECK(failure->responseStatus
+			  && *failure->responseStatus
+					 == ServerDiscoveryResponseStatus::NonceMismatch);
+		CHECK_EQ(QString::fromLatin1(ServerDiscoveryResponseStatusName(
+					 failure->responseStatus.value_or(
+						 ServerDiscoveryResponseStatus::Valid))),
+				 u"nonce mismatch"_q);
+	}
 }
 
 TEST_CASE(LocalNameDiscoveryBindsToItsResolvedSpecialUseAddress) {
@@ -1542,10 +1614,93 @@ TEST_CASE(PublicDiscoveryRequestsAskForAnUncompressedResponse) {
 			 QByteArrayLiteral("identity"));
 }
 
+TEST_CASE(PublicDiscoveryRefreshRejectsRedirectsOversizeAndEncodedResponses) {
+	using Intro::details::ServerEndpointRefreshFailureName;
+	using Intro::details::ServerEndpointRefreshFailureStatus;
+	using Intro::details::ServerEndpointRefreshHttpResponseFailure;
+	using Intro::details::ServerEndpointRefreshRedirectFailure;
+	const auto json = u"application/json"_q;
+	const auto none = QByteArray();
+	const auto reply = RedirectReplyStub(QUrl(u"https://redirect.example"_q));
+	const auto redirect = ServerEndpointRefreshRedirectFailure(reply);
+	CHECK(redirect == ServerEndpointRefreshFailureStatus::Redirect);
+	if (redirect) {
+		CHECK_EQ(
+			QString::fromLatin1(ServerEndpointRefreshFailureName(*redirect)),
+			u"redirect refused"_q);
+	}
+	CHECK(!ServerEndpointRefreshHttpResponseFailure(false, 200, json, none,
+													16 * 1024, 16 * 1024));
+	const auto oversizedHeaders = ServerEndpointRefreshHttpResponseFailure(
+		false, 200, json, none, 16 * 1024 + 1, 0);
+	CHECK(oversizedHeaders
+		  == ServerEndpointRefreshFailureStatus::ResponseTooLarge);
+	const auto oversizedBody = ServerEndpointRefreshHttpResponseFailure(
+		false, 200, json, none, 0, 16 * 1024 + 1);
+	CHECK(oversizedBody
+		  == ServerEndpointRefreshFailureStatus::ResponseTooLarge);
+	if (oversizedHeaders) {
+		CHECK_EQ(QString::fromLatin1(
+					 ServerEndpointRefreshFailureName(*oversizedHeaders)),
+				 u"response too large"_q);
+	}
+	if (oversizedBody) {
+		CHECK_EQ(QString::fromLatin1(
+					 ServerEndpointRefreshFailureName(*oversizedBody)),
+				 u"response too large"_q);
+	}
+	const auto encoded = ServerEndpointRefreshHttpResponseFailure(
+		false, 200, json, QByteArrayLiteral("gzip"), 0, 0);
+	CHECK(encoded
+		  == ServerEndpointRefreshFailureStatus::ContentEncodingRefused);
+	if (encoded) {
+		CHECK_EQ(
+			QString::fromLatin1(ServerEndpointRefreshFailureName(*encoded)),
+			u"content encoding refused"_q);
+	}
+	CHECK_EQ(QString::fromLatin1(ServerDiscoveryResponseStatusName(
+				 MTP::ServerDiscoveryResponseStatus::UnsafeEndpoint)),
+			 u"unsafe endpoint"_q);
+}
+
 TEST_CASE(PublicDiscoveryUsesTeagramdClientPath) {
 	const auto selection = CheckServerSelection(u"server.example.com"_q);
 	CHECK_EQ(PublicDiscoveryUrl(selection),
 			 u"https://server.example.com/.well-known/teagramd/client"_q);
+}
+
+TEST_CASE(PublicDiscoveryRefreshRetainsTheStoredOriginPath) {
+	const auto selection = CheckServerSelection(u"server.example.com"_q);
+	const auto legacy = u"https://server.example.com/"
+						u".well-known/telegramd/client"_q;
+	CHECK(IsPublicDiscoveryOrigin(selection, PublicDiscoveryUrl(selection)));
+	CHECK(IsPublicDiscoveryOrigin(selection, legacy));
+	CHECK(!IsPublicDiscoveryOrigin(
+		selection,
+		u"https://other.example.com/.well-known/telegramd/client"_q));
+	CHECK(!IsPublicDiscoveryOrigin(
+		selection, u"https://server.example.com/.well-known/other"_q));
+
+	const auto result = ParsePublicDiscoveryResponse(
+		selection, legacy, PublicResponse(u"mtproto.example.com:443"_q));
+	CHECK(result.valid());
+	CHECK_EQ(result.origin, legacy);
+	auto resolved = result;
+	resolved.resolvedAddress = u"8.8.8.8"_q;
+	const auto pin
+		= BuildCustomServerFromDiscovery(selection, resolved, legacy);
+	CHECK(pin.has_value());
+	if (pin) {
+		CHECK_EQ(pin->discoveryOrigin, legacy.toStdString());
+	}
+	auto failure = CustomServerDiscoveryFailure::None;
+	const auto mismatchedOrigin = BuildCustomServerFromDiscovery(
+		selection, resolved,
+		u"https://server.example.com/.well-known/teagramd/client"_q, &failure);
+	CHECK(!mismatchedOrigin.has_value());
+	CHECK(failure == CustomServerDiscoveryFailure::InvalidOrigin);
+	CHECK_EQ(QString::fromLatin1(CustomServerDiscoveryFailureName(failure)),
+			 u"discovery origin mismatch"_q);
 }
 
 TEST_CASE(DiscoveryAttemptsAreLimitedAndReleased) {
@@ -2153,6 +2308,54 @@ TEST_CASE(DiscoveryJsonRejectsHttpPort) {
 		selection,
 		PublicResponse(u"server.example.com:80"_q)).status
 		== ServerDiscoveryResponseStatus::UnsafeEndpoint);
+}
+
+TEST_CASE(ServerEndpointRefreshUsesConfiguredProxyRoute) {
+	auto proxy = MTP::ProxyData();
+	proxy.type = MTP::ProxyData::Type::Socks5;
+	proxy.host = u"127.0.0.1"_q;
+	proxy.port = 1080;
+	const auto configured = Intro::details::ServerEndpointRefreshNetworkProxy(
+		MTP::ProxyData::Settings::Enabled, proxy);
+	CHECK(configured.has_value());
+	if (configured) {
+		CHECK(configured->type() == QNetworkProxy::Socks5Proxy);
+		CHECK_EQ(configured->hostName(), u"127.0.0.1"_q);
+		CHECK_EQ(configured->port(), quint16(1080));
+	}
+
+	const auto system = Intro::details::ServerEndpointRefreshNetworkProxy(
+		MTP::ProxyData::Settings::System, proxy);
+	CHECK(system.has_value());
+	if (system) {
+		CHECK(system->type() == QNetworkProxy::DefaultProxy);
+	}
+
+	const auto disabled = Intro::details::ServerEndpointRefreshNetworkProxy(
+		MTP::ProxyData::Settings::Disabled, proxy);
+	CHECK(disabled.has_value());
+	if (disabled) {
+		CHECK(disabled->type() == QNetworkProxy::NoProxy);
+	}
+
+	proxy.type = MTP::ProxyData::Type::Mtproto;
+	const auto mtproto = Intro::details::ServerEndpointRefreshNetworkProxy(
+		MTP::ProxyData::Settings::Enabled, proxy);
+	CHECK(!mtproto.has_value());
+}
+
+TEST_CASE(ServerEndpointRefreshDistinguishesProxyErrors) {
+	using Intro::details::ServerEndpointRefreshFailureStatus;
+	const auto classify
+		= Intro::details::ServerEndpointRefreshNetworkFailureStatus;
+	CHECK(classify(QNetworkReply::ProxyConnectionRefusedError, 0)
+		  == ServerEndpointRefreshFailureStatus::ProxyFailure);
+	CHECK(classify(QNetworkReply::ProxyAuthenticationRequiredError, 0)
+		  == ServerEndpointRefreshFailureStatus::ProxyFailure);
+	CHECK(classify(QNetworkReply::ContentAccessDenied, 407)
+		  == ServerEndpointRefreshFailureStatus::ProxyFailure);
+	CHECK(classify(QNetworkReply::ConnectionRefusedError, 0)
+		  == ServerEndpointRefreshFailureStatus::NetworkFailure);
 }
 
 } // namespace
