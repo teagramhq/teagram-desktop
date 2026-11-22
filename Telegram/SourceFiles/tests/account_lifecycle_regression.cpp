@@ -13708,8 +13708,7 @@ struct CacheReactionProbe final {
 	};
 	const auto controlsDeferred = !requestLabel(parent);
 	if (!controlsDeferred) {
-		std::fprintf(stderr,
-					 "Contact status fixture: controls_deferred=%d.\n",
+		std::fprintf(stderr, "Contact status fixture: controls_deferred=%d.\n",
 					 controlsDeferred);
 		return false;
 	}
@@ -13759,7 +13758,7 @@ struct CacheReactionProbe final {
 					 botPhotoDeferred, botPhotoReady);
 	}
 	return groupReady && channelReady && controlsDeferred && botPhotoDeferred
-		&& botPhotoReady;
+		   && botPhotoReady;
 }
 
 [[nodiscard]] bool
@@ -21330,8 +21329,8 @@ DesktopScaleShowHistory(not_null<Window::SessionController *> controller,
 
 [[nodiscard]] DesktopScaleActionSample RunDesktopScaleColdChatOpen(
 	not_null<Main::Account *> account,
-	not_null<Window::SessionController *> windowController,
-	UserId peerId, int loadedCount) {
+	not_null<Window::SessionController *> windowController, UserId peerId,
+	int loadedCount) {
 	auto sample = DesktopScaleActionSample();
 	auto &session = account->session();
 	auto &data = session.data();
@@ -21341,7 +21340,7 @@ DesktopScaleShowHistory(not_null<Window::SessionController *> controller,
 	const auto history = data.history(peerFromUser(peerId));
 	if (&windowController->session() != &session
 		|| !SeedDesktopScaleHistory(history, MsgId(10'000'000), loadedCount,
-									   peerId, false)) {
+									peerId, false)) {
 		std::fprintf(stderr,
 					 "Desktop scale check failed: cold chat history could not "
 					 "be prepared.\n");
@@ -21349,7 +21348,8 @@ DesktopScaleShowHistory(not_null<Window::SessionController *> controller,
 	}
 	sample = MeasureDesktopScaleAction([&] {
 		return DesktopScaleShowHistory(windowController, history,
-									   ShowAtTheEndMsgId) != nullptr;
+									   ShowAtTheEndMsgId)
+			   != nullptr;
 	});
 	sample.passed = DesktopScaleColdChatOpenWithinAbsoluteBudget(sample);
 	return sample;

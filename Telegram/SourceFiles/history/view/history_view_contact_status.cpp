@@ -242,48 +242,47 @@ public:
 	[[nodiscard]] rpl::producer<> setBotPhotoClicks() const;
 
 private:
-	void ensureControls();
+  void ensureControls();
 
-	int resizeGetHeight(int newWidth) override;
+  int resizeGetHeight(int newWidth) override;
 
-	void refreshAddText(int newWidth);
-	void showAddTooltip();
-	void hideAddTooltip();
-	void emojiStatusRepaint();
+  void refreshAddText(int newWidth);
+  void showAddTooltip();
+  void hideAddTooltip();
+  void emojiStatusRepaint();
 
-	const not_null<QWidget*> _tooltipParent;
-	QString _name;
-	rpl::event_stream<> _unarchiveClickRequests;
-	rpl::event_stream<> _addClickRequests;
-	rpl::event_stream<> _blockClickRequests;
-	rpl::event_stream<> _shareClickRequests;
-	rpl::event_stream<> _reportClickRequests;
-	rpl::event_stream<> _closeClickRequests;
-	rpl::event_stream<> _requestInfoClickRequests;
-	rpl::event_stream<> _setBotPhotoClickRequests;
-	object_ptr<Ui::FlatButton> _add;
-	object_ptr<Ui::FlatButton> _unarchive;
-	object_ptr<Ui::AbstractButton> _unarchiveIcon;
-	object_ptr<Ui::FlatButton> _block;
-	object_ptr<Ui::FlatButton> _share;
-	object_ptr<Ui::FlatButton> _report;
-	object_ptr<Ui::AbstractButton> _reportIcon;
-	object_ptr<Ui::IconButton> _close;
-	object_ptr<BgButton> _requestChatBg;
-	object_ptr<Ui::FlatLabel> _requestChatInfo;
-	object_ptr<Ui::PaddingWrap<Ui::FlatLabel>> _emojiStatusInfo;
-	object_ptr<Ui::PlainShadow> _emojiStatusShadow;
-	object_ptr<Ui::RippleButton> _setBotPhoto;
-	base::unique_qptr<Ui::ImportantTooltip> _addTooltip;
-	base::Timer _addTooltipTimer;
-	bool _controlsCreated = false;
-	bool _emojiStatusRepaintScheduled = false;
-	bool _addWithName = false;
-	bool _addElided = false;
-	bool _narrow = false;
-	bool _botPhotoContentReady = false;
-	rpl::event_stream<> _emojiStatusClicks;
-
+  const not_null<QWidget *> _tooltipParent;
+  QString _name;
+  rpl::event_stream<> _unarchiveClickRequests;
+  rpl::event_stream<> _addClickRequests;
+  rpl::event_stream<> _blockClickRequests;
+  rpl::event_stream<> _shareClickRequests;
+  rpl::event_stream<> _reportClickRequests;
+  rpl::event_stream<> _closeClickRequests;
+  rpl::event_stream<> _requestInfoClickRequests;
+  rpl::event_stream<> _setBotPhotoClickRequests;
+  object_ptr<Ui::FlatButton> _add;
+  object_ptr<Ui::FlatButton> _unarchive;
+  object_ptr<Ui::AbstractButton> _unarchiveIcon;
+  object_ptr<Ui::FlatButton> _block;
+  object_ptr<Ui::FlatButton> _share;
+  object_ptr<Ui::FlatButton> _report;
+  object_ptr<Ui::AbstractButton> _reportIcon;
+  object_ptr<Ui::IconButton> _close;
+  object_ptr<BgButton> _requestChatBg;
+  object_ptr<Ui::FlatLabel> _requestChatInfo;
+  object_ptr<Ui::PaddingWrap<Ui::FlatLabel>> _emojiStatusInfo;
+  object_ptr<Ui::PlainShadow> _emojiStatusShadow;
+  object_ptr<Ui::RippleButton> _setBotPhoto;
+  base::unique_qptr<Ui::ImportantTooltip> _addTooltip;
+  base::Timer _addTooltipTimer;
+  bool _controlsCreated = false;
+  bool _emojiStatusRepaintScheduled = false;
+  bool _addWithName = false;
+  bool _addElided = false;
+  bool _narrow = false;
+  bool _botPhotoContentReady = false;
+  rpl::event_stream<> _emojiStatusClicks;
 };
 
 ContactStatus::BgButton::BgButton(
@@ -310,47 +309,39 @@ void ContactStatus::BgButton::paintEvent(QPaintEvent *e) {
 ContactStatus::Bar::Bar(QWidget *parent, not_null<QWidget *> tooltipParent,
 						const QString &name)
 	: RpWidget(parent), _tooltipParent(tooltipParent), _name(name) {
-	_addTooltipTimer.setCallback([=] {
-		showAddTooltip();
-	});
-	}
+	_addTooltipTimer.setCallback([=] { showAddTooltip(); });
+}
 
 void ContactStatus::Bar::ensureControls() {
 	if (_controlsCreated) {
 		return;
 	}
 	_controlsCreated = true;
-	_add = object_ptr<Ui::FlatButton>(
-		this, QString(), st::historyContactStatusButton);
+	_add = object_ptr<Ui::FlatButton>(this, QString(),
+									  st::historyContactStatusButton);
 	_unarchive = object_ptr<Ui::FlatButton>(
-		this,
-		tr::lng_new_contact_unarchive(tr::now).toUpper(),
+		this, tr::lng_new_contact_unarchive(tr::now).toUpper(),
 		st::historyContactStatusButton);
 	_unarchiveIcon = MakeIconButton(this, st::menuIconUnarchive);
 	_block = object_ptr<Ui::FlatButton>(
-		this,
-		tr::lng_new_contact_block(tr::now).toUpper(),
+		this, tr::lng_new_contact_block(tr::now).toUpper(),
 		st::historyContactStatusBlock);
 	_share = object_ptr<Ui::FlatButton>(
-		this,
-		tr::lng_new_contact_share(tr::now).toUpper(),
+		this, tr::lng_new_contact_share(tr::now).toUpper(),
 		st::historyContactStatusButton);
-	_report = object_ptr<Ui::FlatButton>(
-		this, QString(), st::historyContactStatusBlock);
+	_report = object_ptr<Ui::FlatButton>(this, QString(),
+										 st::historyContactStatusBlock);
 	_reportIcon = MakeIconButton(this, st::menuIconReportAttention);
 	_close = object_ptr<Ui::IconButton>(this, st::historyReplyCancel);
 	_requestChatBg = object_ptr<BgButton>(this, st::historyContactStatusButton);
-	_requestChatInfo = object_ptr<Ui::FlatLabel>(
-		this, QString(), st::historyContactStatusLabel);
+	_requestChatInfo = object_ptr<Ui::FlatLabel>(this, QString(),
+												 st::historyContactStatusLabel);
 	_emojiStatusInfo = object_ptr<Ui::PaddingWrap<Ui::FlatLabel>>(
 		this,
-		object_ptr<Ui::FlatLabel>(
-			this, u""_q, st::historyEmojiStatusInfoLabel),
-		QMargins(
-			st::historyContactStatusMinSkip,
-			st::topBarArrowPadding.top(),
-			st::historyContactStatusMinSkip,
-			st::topBarArrowPadding.top()));
+		object_ptr<Ui::FlatLabel>(this, u""_q, st::historyEmojiStatusInfoLabel),
+		QMargins(st::historyContactStatusMinSkip, st::topBarArrowPadding.top(),
+				 st::historyContactStatusMinSkip,
+				 st::topBarArrowPadding.top()));
 	_emojiStatusShadow = object_ptr<Ui::PlainShadow>(this);
 	_setBotPhoto = object_ptr<BgButton>(this, st::historyContactStatusButton);
 
@@ -358,36 +349,35 @@ void ContactStatus::Bar::ensureControls() {
 	_unarchiveIcon->setAccessibleName(tr::lng_new_contact_unarchive(tr::now));
 	_reportIcon->setAccessibleName(tr::lng_report_spam(tr::now));
 	_requestChatInfo->setAttribute(Qt::WA_TransparentForMouseEvents);
-	_add->clicks() | rpl::on_next([=] {
-		_addClickRequests.fire({});
-	}, _add->lifetime());
-	_unarchive->clicks() | rpl::on_next([=] {
-		_unarchiveClickRequests.fire({});
-	}, _unarchive->lifetime());
-	_unarchiveIcon->clicks() | rpl::on_next([=] {
-		_unarchiveClickRequests.fire({});
-	}, _unarchiveIcon->lifetime());
-	_block->clicks() | rpl::on_next([=] {
-		_blockClickRequests.fire({});
-	}, _block->lifetime());
-	_share->clicks() | rpl::on_next([=] {
-		_shareClickRequests.fire({});
-	}, _share->lifetime());
-	_report->clicks() | rpl::on_next([=] {
-		_reportClickRequests.fire({});
-	}, _report->lifetime());
-	_reportIcon->clicks() | rpl::on_next([=] {
-		_reportClickRequests.fire({});
-	}, _reportIcon->lifetime());
-	_close->clicks() | rpl::on_next([=] {
-		_closeClickRequests.fire({});
-	}, _close->lifetime());
-	_requestChatBg->clicks() | rpl::on_next([=] {
-		_requestInfoClickRequests.fire({});
-	}, _requestChatBg->lifetime());
-	_setBotPhoto->clicks() | rpl::on_next([=] {
-		_setBotPhotoClickRequests.fire({});
-	}, _setBotPhoto->lifetime());
+	_add->clicks()
+		| rpl::on_next([=] { _addClickRequests.fire({}); }, _add->lifetime());
+	_unarchive->clicks()
+		| rpl::on_next([=] { _unarchiveClickRequests.fire({}); },
+					   _unarchive->lifetime());
+	_unarchiveIcon->clicks()
+		| rpl::on_next([=] { _unarchiveClickRequests.fire({}); },
+					   _unarchiveIcon->lifetime());
+	_block->clicks()
+		| rpl::on_next([=] { _blockClickRequests.fire({}); },
+					   _block->lifetime());
+	_share->clicks()
+		| rpl::on_next([=] { _shareClickRequests.fire({}); },
+					   _share->lifetime());
+	_report->clicks()
+		| rpl::on_next([=] { _reportClickRequests.fire({}); },
+					   _report->lifetime());
+	_reportIcon->clicks()
+		| rpl::on_next([=] { _reportClickRequests.fire({}); },
+					   _reportIcon->lifetime());
+	_close->clicks()
+		| rpl::on_next([=] { _closeClickRequests.fire({}); },
+					   _close->lifetime());
+	_requestChatBg->clicks()
+		| rpl::on_next([=] { _requestInfoClickRequests.fire({}); },
+					   _requestChatBg->lifetime());
+	_setBotPhoto->clicks()
+		| rpl::on_next([=] { _setBotPhotoClickRequests.fire({}); },
+					   _setBotPhoto->lifetime());
 	_add->events(
 	) | rpl::on_next([=](not_null<QEvent*> e) {
 		const auto type = e->type();
