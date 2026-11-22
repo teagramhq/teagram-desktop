@@ -281,9 +281,10 @@ SingleInstanceProfileLockIdentity(const QString &serverPath, bool snap) {
 				: info.fileName();
 }
 
-[[nodiscard]] inline QString SingleInstanceProfileLockIdentityForServerName(
-	const QString &serverName, const QString &runtimeDirectory,
-	uid_t effectiveUid, bool snap) {
+[[nodiscard]] inline QString
+SingleInstanceProfileLockIdentityForServerName(const QString &serverName,
+											   const QString &runtimeDirectory,
+											   uid_t effectiveUid, bool snap) {
 	if (!snap) {
 		return SingleInstanceSocketPathDetails::IsValidServerName(serverName)
 				   ? serverName

@@ -450,16 +450,16 @@ int Sandbox::start() {
 			hashMd5Hex(encodedIdentity.constData(), encodedIdentity.size(),
 					   lockHash);
 			profileLockPath = QDir(cWorkingDir()).absolutePath()
-				+ u"/Teagram-profile-"_q + QString::fromLatin1(lockHash)
-				+ u".lock"_q;
+							  + u"/Teagram-profile-"_q
+							  + QString::fromLatin1(lockHash) + u".lock"_q;
 			_singleInstanceLock
 				= std::make_unique<SingleInstanceLock>(profileLockPath);
 			const auto lockResult = _singleInstanceLock->tryAcquire();
 			if (lockResult == SingleInstanceLock::Result::Acquired) {
 				_singleInstanceLock->release();
 			} else if (lockResult == SingleInstanceLock::Result::Busy) {
-				const auto activeServerPath
-					= Platform::Linux::SingleInstanceServerPathFromLockContentsForIdentity(
+				const auto activeServerPath = Platform::Linux::
+					SingleInstanceServerPathFromLockContentsForIdentity(
 						_singleInstanceLock->contents(),
 						linuxProfileLockIdentity, geteuid(), snap);
 				if (!activeServerPath.isEmpty()) {
@@ -469,18 +469,17 @@ int Sandbox::start() {
 		}
 		if (_localServerName.isEmpty()
 			&& (cLaunchMode() != LaunchModeCleanup)) {
-			_localServerName
-				= Platform::SingleInstanceLocalServerName(h, &localServerNameError);
+			_localServerName = Platform::SingleInstanceLocalServerName(
+				h, &localServerNameError);
 		}
-	#else // Q_OS_LINUX
+#else  // Q_OS_LINUX
 		_localServerName
 			= Platform::SingleInstanceLocalServerName(h, &localServerNameError);
-	#endif // Q_OS_LINUX
+#endif // Q_OS_LINUX
 	}
 
 #if !defined Q_OS_WIN && !defined Q_OS_MAC
-	if (_localServerName.isEmpty()
-		&& (cLaunchMode() != LaunchModeCleanup)) {
+	if (_localServerName.isEmpty() && (cLaunchMode() != LaunchModeCleanup)) {
 		const auto message
 			= localServerNameError.isEmpty()
 				  ? u"Could not determine a private local socket path."_q
@@ -592,7 +591,8 @@ int Sandbox::start() {
 		}
 #endif // Q_OS_MAC
 		if (!_singleInstanceLock) {
-			_singleInstanceLock = std::make_unique<SingleInstanceLock>(lockPath);
+			_singleInstanceLock
+				= std::make_unique<SingleInstanceLock>(lockPath);
 		}
 	}
 

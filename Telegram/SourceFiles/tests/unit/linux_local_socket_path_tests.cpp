@@ -408,7 +408,8 @@ TEST_CASE(LinuxSingleInstanceCleanupUsesPublishedEndpointAfterRuntimeAppears) {
 			serverName, QString(), geteuid(), false);
 	const auto profileLockPath = runtimeParent.filePath(u"profile.lock"_q);
 	auto primaryLock = Core::SingleInstanceLock(profileLockPath);
-	CHECK(primaryLock.tryAcquire() == Core::SingleInstanceLock::Result::Acquired);
+	CHECK(primaryLock.tryAcquire()
+		  == Core::SingleInstanceLock::Result::Acquired);
 	CHECK(primaryLock.setContents(primaryPath));
 	auto cleanupLock = Core::SingleInstanceLock(profileLockPath);
 	CHECK(cleanupLock.tryAcquire() == Core::SingleInstanceLock::Result::Busy);
@@ -448,7 +449,8 @@ TEST_CASE(LinuxSingleInstanceSecondLaunchFindsEndpointWithoutHome) {
 			serverName, QString(), geteuid(), false);
 	const auto profileLockPath = homeDirectory.filePath(u"profile.lock"_q);
 	auto primaryLock = Core::SingleInstanceLock(profileLockPath);
-	CHECK(primaryLock.tryAcquire() == Core::SingleInstanceLock::Result::Acquired);
+	CHECK(primaryLock.tryAcquire()
+		  == Core::SingleInstanceLock::Result::Acquired);
 	CHECK(primaryLock.setContents(primaryPath));
 	auto secondLock = Core::SingleInstanceLock(profileLockPath);
 	CHECK(secondLock.tryAcquire() == Core::SingleInstanceLock::Result::Busy);
