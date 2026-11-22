@@ -126,6 +126,7 @@ private:
 	// Single instance application
 	void socketConnected();
 	void socketError(QLocalSocket::LocalSocketError e);
+	void afterSingleInstanceStarted();
 	void socketDisconnected();
 	void retrySingleInstance(bool immediate = false);
 	void showSingleInstanceError(QString diagnostic = QString(),
@@ -153,6 +154,10 @@ private:
 	QString _localServerName, _localSocketReadData;
 	// Destroy the listener before releasing ownership of its profile.
 	std::unique_ptr<SingleInstanceLock> _singleInstanceLock;
+#ifdef Q_OS_LINUX
+	QString _singleInstanceProfileLockIdentity;
+	bool _singleInstanceProfileLockSnap = false;
+#endif // Q_OS_LINUX
 	QLocalServer _localServer;
 	QLocalSocket _localSocket;
 	LocalClients _localClients;
