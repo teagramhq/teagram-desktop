@@ -50,7 +50,9 @@ void SetApplicationIcon(const QIcon &icon);
 	bool fileIconOwned,
 	bool roundIconActive);
 #endif
-[[nodiscard]] QString SingleInstanceLocalServerName(const QString &hash);
+[[nodiscard]] QString SingleInstanceLocalServerName(const QString &hash,
+													QString *errorMessage
+													= nullptr);
 [[nodiscard]] PermissionStatus GetPermissionStatus(PermissionType type);
 void RequestPermission(PermissionType type, Fn<void(PermissionStatus)> resultCallback);
 void OpenSystemSettingsForPermission(PermissionType type);

@@ -121,7 +121,7 @@ void finish() {
 	objc_finish();
 }
 
-QString SingleInstanceLocalServerName(const QString &hash) {
+QString SingleInstanceLocalServerName(const QString &hash, QString *) {
 	if (Core::MacProtectedPath::IsActive()) {
 		const auto directory = Core::MacProtectedPath::IpcDirectory();
 		return directory.isEmpty() ? QString()

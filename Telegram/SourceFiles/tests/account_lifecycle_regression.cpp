@@ -13884,6 +13884,9 @@ struct CacheReactionProbe final {
 	user->setBarSettings(PeerBarSettings());
 	auto parent = Ui::RpWidget(controller->widget().get());
 	auto status = HistoryView::ContactStatus(controller, &parent, user, false);
+	parent.resize(500, 300);
+	parent.show();
+	Ui::SendPendingMoveResizeEvents(&parent);
 	const auto botPhotoLabel = [](QWidget &root) -> Ui::FlatLabel * {
 		for (const auto child : root.findChildren<QWidget *>()) {
 			if (const auto label = dynamic_cast<Ui::FlatLabel *>(child)) {
@@ -13895,35 +13898,67 @@ struct CacheReactionProbe final {
 		return nullptr;
 	};
 	const auto botPhotoDeferred = !botPhotoLabel(parent);
-	Ui::FlatLabel *requestLabel = nullptr;
-	for (const auto child : parent.findChildren<QWidget *>()) {
-		if (const auto label = dynamic_cast<Ui::FlatLabel *>(child)) {
-			if (&label->st() == &st::historyContactStatusLabel) {
-				requestLabel = label;
-				break;
+	const auto requestLabel = [](QWidget &root) -> Ui::FlatLabel * {
+		for (const auto child : root.findChildren<QWidget *>()) {
+			if (const auto label = dynamic_cast<Ui::FlatLabel *>(child)) {
+				if (&label->st() == &st::historyContactStatusLabel) {
+					return label;
+				}
 			}
 		}
-	}
-	if (!requestLabel || !requestLabel->accessibilityName().isEmpty()) {
-		std::fprintf(stderr,
-					 "Contact status fixture: request_label=%d "
-					 "initial_text_empty=%d.\n",
-					 bool(requestLabel),
-					 requestLabel
-						 && requestLabel->accessibilityName().isEmpty());
+		return nullptr;
+	};
+	const auto controlsDeferred = !requestLabel(parent);
+	if (!controlsDeferred) {
+		std::fprintf(stderr, "Contact status fixture: controls_deferred=%d.\n",
+					 controlsDeferred);
 		return false;
 	}
 	status.show();
 	user->setBarSettings(PeerBarSettings(PeerBarSetting::RequestChat));
 	const auto groupReady = WaitForRegressionCondition(
-		[&] { return !requestLabel->accessibilityName().isEmpty(); }, 1000);
-	const auto groupText = requestLabel->accessibilityName();
+		[&] {
+			const auto label = requestLabel(parent);
+			return label && !label->accessibilityName().isEmpty();
+		},
+		1000);
+	const auto group = requestLabel(parent);
+	const auto groupText = group ? group->accessibilityName() : QString();
+	const auto requestButton = [&] {
+		for (const auto child : parent.findChildren<QWidget *>()) {
+			const auto button = dynamic_cast<Ui::RippleButton *>(child);
+			if (button && !button->isHidden() && button->isEnabled()) {
+				return button;
+			}
+		}
+		return static_cast<Ui::RippleButton *>(nullptr);
+	}();
+	for (auto i = 0; i < 8 && controller->window().isLayerShown(); ++i) {
+		controller->window().hideLayer(anim::type::instant);
+	}
+	const auto noLayerBeforeRequest = !controller->window().isLayerShown();
+	auto requestInfoDialogOpened = false;
+	const auto requestButtonSized = WaitForRegressionCondition(
+		[&] {
+			return requestButton && (requestButton->width() > 0)
+				   && (requestButton->height() > 0);
+		},
+		1000);
+	if (requestButtonSized && noLayerBeforeRequest) {
+		Test::Click(requestButton);
+		requestInfoDialogOpened = WaitForRegressionCondition(
+			[&] { return controller->window().isLayerShown(); }, 1000);
+		if (requestInfoDialogOpened) {
+			controller->window().hideLayer(anim::type::instant);
+		}
+	}
 	user->setBarSettings(PeerBarSetting::RequestChat
 						 | PeerBarSetting::RequestChatIsBroadcast);
 	const auto channelReady = WaitForRegressionCondition(
 		[&] {
-			return !requestLabel->accessibilityName().isEmpty()
-				   && (requestLabel->accessibilityName() != groupText);
+			const auto label = requestLabel(parent);
+			return label && !label->accessibilityName().isEmpty()
+				   && (label->accessibilityName() != groupText);
 		},
 		1000);
 	const auto bot = controller->session().data().processUsers(
@@ -13945,13 +13980,20 @@ struct CacheReactionProbe final {
 				   && !label->accessibilityName().isEmpty();
 		},
 		1000);
-	if (!groupReady || !channelReady || !botPhotoDeferred || !botPhotoReady) {
-		std::fprintf(stderr,
-					 "Contact status fixture: group=%d channel=%d "
-					 "photo_deferred=%d photo_ready=%d.\n",
-					 groupReady, channelReady, botPhotoDeferred, botPhotoReady);
+	if (!groupReady || !requestInfoDialogOpened || !channelReady
+		|| !botPhotoDeferred || !botPhotoReady) {
+		std::fprintf(
+			stderr,
+			"Contact status fixture: group=%d request_info=%d request_button="
+			"%d request_size=%dx%d no_layer_before=%d channel=%d "
+			"controls_deferred=%d photo_deferred=%d photo_ready=%d.\n",
+			groupReady, requestInfoDialogOpened, bool(requestButton),
+			requestButton ? requestButton->width() : -1,
+			requestButton ? requestButton->height() : -1, noLayerBeforeRequest,
+			channelReady, controlsDeferred, botPhotoDeferred, botPhotoReady);
 	}
-	return groupReady && channelReady && botPhotoDeferred && botPhotoReady;
+	return groupReady && requestInfoDialogOpened && channelReady
+		   && controlsDeferred && botPhotoDeferred && botPhotoReady;
 }
 
 [[nodiscard]] bool
@@ -21761,6 +21803,42 @@ DesktopScaleShowHistory(not_null<Window::SessionController *> controller,
 													"history seed");
 }
 
+[[nodiscard]] bool DesktopScaleColdChatOpenWithinAbsoluteBudget(
+	const DesktopScaleActionSample &sample) {
+	return sample.passed && sample.nanoseconds && (*sample.nanoseconds > 0)
+		   && (*sample.nanoseconds <= 50'000'000)
+		   && sample.mainThreadStepsOverBudget
+		   && (*sample.mainThreadStepsOverBudget == 0);
+}
+
+[[nodiscard]] DesktopScaleActionSample RunDesktopScaleColdChatOpen(
+	not_null<Main::Account *> account,
+	not_null<Window::SessionController *> windowController, UserId peerId,
+	int loadedCount) {
+	auto sample = DesktopScaleActionSample();
+	auto &session = account->session();
+	auto &data = session.data();
+	data.processUsers(MTP_vector<MTPUser>({
+		DesktopScaleUser(peerId, u"Scale cold chat peer"_q, false),
+	}));
+	const auto history = data.history(peerFromUser(peerId));
+	if (&windowController->session() != &session
+		|| !SeedDesktopScaleHistory(history, MsgId(10'000'000), loadedCount,
+									peerId, false)) {
+		std::fprintf(stderr,
+					 "Desktop scale check failed: cold chat history could not "
+					 "be prepared.\n");
+		return sample;
+	}
+	sample = MeasureDesktopScaleAction([&] {
+		return DesktopScaleShowHistory(windowController, history,
+									   ShowAtTheEndMsgId)
+			   != nullptr;
+	});
+	sample.passed = DesktopScaleColdChatOpenWithinAbsoluteBudget(sample);
+	return sample;
+}
+
 [[nodiscard]] DesktopScaleActionSample RunDesktopScaleHistoryPage(
 	Main::Domain &domain, int alreadyLoaded, UserId selfId, UserId peerId,
 	Main::Account *reuseAccount = nullptr,
@@ -23993,11 +24071,17 @@ int RunDesktopScaleCheck() {
 		  && (*contactsHundred.loaded.nanoseconds < 500'000'000);
 	auto historyOne = DesktopScaleActionSample();
 	auto historyHundred = DesktopScaleActionSample();
+	auto coldChatOpenOne = DesktopScaleActionSample();
+	auto coldChatOpenHundred = DesktopScaleActionSample();
 	auto dateOne = DesktopScaleActionSample();
 	auto dateHundred = DesktopScaleActionSample();
 	const auto historyCreated = WithDesktopScaleAccount(
 		domain, UserId(6'000'000), [&](auto account) {
 			return WithDesktopScaleWindow(account, [&](auto windowController) {
+				coldChatOpenOne = RunDesktopScaleColdChatOpen(
+					account, windowController, UserId(6'200'001), 1);
+				coldChatOpenHundred = RunDesktopScaleColdChatOpen(
+					account, windowController, UserId(6'200'002), 100);
 				historyOne = RunDesktopScaleHistoryPage(
 					domain, 20, UserId(6'000'000), UserId(6'000'001),
 					account.get(), windowController.get());
@@ -24010,7 +24094,8 @@ int RunDesktopScaleCheck() {
 				dateHundred = RunDesktopScaleDateHistoryPage(
 					domain, 2'000, UserId(7'100'000), UserId(7'100'001),
 					account.get(), windowController.get());
-				return historyOne.passed && historyHundred.passed
+				return coldChatOpenOne.passed && coldChatOpenHundred.passed
+					   && historyOne.passed && historyHundred.passed
 					   && dateOne.passed && dateHundred.passed;
 			});
 		});
@@ -24069,6 +24154,8 @@ int RunDesktopScaleCheck() {
 		cacheHundred.mainThreadStepsOverBudget,
 		historyOne.mainThreadStepsOverBudget,
 		historyHundred.mainThreadStepsOverBudget,
+		coldChatOpenOne.mainThreadStepsOverBudget,
+		coldChatOpenHundred.mainThreadStepsOverBudget,
 		dateOne.mainThreadStepsOverBudget,
 		dateHundred.mainThreadStepsOverBudget,
 		groupOne.mainThreadStepsOverBudget,
@@ -24081,6 +24168,8 @@ int RunDesktopScaleCheck() {
 	// The dialogs page remains report-only. The 10k contact response is gated.
 	const auto blockingStalls = SumDesktopScaleStalls({
 		contactsHundred.loaded.mainThreadStepsOverBudget,
+		coldChatOpenOne.mainThreadStepsOverBudget,
+		coldChatOpenHundred.mainThreadStepsOverBudget,
 		historyOne.mainThreadStepsOverBudget,
 		historyHundred.mainThreadStepsOverBudget,
 		dateOne.mainThreadStepsOverBudget,
@@ -24101,6 +24190,7 @@ int RunDesktopScaleCheck() {
 		  && contactsHundred.changedAndFound.passed
 		  && contactsOne.removed.passed && contactsHundred.removed.passed
 		  && contactsCreated && cacheOne.passed && cacheHundred.passed
+		  && coldChatOpenOne.passed && coldChatOpenHundred.passed
 		  && historyOne.passed && historyHundred.passed && dateOne.passed
 		  && dateHundred.passed && historyCreated && groupOne.passed
 		  && groupHundred.passed && searchOne.search.passed && groupCreated
@@ -24137,6 +24227,10 @@ int RunDesktopScaleCheck() {
 			 searchOne.search, searchHundred.search);
 	printRow("updates.getDifference (1,000 messages; 50 / 5,000 dialogs)",
 			 searchOne.updateBurst, searchHundred.updateBurst);
+	printRow("cold chat open (1 / 100 loaded messages)", coldChatOpenOne,
+			 coldChatOpenHundred);
+	std::printf("Cold chat open check: %d/2.\n",
+				int(coldChatOpenOne.passed) + int(coldChatOpenHundred.passed));
 	std::printf("Contacts.getContacts 100x budget (<500 ms): %s\n",
 				contactResponseWithinBudget ? "PASS" : "FAIL");
 	std::printf("Add-participants index ready subscription: %s\n",
@@ -24206,6 +24300,10 @@ int RunDesktopScaleCheck() {
 	printStallCount(searchOne.updateBurst.mainThreadStepsOverBudget);
 	std::printf(", 100x=");
 	printStallCount(searchHundred.updateBurst.mainThreadStepsOverBudget);
+	std::printf("; cold chat open 1x=");
+	printStallCount(coldChatOpenOne.mainThreadStepsOverBudget);
+	std::printf(", 100x=");
+	printStallCount(coldChatOpenHundred.mainThreadStepsOverBudget);
 	std::printf("; total=");
 	printStallCount(stalls);
 	std::printf(".\n");

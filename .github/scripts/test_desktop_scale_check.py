@@ -56,6 +56,22 @@ EXTENDED_REPORT = REPORT.replace(
     "search=1/1 updates=1/1.\nOutcome: PASS",
 )
 
+COLD_CHAT_REPORT = EXTENDED_REPORT.replace(
+    "| updates.getDifference (1,000 messages; 50 / 5,000 dialogs) | 10.00 ms | "
+    "12.00 ms | 1.20x | 50 ms | calibrating |\n",
+    "| updates.getDifference (1,000 messages; 50 / 5,000 dialogs) | 10.00 ms | "
+    "12.00 ms | 1.20x | 50 ms | calibrating |\n"
+    "| cold chat open (1 / 100 loaded messages) | 14.00 ms | 28.00 ms | "
+    "2.00x | 50 ms | calibrating |\n",
+).replace(
+    "search=1/1 updates=1/1.\nOutcome: PASS",
+    "search=1/1 updates=1/1.\n"
+    "Cold chat open check: 2/2.\nOutcome: PASS",
+).replace(
+    "update burst 1x=0, 100x=0; total=0.",
+    "update burst 1x=0, 100x=0; cold chat open 1x=0, 100x=0; total=0.",
+)
+
 
 def make_sample(one_ms=10.0, hundred_ms=12.0, stalls=0):
     scenarios = {}
@@ -67,7 +83,7 @@ def make_sample(one_ms=10.0, hundred_ms=12.0, stalls=0):
             "hundred_stalls": stalls,
         }
     return {
-        "schema_version": 2,
+        "schema_version": 3,
         "created_at": "2026-11-10T00:00:00Z",
         "valid": True,
         "scenario_checks_passed": True,
@@ -75,6 +91,16 @@ def make_sample(one_ms=10.0, hundred_ms=12.0, stalls=0):
         "directory_enumerations": {"one": 0, "hundred": 0},
         "scenarios": scenarios,
     }
+
+
+def make_schema_v2_sample(one_ms=10.0, hundred_ms=12.0, stalls=0):
+    sample = make_sample(one_ms, hundred_ms, stalls)
+    sample["schema_version"] = 2
+    sample["scenarios"] = {
+        name: sample["scenarios"][name]
+        for name in scale_check.SCHEMA_V2_SCENARIOS
+    }
+    return sample
 
 
 def make_runner_harness(root, history=None):
@@ -277,6 +303,40 @@ class DesktopScaleCheckTests(unittest.TestCase):
         self.assertEqual(sample["directory_enumerations"], {"one": 0, "hundred": 0})
         self.assertTrue(sample["valid"])
 
+    def test_cold_chat_open_scenario_is_parsed_and_stalls_fail_the_gate(self):
+        self.require_implementation()
+        sample = scale_check.parse_report(COLD_CHAT_REPORT)
+        scenario = "cold chat open (1 / 100 loaded messages)"
+        self.assertEqual(sample["schema_version"], 3)
+        self.assertEqual(sample["scenarios"][scenario]["one_ms"], 14.0)
+        self.assertEqual(sample["scenarios"][scenario]["hundred_ms"], 28.0)
+        self.assertTrue(sample["valid"])
+        incomplete = scale_check.parse_report(
+            COLD_CHAT_REPORT.replace(
+                "Cold chat open check: 2/2.", "Cold chat open check: 1/2."
+            )
+        )
+        self.assertFalse(incomplete["scenario_checks_passed"])
+        self.assertFalse(incomplete["valid"])
+
+        records = [make_sample() for _ in range(scale_check.MIN_DEV_RUNS)]
+        for record in records:
+            record["scenarios"][scenario]["one_stalls"] = 1
+        base = [make_sample(), make_sample()]
+        head = [make_sample(), make_sample()]
+        for head_sample in head:
+            head_sample["scenarios"][scenario]["one_stalls"] = 1
+
+        result = scale_check.evaluate(records, base, head)
+
+        self.assertNotIn(scenario, result["exceptions"])
+        self.assertTrue(
+            any(
+                scenario in failure and "exceeded 50 ms" in failure
+                for failure in result["failures"]
+            )
+        )
+
     def test_failed_dialog_state_check_fails_the_scale_step(self):
         self.require_implementation()
         with tempfile.TemporaryDirectory() as directory:
@@ -333,6 +393,40 @@ class DesktopScaleCheckTests(unittest.TestCase):
                     "1x ±3σ 0.00 ms; 100x ±3σ 0.00 ms |",
                     summary,
                 )
+
+    def test_accepts_schema_v2_baselines_and_rejects_cold_chat(self):
+        self.require_implementation()
+        parsed = scale_check.parse_report(EXTENDED_REPORT)
+        self.assertEqual(parsed["schema_version"], 2)
+
+        sample = make_schema_v2_sample()
+        self.assertEqual(
+            set(sample["scenarios"]), set(scale_check.SCHEMA_V2_SCENARIOS)
+        )
+        self.assertTrue(scale_check._is_valid_record(sample))
+
+        with_cold_chat = dict(sample)
+        with_cold_chat["scenarios"] = dict(sample["scenarios"])
+        with_cold_chat["scenarios"][scale_check.COLD_CHAT_OPEN_SCENARIO] = (
+            make_sample()["scenarios"][scale_check.COLD_CHAT_OPEN_SCENARIO]
+        )
+        self.assertFalse(scale_check._is_valid_record(with_cold_chat))
+
+        history = []
+        for index in range(scale_check.MIN_DEV_RUNS):
+            record = make_schema_v2_sample()
+            record["created_at"] = f"2026-11-{index + 1:02d}T00:00:00Z"
+            history.append(record)
+        result = scale_check.evaluate(
+            history,
+            [sample, sample],
+            [sample, sample],
+            report_only=True,
+        )
+        self.assertEqual(result["record_count"], scale_check.MIN_DEV_RUNS)
+        self.assertEqual(
+            result["scenario_counts"][scale_check.COLD_CHAT_OPEN_SCENARIO], 0
+        )
 
     def test_accepts_legacy_dev_report_without_additional_scenarios(self):
         self.require_implementation()

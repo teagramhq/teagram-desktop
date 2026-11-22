@@ -120,6 +120,15 @@ SingleInstanceLock::Result SingleInstanceLock::tryAcquire() {
 			= QStringLiteral("lock path is not a regular file: %1").arg(_path);
 		return Result::Error;
 	}
+#ifdef Q_OS_LINUX
+	if ((info.st_uid != geteuid()) || (info.st_mode & 077)) {
+		::close(file);
+		_error
+			= QStringLiteral("lock path is not a private user-owned file: %1")
+				  .arg(_path);
+		return Result::Error;
+	}
+#endif // Q_OS_LINUX
 	if (::flock(file, LOCK_EX | LOCK_NB) != 0) {
 		const auto error = errno;
 		::close(file);
@@ -129,10 +138,97 @@ SingleInstanceLock::Result SingleInstanceLock::tryAcquire() {
 		setSystemError("lock", error);
 		return Result::Error;
 	}
+#ifdef Q_OS_LINUX
+	if (::ftruncate(file, 0) != 0) {
+		const auto error = errno;
+		::flock(file, LOCK_UN);
+		::close(file);
+		setSystemError("clear", error);
+		return Result::Error;
+	}
+#endif // Q_OS_LINUX
 	_descriptor = file;
 #endif // Q_OS_WIN
 	return Result::Acquired;
 }
+
+#ifdef Q_OS_LINUX
+bool SingleInstanceLock::setContents(const QString &contents) {
+	if (!isAcquired()) {
+		_error = QStringLiteral(
+					 "lock must be acquired before writing contents: %1")
+					 .arg(_path);
+		return false;
+	}
+	const auto encoded = QFile::encodeName(contents);
+	if (encoded.size() > 4095) {
+		_error = QStringLiteral("lock contents are too long: %1").arg(_path);
+		return false;
+	}
+	if (::ftruncate(_descriptor, 0) != 0) {
+		setSystemError("truncate", errno);
+		return false;
+	}
+	auto offset = 0;
+	while (offset < encoded.size()) {
+		const auto written
+			= ::pwrite(_descriptor, encoded.constData() + offset,
+					   size_t(encoded.size() - offset), off_t(offset));
+		if (written < 0) {
+			if (errno == EINTR) {
+				continue;
+			}
+			setSystemError("write", errno);
+			return false;
+		}
+		if (written == 0) {
+			setSystemError("write", EIO);
+			return false;
+		}
+		offset += int(written);
+	}
+	return true;
+}
+
+QString SingleInstanceLock::contents() const {
+	const auto path = QFile::encodeName(_path);
+	const auto file
+		= ::open(path.constData(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+	if (file < 0) {
+		return QString();
+	}
+	struct stat info = {};
+	if (::fstat(file, &info) != 0 || !S_ISREG(info.st_mode)
+		|| (info.st_uid != geteuid()) || (info.st_mode & 077)
+		|| (info.st_size < 0) || (info.st_size > 4095)) {
+		::close(file);
+		return QString();
+	}
+	auto data = QByteArray(4096, Qt::Uninitialized);
+	auto length = ssize_t(0);
+	while (length < data.size()) {
+		const auto read
+			= ::read(file, data.data() + length, size_t(data.size() - length));
+		if (read < 0) {
+			if (errno == EINTR) {
+				continue;
+			}
+			::close(file);
+			return QString();
+		}
+		if (read == 0) {
+			break;
+		}
+		length += read;
+	}
+	::close(file);
+	if (length >= data.size()) {
+		return QString();
+	}
+	data.resize(int(length));
+	return QFile::decodeName(data);
+}
+#endif // Q_OS_LINUX
 
 QString SingleInstanceLock::errorString() const { return _error; }
 

@@ -24,6 +24,10 @@ class SingleInstanceLock final {
 	[[nodiscard]] bool isAcquired() const;
 	[[nodiscard]] QString errorString() const;
 	void release();
+#ifdef Q_OS_LINUX
+	[[nodiscard]] bool setContents(const QString &contents);
+	[[nodiscard]] QString contents() const;
+#endif // Q_OS_LINUX
 #ifdef TDESKTOP_UNIT_TESTS
 	static void SetAfterOpenForTests(void (*callback)());
 #endif // TDESKTOP_UNIT_TESTS

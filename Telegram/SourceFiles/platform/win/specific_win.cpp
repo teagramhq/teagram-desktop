@@ -387,7 +387,7 @@ void SetApplicationIcon(const QIcon &icon) {
 	QApplication::setWindowIcon(icon);
 }
 
-QString SingleInstanceLocalServerName(const QString &hash) {
+QString SingleInstanceLocalServerName(const QString &hash, QString *) {
 	return u"Global\\"_q + hash + '-' + cGUIDStr();
 }
 

@@ -241,7 +241,10 @@ public:
 	[[nodiscard]] rpl::producer<> emojiStatusClicks() const;
 	[[nodiscard]] rpl::producer<> setBotPhotoClicks() const;
 
+	// clang-format off
 private:
+	void ensureControls();
+
 	int resizeGetHeight(int newWidth) override;
 
 	void refreshAddText(int newWidth);
@@ -251,21 +254,30 @@ private:
 
 	const not_null<QWidget*> _tooltipParent;
 	QString _name;
-	object_ptr<Ui::FlatButton> _add;
-	object_ptr<Ui::FlatButton> _unarchive;
-	object_ptr<Ui::AbstractButton> _unarchiveIcon;
-	object_ptr<Ui::FlatButton> _block;
-	object_ptr<Ui::FlatButton> _share;
-	object_ptr<Ui::FlatButton> _report;
-	object_ptr<Ui::AbstractButton> _reportIcon;
-	object_ptr<Ui::IconButton> _close;
-	object_ptr<BgButton> _requestChatBg;
-	object_ptr<Ui::FlatLabel> _requestChatInfo;
-	object_ptr<Ui::PaddingWrap<Ui::FlatLabel>> _emojiStatusInfo;
-	object_ptr<Ui::PlainShadow> _emojiStatusShadow;
-	object_ptr<Ui::RippleButton> _setBotPhoto;
+	rpl::event_stream<> _unarchiveClickRequests;
+	rpl::event_stream<> _addClickRequests;
+	rpl::event_stream<> _blockClickRequests;
+	rpl::event_stream<> _shareClickRequests;
+	rpl::event_stream<> _reportClickRequests;
+	rpl::event_stream<> _closeClickRequests;
+	rpl::event_stream<> _requestInfoClickRequests;
+	rpl::event_stream<> _setBotPhotoClickRequests;
+	object_ptr<Ui::FlatButton> _add = {nullptr};
+	object_ptr<Ui::FlatButton> _unarchive = {nullptr};
+	object_ptr<Ui::AbstractButton> _unarchiveIcon = {nullptr};
+	object_ptr<Ui::FlatButton> _block = {nullptr};
+	object_ptr<Ui::FlatButton> _share = {nullptr};
+	object_ptr<Ui::FlatButton> _report = {nullptr};
+	object_ptr<Ui::AbstractButton> _reportIcon = {nullptr};
+	object_ptr<Ui::IconButton> _close = {nullptr};
+	object_ptr<BgButton> _requestChatBg = {nullptr};
+	object_ptr<Ui::FlatLabel> _requestChatInfo = {nullptr};
+	object_ptr<Ui::PaddingWrap<Ui::FlatLabel>> _emojiStatusInfo = {nullptr};
+	object_ptr<Ui::PlainShadow> _emojiStatusShadow = {nullptr};
+	object_ptr<Ui::RippleButton> _setBotPhoto = {nullptr};
 	base::unique_qptr<Ui::ImportantTooltip> _addTooltip;
 	base::Timer _addTooltipTimer;
+	bool _controlsCreated = false;
 	bool _emojiStatusRepaintScheduled = false;
 	bool _addWithName = false;
 	bool _addElided = false;
@@ -273,6 +285,7 @@ private:
 	bool _botPhotoContentReady = false;
 	rpl::event_stream<> _emojiStatusClicks;
 
+	// clang-format on
 };
 
 ContactStatus::BgButton::BgButton(
@@ -298,36 +311,76 @@ void ContactStatus::BgButton::paintEvent(QPaintEvent *e) {
 
 ContactStatus::Bar::Bar(QWidget *parent, not_null<QWidget *> tooltipParent,
 						const QString &name)
-	: RpWidget(parent), _tooltipParent(tooltipParent), _name(name),
-	  _add(this, QString(), st::historyContactStatusButton),
-	  _unarchive(this, tr::lng_new_contact_unarchive(tr::now).toUpper(),
-				 st::historyContactStatusButton),
-	  _unarchiveIcon(MakeIconButton(this, st::menuIconUnarchive)),
-	  _block(this, tr::lng_new_contact_block(tr::now).toUpper(),
-			 st::historyContactStatusBlock),
-	  _share(this, tr::lng_new_contact_share(tr::now).toUpper(),
-			 st::historyContactStatusButton),
-	  _report(this, QString(), st::historyContactStatusBlock),
-	  _reportIcon(MakeIconButton(this, st::menuIconReportAttention)),
-	  _close(this, st::historyReplyCancel),
-	  _requestChatBg(this, st::historyContactStatusButton),
-	  _requestChatInfo(this, QString(), st::historyContactStatusLabel),
-	  _emojiStatusInfo(this,
-					   object_ptr<Ui::FlatLabel>(
-						   this, u""_q, st::historyEmojiStatusInfoLabel),
-					   QMargins(st::historyContactStatusMinSkip,
-								st::topBarArrowPadding.top(),
-								st::historyContactStatusMinSkip,
-								st::topBarArrowPadding.top())),
-	  _emojiStatusShadow(this),
-	  _setBotPhoto(object_ptr<BgButton>(this, st::historyContactStatusButton)) {
+	: RpWidget(parent), _tooltipParent(tooltipParent), _name(name) {
+	_addTooltipTimer.setCallback([=] { showAddTooltip(); });
+}
+
+void ContactStatus::Bar::ensureControls() {
+	if (_controlsCreated) {
+		return;
+	}
+	_controlsCreated = true;
+	_add = object_ptr<Ui::FlatButton>(this, QString(),
+									  st::historyContactStatusButton);
+	_unarchive = object_ptr<Ui::FlatButton>(
+		this, tr::lng_new_contact_unarchive(tr::now).toUpper(),
+		st::historyContactStatusButton);
+	_unarchiveIcon = MakeIconButton(this, st::menuIconUnarchive);
+	_block = object_ptr<Ui::FlatButton>(
+		this, tr::lng_new_contact_block(tr::now).toUpper(),
+		st::historyContactStatusBlock);
+	_share = object_ptr<Ui::FlatButton>(
+		this, tr::lng_new_contact_share(tr::now).toUpper(),
+		st::historyContactStatusButton);
+	_report = object_ptr<Ui::FlatButton>(this, QString(),
+										 st::historyContactStatusBlock);
+	_reportIcon = MakeIconButton(this, st::menuIconReportAttention);
+	_close = object_ptr<Ui::IconButton>(this, st::historyReplyCancel);
+	_requestChatBg = object_ptr<BgButton>(this, st::historyContactStatusButton);
+	_requestChatInfo = object_ptr<Ui::FlatLabel>(this, QString(),
+												 st::historyContactStatusLabel);
+	_emojiStatusInfo = object_ptr<Ui::PaddingWrap<Ui::FlatLabel>>(
+		this,
+		object_ptr<Ui::FlatLabel>(this, u""_q, st::historyEmojiStatusInfoLabel),
+		QMargins(st::historyContactStatusMinSkip, st::topBarArrowPadding.top(),
+				 st::historyContactStatusMinSkip,
+				 st::topBarArrowPadding.top()));
+	_emojiStatusShadow = object_ptr<Ui::PlainShadow>(this);
+	_setBotPhoto = object_ptr<BgButton>(this, st::historyContactStatusButton);
+
 	_close->setAccessibleName(tr::lng_cancel(tr::now));
 	_unarchiveIcon->setAccessibleName(tr::lng_new_contact_unarchive(tr::now));
 	_reportIcon->setAccessibleName(tr::lng_report_spam(tr::now));
 	_requestChatInfo->setAttribute(Qt::WA_TransparentForMouseEvents);
-	_addTooltipTimer.setCallback([=] {
-		showAddTooltip();
-	});
+	_add->clicks()
+		| rpl::on_next([=] { _addClickRequests.fire({}); }, _add->lifetime());
+	_unarchive->clicks()
+		| rpl::on_next([=] { _unarchiveClickRequests.fire({}); },
+					   _unarchive->lifetime());
+	_unarchiveIcon->clicks()
+		| rpl::on_next([=] { _unarchiveClickRequests.fire({}); },
+					   _unarchiveIcon->lifetime());
+	_block->clicks()
+		| rpl::on_next([=] { _blockClickRequests.fire({}); },
+					   _block->lifetime());
+	_share->clicks()
+		| rpl::on_next([=] { _shareClickRequests.fire({}); },
+					   _share->lifetime());
+	_report->clicks()
+		| rpl::on_next([=] { _reportClickRequests.fire({}); },
+					   _report->lifetime());
+	_reportIcon->clicks()
+		| rpl::on_next([=] { _reportClickRequests.fire({}); },
+					   _reportIcon->lifetime());
+	_close->clicks()
+		| rpl::on_next([=] { _closeClickRequests.fire({}); },
+					   _close->lifetime());
+	_requestChatBg->clicks()
+		| rpl::on_next([=] { _requestInfoClickRequests.fire({}); },
+					   _requestChatBg->lifetime());
+	_setBotPhoto->clicks()
+		| rpl::on_next([=] { _setBotPhotoClickRequests.fire({}); },
+					   _setBotPhoto->lifetime());
 	_add->events(
 	) | rpl::on_next([=](not_null<QEvent*> e) {
 		const auto type = e->type();
@@ -353,6 +406,10 @@ void ContactStatus::Bar::showState(
 		Ui::Text::MarkedContext context) {
 	using Type = State::Type;
 	const auto type = state.type;
+	if (type == Type::None && status.empty()) {
+		return;
+	}
+	ensureControls();
 	_add->setVisible(type == Type::AddOrBlock || type == Type::Add);
 	const auto unarchive = (type == Type::UnarchiveOrBlock)
 		|| (type == Type::UnarchiveOrReport);
@@ -414,37 +471,31 @@ void ContactStatus::Bar::showState(
 }
 
 rpl::producer<> ContactStatus::Bar::unarchiveClicks() const {
-	return rpl::merge(
-		_unarchive->clicks(),
-		_unarchiveIcon->clicks()
-	) | rpl::to_empty;
+	return _unarchiveClickRequests.events();
 }
 
 rpl::producer<> ContactStatus::Bar::addClicks() const {
-	return _add->clicks() | rpl::to_empty;
+	return _addClickRequests.events();
 }
 
 rpl::producer<> ContactStatus::Bar::blockClicks() const {
-	return _block->clicks() | rpl::to_empty;
+	return _blockClickRequests.events();
 }
 
 rpl::producer<> ContactStatus::Bar::shareClicks() const {
-	return _share->clicks() | rpl::to_empty;
+	return _shareClickRequests.events();
 }
 
 rpl::producer<> ContactStatus::Bar::reportClicks() const {
-	return rpl::merge(
-		_report->clicks(),
-		_reportIcon->clicks()
-	) | rpl::to_empty;
+	return _reportClickRequests.events();
 }
 
 rpl::producer<> ContactStatus::Bar::closeClicks() const {
-	return _close->clicks() | rpl::to_empty;
+	return _closeClickRequests.events();
 }
 
 rpl::producer<> ContactStatus::Bar::requestInfoClicks() const {
-	return _requestChatBg->clicks() | rpl::to_empty;
+	return _requestInfoClickRequests.events();
 }
 
 rpl::producer<> ContactStatus::Bar::emojiStatusClicks() const {
@@ -452,7 +503,7 @@ rpl::producer<> ContactStatus::Bar::emojiStatusClicks() const {
 }
 
 rpl::producer<> ContactStatus::Bar::setBotPhotoClicks() const {
-	return _setBotPhoto->clicks() | rpl::to_empty;
+	return _setBotPhotoClickRequests.events();
 }
 
 void ContactStatus::Bar::refreshAddText(int newWidth) {
@@ -525,6 +576,9 @@ void ContactStatus::Bar::hideAddTooltip() {
 }
 
 int ContactStatus::Bar::resizeGetHeight(int newWidth) {
+	if (!_controlsCreated) {
+		return 0;
+	}
 	refreshAddText(newWidth);
 	_close->moveToRight(0, 0, newWidth);
 	const auto narrow = (newWidth < _close->width() * 2);
