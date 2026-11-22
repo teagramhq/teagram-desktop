@@ -448,8 +448,8 @@ TEST_CASE(LinuxSingleInstanceCleanupRetriesDelayedEndpointAndListener) {
 		}
 	}
 	primaryThread.join();
-	CHECK_EQ(connected.status,
-			 Platform::Linux::SingleInstanceEndpointStatus::Connected);
+	CHECK(connected.status
+		  == Platform::Linux::SingleInstanceEndpointStatus::Connected);
 	CHECK_EQ(connected.serverPath, primaryPath);
 	CHECK(publicationSucceeded);
 	CHECK(listenerStarted);
@@ -498,8 +498,8 @@ TEST_CASE(LinuxSingleInstanceStartupFindsDelayedEndpointWithoutHome) {
 	} else {
 		qputenv("HOME", previousHome);
 	}
-	CHECK_EQ(activeEndpoint.status,
-			 Platform::Linux::SingleInstanceEndpointStatus::Located);
+	CHECK(activeEndpoint.status
+		  == Platform::Linux::SingleInstanceEndpointStatus::Located);
 	CHECK_EQ(activeEndpoint.serverPath, primaryPath);
 	CHECK(publicationSucceeded);
 }
@@ -519,8 +519,8 @@ TEST_CASE(LinuxSingleInstanceCleanupPropagatesProfileLockError) {
 	const auto result = Platform::Linux::ConnectToSingleInstanceServer(
 		socket, [&] { return ProbeProfileLock(invalidLock); }, lockIdentity,
 		geteuid(), false, 1'000, 20);
-	CHECK_EQ(result.status,
-			 Platform::Linux::SingleInstanceEndpointStatus::Failed);
+	CHECK(result.status
+		  == Platform::Linux::SingleInstanceEndpointStatus::Failed);
 	CHECK(!result.error.isEmpty());
 	CHECK(result.error.contains(directory.path()));
 }
