@@ -492,7 +492,8 @@ TEST_CASE(LinuxSingleInstanceStartupFindsDelayedEndpointWithoutHome) {
 	auto loop = QEventLoop();
 	auto heartbeatCount = 0;
 	auto heartbeat = QTimer();
-	connect(&heartbeat, &QTimer::timeout, &loop, [&] { ++heartbeatCount; });
+	QObject::connect(&heartbeat, &QTimer::timeout, &loop,
+					 [&] { ++heartbeatCount; });
 	heartbeat.start(10);
 	QTimer::singleShot(2'000, &loop, &QEventLoop::quit);
 	Platform::Linux::StartSingleInstanceServerPathDiscovery(
