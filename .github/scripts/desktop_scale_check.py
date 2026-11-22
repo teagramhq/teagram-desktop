@@ -78,6 +78,13 @@ def _duration(value):
     return float(match.group(1))
 
 
+def _check_counts_passed(match, pairs, single_checks=()):
+    return all(
+        match.group(passed) == match.group(total) and match.group(total) != "0"
+        for passed, total in pairs
+    ) and all(match.group(group) == "1" for group in single_checks)
+
+
 def parse_report(report):
     if "DESKTOP_SCALE_REPORT_BEGIN\n" not in report:
         raise ScaleCheckError("scale check did not emit its report table")
@@ -171,12 +178,15 @@ def parse_report(report):
     cold_chat_rows = set(scenario_rows) & set(COLD_CHAT_SCENARIOS)
     if bool(cold_chat_rows) != bool(cold_chat_checks):
         raise ScaleCheckError("scale-check report is missing cold chat checks")
-    checks_passed = all(value == "1" for value in checks.groups()) and (
-        not additional_rows
-        or all(value == "1" for value in additional_checks.groups())
+    checks_passed = _check_counts_passed(
+        checks, ((1, 2), (4, 5), (6, 7), (8, 9)), (3,)
     ) and (
-        not cold_chat_rows
-        or all(value == "1" for value in cold_chat_checks.groups())
+        not additional_rows
+        or _check_counts_passed(
+            additional_checks, ((1, 2), (3, 4), (5, 6), (7, 8), (9, 10))
+        )
+    ) and (
+        not cold_chat_rows or _check_counts_passed(cold_chat_checks, ((1, 2),))
     )
     metrics_present = all(
         row[field] is not None

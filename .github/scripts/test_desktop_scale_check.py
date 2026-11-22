@@ -66,7 +66,7 @@ COLD_CHAT_REPORT = EXTENDED_REPORT.replace(
 ).replace(
     "search=1/1 updates=1/1.\nOutcome: PASS",
     "search=1/1 updates=1/1.\n"
-    "Cold chat open check: 1/1.\nOutcome: PASS",
+    "Cold chat open check: 2/2.\nOutcome: PASS",
 ).replace(
     "update burst 1x=0, 100x=0; total=0.",
     "update burst 1x=0, 100x=0; cold chat open 1x=0, 100x=0; total=0.",
@@ -301,6 +301,13 @@ class DesktopScaleCheckTests(unittest.TestCase):
         self.assertEqual(sample["scenarios"][scenario]["one_ms"], 14.0)
         self.assertEqual(sample["scenarios"][scenario]["hundred_ms"], 28.0)
         self.assertTrue(sample["valid"])
+        incomplete = scale_check.parse_report(
+            COLD_CHAT_REPORT.replace(
+                "Cold chat open check: 2/2.", "Cold chat open check: 1/2."
+            )
+        )
+        self.assertFalse(incomplete["scenario_checks_passed"])
+        self.assertFalse(incomplete["valid"])
 
         records = [make_sample() for _ in range(scale_check.MIN_DEV_RUNS)]
         for record in records:
