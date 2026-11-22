@@ -13734,7 +13734,7 @@ struct CacheReactionProbe final {
 		}
 		return static_cast<Ui::RippleButton *>(nullptr);
 	}();
-	while (controller->window().isLayerShown()) {
+	for (auto i = 0; i < 8 && controller->window().isLayerShown(); ++i) {
 		controller->window().hideLayer(anim::type::instant);
 	}
 	const auto noLayerBeforeRequest = !controller->window().isLayerShown();
