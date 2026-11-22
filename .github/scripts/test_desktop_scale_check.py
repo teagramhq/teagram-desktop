@@ -2190,8 +2190,8 @@ class DesktopScaleCheckTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             repo_root, _runner_temp, env = make_runner_harness(root)
-            env["DESKTOP_SCALE_RUN_BUDGET_SECONDS"] = "1"
-            env["MOCK_DOCKER_SLEEP_SECONDS"] = "3"
+            env["DESKTOP_SCALE_RUN_BUDGET_SECONDS"] = "3"
+            env["MOCK_DOCKER_SLEEP_SECONDS"] = "6"
             result = subprocess.run(
                 ["bash", str(runner)],
                 cwd=repo_root,
@@ -2201,11 +2201,14 @@ class DesktopScaleCheckTests(unittest.TestCase):
                 check=False,
             )
             summary = (root / "step-summary.md").read_text()
+            docker_was_invoked = (root / "docker-calls.txt").exists()
+            evaluate_was_invoked = (root / "evaluate-calls.txt").exists()
 
         self.assertEqual(result.returncode, 124, result.stdout + result.stderr)
         self.assertIn("exit 124", result.stdout)
         self.assertIn("head-1 failed with status 124", summary)
-        self.assertFalse((root / "evaluate-calls.txt").exists())
+        self.assertTrue(docker_was_invoked)
+        self.assertFalse(evaluate_was_invoked)
 
     def test_unexpected_cli_error_prints_a_traceback(self):
         self.require_implementation()
