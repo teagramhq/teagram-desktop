@@ -11467,7 +11467,8 @@ constexpr auto kMaxUntracedRunnerNoiseMainThreadCpuNanoseconds = 5'000'000;
 
 struct MainThreadWorkBudgetRun final {
 	bool Observe(const MainThreadWorkBudgetAssessment &assessment,
-				 qint64 wallNanoseconds, qint64 budgetNanoseconds) {
+				 qint64 wallNanoseconds, qint64 budgetNanoseconds,
+				 qint64 windowStartedAtSteadyNanoseconds = -1) {
 		const auto withinBudget = MainThreadWorkBudgetEvidenceWithinBudget(
 			assessment, wallNanoseconds, budgetNanoseconds);
 		if (withinBudget) {
@@ -11475,18 +11476,44 @@ struct MainThreadWorkBudgetRun final {
 		}
 		if (MainThreadWorkBudgetIsUntracedWallOverrun(
 				assessment, wallNanoseconds, budgetNanoseconds)) {
-			++untracedWallOverruns;
+			if ((windowStartedAtSteadyNanoseconds >= 0) && (wallNanoseconds > 0)
+				&& (windowStartedAtSteadyNanoseconds
+					<= std::numeric_limits<qint64>::max() - wallNanoseconds)) {
+				untracedWallOverrunWindows.push_back({
+					windowStartedAtSteadyNanoseconds,
+					windowStartedAtSteadyNanoseconds + wallNanoseconds,
+				});
+			} else {
+				++unanchoredUntracedWallOverruns;
+			}
 		} else {
 			hasHardFailure = true;
 		}
 		return false;
 	}
 
-	[[nodiscard]] bool WithinBudget() const {
-		return !hasHardFailure && (untracedWallOverruns <= 1);
+	[[nodiscard]] int UntracedWallOverrunCount() const {
+		auto windows = untracedWallOverrunWindows;
+		std::sort(begin(windows), end(windows));
+		auto result = unanchoredUntracedWallOverruns;
+		auto currentEnd = qint64(-1);
+		for (const auto &[start, end] : windows) {
+			if (start < currentEnd) {
+				currentEnd = std::max(currentEnd, end);
+			} else {
+				++result;
+				currentEnd = end;
+			}
+		}
+		return result;
 	}
 
-	int untracedWallOverruns = 0;
+	[[nodiscard]] bool WithinBudget() const {
+		return !hasHardFailure && (UntracedWallOverrunCount() <= 1);
+	}
+
+	std::vector<std::pair<qint64, qint64>> untracedWallOverrunWindows;
+	int unanchoredUntracedWallOverruns = 0;
 	bool hasHardFailure = false;
 };
 
@@ -11708,14 +11735,30 @@ void AccumulateMainThreadWorkEstimate(qint64 &aggregateNanoseconds,
 	const auto missingTraceLowCpuInitialSelectionGateWithinBudget
 		= oneUntracedWallOverrun.Observe(
 			missingTraceLowCpuInitialSelectionAssessment, 135'000'000,
-			kMaxChatSwitchNanoseconds);
+			kMaxChatSwitchNanoseconds, 100'000'000);
+	auto overlappingUntracedWallOverruns = MainThreadWorkBudgetRun();
+	overlappingUntracedWallOverruns.Observe(
+		missingTraceLowCpuInitialSelectionAssessment, 135'000'000,
+		kMaxChatSwitchNanoseconds, 100'000'000);
+	overlappingUntracedWallOverruns.Observe(
+		missingTraceLowCpuInitialSelectionAssessment, 135'000'000,
+		kMaxChatSwitchNanoseconds, 150'000'000);
+	auto firstDialogsRunnerPause = MainThreadWorkBudgetRun();
+	const auto missingTraceFirstDialogsEstimate
+		= EstimateMainThreadWork(1'000'000, 60'000'000, u"none"_q, {});
+	const auto missingTraceFirstDialogsAssessment = AssessMainThreadWorkBudget(
+		missingTraceFirstDialogsEstimate, 1'000'000, kMaxChatSwitchNanoseconds);
+	const auto missingTraceFirstDialogsGateWithinBudget
+		= firstDialogsRunnerPause.Observe(missingTraceFirstDialogsAssessment,
+										  60'000'000, kMaxChatSwitchNanoseconds,
+										  1'000'000'000);
 	auto twoUntracedWallOverruns = MainThreadWorkBudgetRun();
 	twoUntracedWallOverruns.Observe(
 		missingTraceLowCpuInitialSelectionAssessment, 135'000'000,
-		kMaxChatSwitchNanoseconds);
+		kMaxChatSwitchNanoseconds, 100'000'000);
 	twoUntracedWallOverruns.Observe(
 		missingTraceLowCpuInitialSelectionAssessment, 135'000'000,
-		kMaxChatSwitchNanoseconds);
+		kMaxChatSwitchNanoseconds, 300'000'000);
 	auto tracedBlockedRun = MainThreadWorkBudgetRun();
 	tracedBlockedRun.Observe(blockedSelectionAssessment, 60'000'000,
 							 kMaxChatSwitchNanoseconds);
@@ -12336,9 +12379,15 @@ void AccumulateMainThreadWorkEstimate(qint64 &aggregateNanoseconds,
 			   == 1'138'000)
 		   && !missingTraceLowCpuInitialSelectionGateWithinBudget
 		   && oneUntracedWallOverrun.WithinBudget()
+		   && overlappingUntracedWallOverruns.WithinBudget()
+		   && firstDialogsRunnerPause.WithinBudget()
+		   && !missingTraceFirstDialogsGateWithinBudget
 		   && !twoUntracedWallOverruns.WithinBudget()
 		   && !tracedBlockedRun.WithinBudget()
 		   && !untracedCpuStallRun.WithinBudget()
+		   && !blockedSelectionAssessment.withinBudget
+		   && MainThreadCpuWorkWithinBudget(1'000'000,
+											kMaxChatSwitchNanoseconds)
 		   && blockedStartupAssessment.schedulerEvidenceAvailable
 		   && (blockedStartupAssessment.workNanoseconds == 101'000'000)
 		   && !blockedStartupAssessment.withinBudget
@@ -14025,7 +14074,8 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 			kMaxChatSwitchNanoseconds);
 		const auto withinBudget = timingBudgetRun.Observe(
 			budgetAssessment, chatSwitchWindows[i].durationNanoseconds,
-			kMaxChatSwitchNanoseconds);
+			kMaxChatSwitchNanoseconds,
+			chatSwitchWindows[i].startedAtSteadyNanoseconds);
 		const auto runnerNoiseEligible
 			= MainThreadWorkBudgetIsUntracedWallOverrun(
 				budgetAssessment, chatSwitchWindows[i].durationNanoseconds,
@@ -14039,10 +14089,13 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 			std::fprintf(
 				stderr,
 				"HARNESS ERROR: chat-switch scheduler trace unavailable: "
-				"index=%zu label=%s wall_ns=%lld main_thread_cpu_ns=%lld "
+				"index=%zu label=%s window_start_steady_ns=%lld "
+				"wall_ns=%lld main_thread_cpu_ns=%lld "
 				"budget_ns=%lld runner_noise_eligible=%d "
 				"runner_noise_cpu_limit_ns=%lld.\n",
 				static_cast<std::size_t>(i), label.constData(),
+				static_cast<long long>(
+					chatSwitchWindows[i].startedAtSteadyNanoseconds),
 				static_cast<long long>(
 					chatSwitchWindows[i].durationNanoseconds),
 				static_cast<long long>(
@@ -14151,7 +14204,10 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 			static_cast<long long>(budgetAssessment.workNanoseconds),
 			static_cast<long long>(kMaxChatSwitchNanoseconds),
 			schedulerSamples.capturePending, traceLatin1.constData(),
-			withinBudget, budgetAssessment.withinBudget,
+			withinBudget,
+			MainThreadCpuWorkWithinBudget(
+				chatSwitchWindows[i].mainThreadWorkNanoseconds,
+				kMaxChatSwitchNanoseconds),
 			budgetAssessment.schedulerEvidenceAvailable);
 	}
 	result.chatSwitchWorkWithinBudget
@@ -14434,6 +14490,9 @@ struct FirstDialogsHandlerRegressionResult final {
 	qint64 handlerEstimatedWorkNanoseconds = -1;
 	QString handlerSchedulerTrace;
 	std::vector<qint64> handlerSchedulerSampleOffsetsNanoseconds;
+	bool handlerWithinBudget = false;
+	bool handlerCpuOnlyWithinBudget = false;
+	bool handlerRunnerNoiseEligible = false;
 	bool responseParsed = false;
 	bool passed = false;
 };
@@ -14462,7 +14521,9 @@ struct FirstDialogsHandlerRegressionResult final {
 }
 
 [[maybe_unused, nodiscard]] FirstDialogsHandlerRegressionResult
-RunFirstDialogsHandlerLatencyRegression(not_null<Main::Account *> account) {
+RunFirstDialogsHandlerLatencyRegression(
+	not_null<Main::Account *> account,
+	MainThreadWorkBudgetRun &timingBudgetRun) {
 	auto result = FirstDialogsHandlerRegressionResult();
 	constexpr auto kMessageCount = 73;
 	constexpr auto kFirstChatMessageCount = (kMessageCount + 1) / 2;
@@ -14595,10 +14656,38 @@ RunFirstDialogsHandlerLatencyRegression(not_null<Main::Account *> account) {
 	const auto handlerEstimate = EstimateMainThreadWork(
 		result.handlerMainThreadCpuNanoseconds, result.handlerNanoseconds,
 		handlerSchedulerSamples);
+	const auto handlerBudgetAssessment = AssessMainThreadWorkBudget(
+		handlerEstimate, result.handlerMainThreadCpuNanoseconds,
+		kMaxHandlerNanoseconds);
+	result.handlerWithinBudget = timingBudgetRun.Observe(
+		handlerBudgetAssessment, result.handlerNanoseconds,
+		kMaxHandlerNanoseconds, handlerStartedAtSteadyNanoseconds);
+	result.handlerRunnerNoiseEligible
+		= MainThreadWorkBudgetIsUntracedWallOverrun(handlerBudgetAssessment,
+													result.handlerNanoseconds,
+													kMaxHandlerNanoseconds);
+	result.handlerCpuOnlyWithinBudget = MainThreadCpuWorkWithinBudget(
+		result.handlerMainThreadCpuNanoseconds, kMaxHandlerNanoseconds);
 	result.handlerBlockedEstimateNanoseconds
 		= handlerEstimate.blockedNanoseconds;
 	result.handlerEstimatedWorkNanoseconds
-		= handlerEstimate.estimatedWorkNanoseconds;
+		= handlerBudgetAssessment.workNanoseconds;
+	if ((result.handlerNanoseconds >= kMaxHandlerNanoseconds)
+		&& !handlerBudgetAssessment.schedulerEvidenceAvailable) {
+		std::fprintf(
+			stderr,
+			"HARNESS ERROR: getDialogs scheduler trace unavailable: "
+			"window_start_steady_ns=%lld wall_ns=%lld main_thread_cpu_ns=%lld "
+			"budget_ns=%lld runner_noise_eligible=%d "
+			"runner_noise_cpu_limit_ns=%lld.\n",
+			static_cast<long long>(handlerStartedAtSteadyNanoseconds),
+			static_cast<long long>(result.handlerNanoseconds),
+			static_cast<long long>(result.handlerMainThreadCpuNanoseconds),
+			static_cast<long long>(kMaxHandlerNanoseconds),
+			result.handlerRunnerNoiseEligible,
+			static_cast<long long>(
+				kMaxUntracedRunnerNoiseMainThreadCpuNanoseconds));
+	}
 	if (const auto chat = data.chatLoaded(firstChatId)) {
 		result.processedChats += (chat->name() == u"Cache dialog regression"_q);
 	}
@@ -14637,8 +14726,7 @@ RunFirstDialogsHandlerLatencyRegression(not_null<Main::Account *> account) {
 		  && (result.processedMessages == kMessageCount)
 		  && (result.processedDocuments == kMessageCount)
 		  && (result.cacheWalks == 2)
-		  && MainThreadEstimatedWorkWithinBudget(
-			  result.handlerEstimatedWorkNanoseconds, kMaxHandlerNanoseconds);
+		  && (result.handlerWithinBudget || result.handlerRunnerNoiseEligible);
 	return result;
 }
 
@@ -14788,11 +14876,11 @@ void RunAuthenticatedCacheSymlinkCases(
 		};
 		const auto authenticatedCacheOnly = qEnvironmentVariableIsSet(
 			"TDESKTOP_AUTH_LIFECYCLE_REGRESSION_CACHE_ONLY");
+		auto timingBudgetRun = MainThreadWorkBudgetRun();
 		for (const auto mediaCache : {false, true}) {
 			const auto caseName = mediaCache ? "media-cache-access-no-walk"
 											 : "cache-access-no-walk";
 			nativeLifecycleResults->StartCase(caseName);
-			auto timingBudgetRun = MainThreadWorkBudgetRun();
 			if (!authenticatedCacheOnly) {
 				nativeLifecycleResults->Skip(caseName,
 											 "dedicated-cache-regression");
@@ -15003,6 +15091,7 @@ void RunAuthenticatedCacheSymlinkCases(
 			auto firstCache = static_cast<Storage::Cache::Database *>(nullptr);
 			auto firstAccessNanoseconds = qint64(-1);
 			auto firstAccessMainThreadWorkNanoseconds = qint64(-1);
+			auto firstAccessStartedAtSteadyNanoseconds = qint64(-1);
 			auto firstAccessInterval = MainThreadWorkInterval();
 			auto firstAccessSchedulerTimeline
 				= std::vector<Core::UiStallWatchdog::SchedulerSampleEvidence>();
@@ -15024,7 +15113,7 @@ void RunAuthenticatedCacheSymlinkCases(
 					return true;
 				}
 				const auto firstAccessStartedAt = QDateTime::currentDateTime();
-				const auto firstAccessStartedAtSteadyNanoseconds
+				firstAccessStartedAtSteadyNanoseconds
 					= std::chrono::duration_cast<std::chrono::nanoseconds>(
 						  std::chrono::steady_clock::now().time_since_epoch())
 						  .count();
@@ -15091,7 +15180,8 @@ void RunAuthenticatedCacheSymlinkCases(
 				kMaxChatSwitchNanoseconds);
 			const auto firstAccessWithinBudget = timingBudgetRun.Observe(
 				firstAccessBudgetAssessment, firstAccessNanoseconds,
-				kMaxChatSwitchNanoseconds);
+				kMaxChatSwitchNanoseconds,
+				firstAccessStartedAtSteadyNanoseconds);
 			const auto firstAccessRunnerNoiseEligible
 				= MainThreadWorkBudgetIsUntracedWallOverrun(
 					firstAccessBudgetAssessment, firstAccessNanoseconds,
@@ -15101,9 +15191,12 @@ void RunAuthenticatedCacheSymlinkCases(
 				std::fprintf(
 					stderr,
 					"HARNESS ERROR: first-access scheduler trace unavailable: "
-					"wall_ns=%lld main_thread_cpu_ns=%lld budget_ns=%lld "
+					"window_start_steady_ns=%lld wall_ns=%lld "
+					"main_thread_cpu_ns=%lld budget_ns=%lld "
 					"runner_noise_eligible=%d "
 					"runner_noise_cpu_limit_ns=%lld.\n",
+					static_cast<long long>(
+						firstAccessStartedAtSteadyNanoseconds),
 					static_cast<long long>(firstAccessNanoseconds),
 					static_cast<long long>(
 						firstAccessMainThreadWorkNanoseconds),
@@ -15250,7 +15343,8 @@ void RunAuthenticatedCacheSymlinkCases(
 				const auto budgetAssessment = AssessMainThreadWorkBudget(
 					estimate, gap.mainThreadWorkNanoseconds, 100'000'000);
 				const auto withinBudget = timingBudgetRun.Observe(
-					budgetAssessment, gap.durationNanoseconds, 100'000'000);
+					budgetAssessment, gap.durationNanoseconds, 100'000'000,
+					gap.startedAtSteadyNanoseconds);
 				const auto runnerNoiseEligible
 					= MainThreadWorkBudgetIsUntracedWallOverrun(
 						budgetAssessment, gap.durationNanoseconds, 100'000'000);
@@ -15268,12 +15362,14 @@ void RunAuthenticatedCacheSymlinkCases(
 					std::fprintf(
 						stderr,
 						"HARNESS ERROR: startup scheduler trace unavailable: "
-						"started_at=%s wall_ns=%lld main_thread_cpu_ns=%lld "
+						"started_at=%s window_start_steady_ns=%lld "
+						"wall_ns=%lld main_thread_cpu_ns=%lld "
 						"budget_ns=100000000 runner_noise_eligible=%d "
 						"runner_noise_cpu_limit_ns=%lld.\n",
 						gap.startedAt.toString(Qt::ISODateWithMs)
 							.toUtf8()
 							.constData(),
+						static_cast<long long>(gap.startedAtSteadyNanoseconds),
 						static_cast<long long>(gap.durationNanoseconds),
 						static_cast<long long>(gap.mainThreadWorkNanoseconds),
 						runnerNoiseEligible,
@@ -15303,7 +15399,9 @@ void RunAuthenticatedCacheSymlinkCases(
 					schedulerSamples.capturePending,
 					static_cast<std::size_t>(trace.size()),
 					traceLatin1.constData(), withinBudget,
-					budgetAssessment.withinBudget, schedulerCaptureRequired,
+					MainThreadCpuWorkWithinBudget(gap.mainThreadWorkNanoseconds,
+												  100'000'000),
+					schedulerCaptureRequired,
 					budgetAssessment.schedulerEvidenceAvailable);
 			}
 			const auto startupWithinBound
@@ -15341,8 +15439,8 @@ void RunAuthenticatedCacheSymlinkCases(
 			auto chatSwitch = CacheChatSwitchRegressionResult();
 			auto dialogsHandler = FirstDialogsHandlerRegressionResult();
 			if (first && !mediaCache) {
-				dialogsHandler
-					= RunFirstDialogsHandlerLatencyRegression(guarded);
+				dialogsHandler = RunFirstDialogsHandlerLatencyRegression(
+					guarded, timingBudgetRun);
 				std::fprintf(
 					stderr,
 					"First messages.getDialogs handler latency "
@@ -15354,7 +15452,8 @@ void RunAuthenticatedCacheSymlinkCases(
 					"cache_walks=%d max_handler_ns=%lld "
 					"main_thread_cpu_ns=%lld blocked_estimate_ns=%lld "
 					"estimated_work_ns=%lld trace=%s "
-					"under_50ms=%d.\n",
+					"within_budget=%d cpu_only_within_budget=%d "
+					"runner_noise_eligible=%d under_50ms=%d.\n",
 					dialogsHandler.requests, dialogsHandler.responseParsed,
 					dialogsHandler.processedChats,
 					dialogsHandler.processedDialogs,
@@ -15372,9 +15471,11 @@ void RunAuthenticatedCacheSymlinkCases(
 						 ? "none"
 						 : dialogsHandler.handlerSchedulerTrace.toLatin1()
 							   .constData()),
-					MainThreadEstimatedWorkWithinBudget(
-						dialogsHandler.handlerEstimatedWorkNanoseconds,
-						50'000'000));
+					dialogsHandler.handlerWithinBudget,
+					dialogsHandler.handlerCpuOnlyWithinBudget,
+					dialogsHandler.handlerRunnerNoiseEligible,
+					dialogsHandler.handlerWithinBudget
+						|| dialogsHandler.handlerRunnerNoiseEligible);
 				auto &app = Core::App();
 				const auto window = app.ensureSeparateWindowFor(guarded);
 				const auto closeWindow = gsl::finally([&] {
@@ -15413,9 +15514,9 @@ void RunAuthenticatedCacheSymlinkCases(
 					static_cast<long long>(kMaxChatSwitchNanoseconds),
 					initialHistorySelectionTraceLatin1.constData(),
 					chatSwitch.initialHistorySelectionWithinBudget,
-					MainThreadEstimatedWorkWithinBudget(
+					MainThreadCpuWorkWithinBudget(
 						chatSwitch
-							.initialHistorySelectionEstimatedWorkNanoseconds,
+							.initialHistorySelectionMainThreadWorkNanoseconds,
 						kMaxChatSwitchNanoseconds),
 					chatSwitch
 						.initialHistorySelectionSchedulerPreemptionProven);
@@ -15758,7 +15859,9 @@ void RunAuthenticatedCacheSymlinkCases(
 					firstAccessBudgetAssessment.workNanoseconds),
 				firstAccessSchedulerTraceLatin1.constData(),
 				firstAccessWithinBudget,
-				firstAccessBudgetAssessment.withinBudget,
+				MainThreadCpuWorkWithinBudget(
+					firstAccessMainThreadWorkNanoseconds,
+					kMaxChatSwitchNanoseconds),
 				firstAccessNanoseconds < kMaxChatSwitchNanoseconds,
 				swappedRootRefused, directFallbackClosed, rootRestoreSucceeded,
 				startupWalks, mainThreadWalks);

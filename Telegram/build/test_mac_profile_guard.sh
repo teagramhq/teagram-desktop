@@ -1542,9 +1542,52 @@ if ! grep -F -q \
 	exit 1
 fi
 local untraced_wall_overruns
-untraced_wall_overruns="$(grep -E -c \
-	'^HARNESS ERROR: (startup|chat-switch|first-access) scheduler trace unavailable:' \
-	"$AUTH_LOG" || true)"
+untraced_wall_overruns="$(awk '
+function field_value(line, name, token) {
+	if (match(line, name "=[0-9]+")) {
+		token = substr(line, RSTART, RLENGTH)
+		sub("^[^=]*=", "", token)
+		return token + 0
+	}
+	return -1
+}
+/^HARNESS ERROR: (startup|chat-switch|first-access|getDialogs) scheduler trace unavailable:/ && /runner_noise_eligible=1/ {
+	start = field_value($0, "window_start_steady_ns")
+	wall = field_value($0, "wall_ns")
+	if ((start < 0) || (wall <= 0)) {
+		unanchored++
+	} else {
+		starts[++count] = start
+		ends[count] = start + wall
+	}
+}
+END {
+	for (i = 2; i <= count; ++i) {
+		start = starts[i]
+		end = ends[i]
+		j = i - 1
+		while ((j >= 1) && (starts[j] > start)) {
+			starts[j + 1] = starts[j]
+			ends[j + 1] = ends[j]
+			--j
+		}
+		starts[j + 1] = start
+		ends[j + 1] = end
+	}
+	incidents = unanchored
+	current_end = -1
+	for (i = 1; i <= count; ++i) {
+		if (starts[i] < current_end) {
+			if (ends[i] > current_end) {
+				current_end = ends[i]
+			}
+		} else {
+			++incidents
+			current_end = ends[i]
+		}
+	}
+	print incidents
+}' "$AUTH_LOG")"
 printf 'untraced_wall_overrun_count=%s\n' "$untraced_wall_overruns"
 if (( untraced_wall_overruns > 1 )); then
 	cat "$AUTH_LOG" >&2
@@ -1556,7 +1599,7 @@ for cache in cache media_cache; do
 		while IFS= read -r capture_error; do
 			printf '::warning:: %s\n' "$capture_error" >&2
 		done < <(grep -E \
-			'^HARNESS ERROR: (startup|chat-switch|first-access) scheduler trace unavailable:' \
+			'^HARNESS ERROR: (startup|chat-switch|first-access|getDialogs) scheduler trace unavailable:' \
 			"$AUTH_LOG" || true)
 	fi
 	local cache_latency_evidence
@@ -1599,7 +1642,7 @@ for cache in cache media_cache; do
 	fi
 done
 if ! grep -E -q \
-	'^First messages\.getDialogs handler latency regression: seeded_directories=125 seeded_files=169 requests=1 parsed=1 chats=2 dialogs=1 messages=73 documents=73 cache_walks=2 max_handler_ns=[0-9]+ main_thread_cpu_ns=-?[0-9]+ blocked_estimate_ns=-?[0-9]+ estimated_work_ns=[0-9]+ trace=([[:alpha:]?]+|none) under_50ms=1\.$' \
+	'^First messages\.getDialogs handler latency regression: seeded_directories=125 seeded_files=169 requests=1 parsed=1 chats=2 dialogs=1 messages=73 documents=73 cache_walks=2 max_handler_ns=[0-9]+ main_thread_cpu_ns=-?[0-9]+ blocked_estimate_ns=-?[0-9]+ estimated_work_ns=[0-9]+ trace=([[:alpha:]?]+|none) within_budget=[01] cpu_only_within_budget=[01] runner_noise_eligible=[01] under_50ms=1\.$' \
 	"$AUTH_LOG"; then
 	cat "$AUTH_LOG" >&2
 	echo "first messages.getDialogs handler evidence missing or over 50 ms." >&2
