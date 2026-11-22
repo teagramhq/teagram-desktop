@@ -13722,6 +13722,24 @@ struct CacheReactionProbe final {
 		1000);
 	const auto group = requestLabel(parent);
 	const auto groupText = group ? group->accessibilityName() : QString();
+	const auto requestButton = [&] {
+		for (const auto button : parent.findChildren<Ui::RippleButton *>()) {
+			if (!button->isHidden() && button->isEnabled()) {
+				return button;
+			}
+		}
+		return static_cast<Ui::RippleButton *>(nullptr);
+	}();
+	const auto noLayerBeforeRequest = !controller->window().isLayerShown();
+	auto requestInfoDialogOpened = false;
+	if (requestButton && noLayerBeforeRequest) {
+		requestButton->click();
+		requestInfoDialogOpened = WaitForRegressionCondition(
+			[&] { return controller->window().isLayerShown(); }, 1000);
+		if (requestInfoDialogOpened) {
+			controller->window().hideLayer(anim::type::instant);
+		}
+	}
 	user->setBarSettings(PeerBarSetting::RequestChat
 						 | PeerBarSetting::RequestChatIsBroadcast);
 	const auto channelReady = WaitForRegressionCondition(
@@ -13750,15 +13768,17 @@ struct CacheReactionProbe final {
 				   && !label->accessibilityName().isEmpty();
 		},
 		1000);
-	if (!groupReady || !channelReady || !botPhotoDeferred || !botPhotoReady) {
-		std::fprintf(stderr,
-					 "Contact status fixture: group=%d channel=%d "
-					 "controls_deferred=%d photo_deferred=%d photo_ready=%d.\n",
-					 groupReady, channelReady, controlsDeferred,
-					 botPhotoDeferred, botPhotoReady);
+	if (!groupReady || !requestInfoDialogOpened || !channelReady
+		|| !botPhotoDeferred || !botPhotoReady) {
+		std::fprintf(
+			stderr,
+			"Contact status fixture: group=%d request_info=%d channel=%d "
+			"controls_deferred=%d photo_deferred=%d photo_ready=%d.\n",
+			groupReady, requestInfoDialogOpened, channelReady, controlsDeferred,
+			botPhotoDeferred, botPhotoReady);
 	}
-	return groupReady && channelReady && controlsDeferred && botPhotoDeferred
-		   && botPhotoReady;
+	return groupReady && requestInfoDialogOpened && channelReady
+		   && controlsDeferred && botPhotoDeferred && botPhotoReady;
 }
 
 [[nodiscard]] bool
