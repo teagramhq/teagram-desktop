@@ -241,48 +241,51 @@ public:
 	[[nodiscard]] rpl::producer<> emojiStatusClicks() const;
 	[[nodiscard]] rpl::producer<> setBotPhotoClicks() const;
 
+	// clang-format off
 private:
-  void ensureControls();
+	void ensureControls();
 
-  int resizeGetHeight(int newWidth) override;
+	int resizeGetHeight(int newWidth) override;
 
-  void refreshAddText(int newWidth);
-  void showAddTooltip();
-  void hideAddTooltip();
-  void emojiStatusRepaint();
+	void refreshAddText(int newWidth);
+	void showAddTooltip();
+	void hideAddTooltip();
+	void emojiStatusRepaint();
 
-  const not_null<QWidget *> _tooltipParent;
-  QString _name;
-  rpl::event_stream<> _unarchiveClickRequests;
-  rpl::event_stream<> _addClickRequests;
-  rpl::event_stream<> _blockClickRequests;
-  rpl::event_stream<> _shareClickRequests;
-  rpl::event_stream<> _reportClickRequests;
-  rpl::event_stream<> _closeClickRequests;
-  rpl::event_stream<> _requestInfoClickRequests;
-  rpl::event_stream<> _setBotPhotoClickRequests;
-  object_ptr<Ui::FlatButton> _add = {nullptr};
-  object_ptr<Ui::FlatButton> _unarchive = {nullptr};
-  object_ptr<Ui::AbstractButton> _unarchiveIcon = {nullptr};
-  object_ptr<Ui::FlatButton> _block = {nullptr};
-  object_ptr<Ui::FlatButton> _share = {nullptr};
-  object_ptr<Ui::FlatButton> _report = {nullptr};
-  object_ptr<Ui::AbstractButton> _reportIcon = {nullptr};
-  object_ptr<Ui::IconButton> _close = {nullptr};
-  object_ptr<BgButton> _requestChatBg = {nullptr};
-  object_ptr<Ui::FlatLabel> _requestChatInfo = {nullptr};
-  object_ptr<Ui::PaddingWrap<Ui::FlatLabel>> _emojiStatusInfo = {nullptr};
-  object_ptr<Ui::PlainShadow> _emojiStatusShadow = {nullptr};
-  object_ptr<Ui::RippleButton> _setBotPhoto = {nullptr};
-  base::unique_qptr<Ui::ImportantTooltip> _addTooltip;
-  base::Timer _addTooltipTimer;
-  bool _controlsCreated = false;
-  bool _emojiStatusRepaintScheduled = false;
-  bool _addWithName = false;
-  bool _addElided = false;
-  bool _narrow = false;
-  bool _botPhotoContentReady = false;
-  rpl::event_stream<> _emojiStatusClicks;
+	const not_null<QWidget*> _tooltipParent;
+	QString _name;
+	rpl::event_stream<> _unarchiveClickRequests;
+	rpl::event_stream<> _addClickRequests;
+	rpl::event_stream<> _blockClickRequests;
+	rpl::event_stream<> _shareClickRequests;
+	rpl::event_stream<> _reportClickRequests;
+	rpl::event_stream<> _closeClickRequests;
+	rpl::event_stream<> _requestInfoClickRequests;
+	rpl::event_stream<> _setBotPhotoClickRequests;
+	object_ptr<Ui::FlatButton> _add = {nullptr};
+	object_ptr<Ui::FlatButton> _unarchive = {nullptr};
+	object_ptr<Ui::AbstractButton> _unarchiveIcon = {nullptr};
+	object_ptr<Ui::FlatButton> _block = {nullptr};
+	object_ptr<Ui::FlatButton> _share = {nullptr};
+	object_ptr<Ui::FlatButton> _report = {nullptr};
+	object_ptr<Ui::AbstractButton> _reportIcon = {nullptr};
+	object_ptr<Ui::IconButton> _close = {nullptr};
+	object_ptr<BgButton> _requestChatBg = {nullptr};
+	object_ptr<Ui::FlatLabel> _requestChatInfo = {nullptr};
+	object_ptr<Ui::PaddingWrap<Ui::FlatLabel>> _emojiStatusInfo = {nullptr};
+	object_ptr<Ui::PlainShadow> _emojiStatusShadow = {nullptr};
+	object_ptr<Ui::RippleButton> _setBotPhoto = {nullptr};
+	base::unique_qptr<Ui::ImportantTooltip> _addTooltip;
+	base::Timer _addTooltipTimer;
+	bool _controlsCreated = false;
+	bool _emojiStatusRepaintScheduled = false;
+	bool _addWithName = false;
+	bool _addElided = false;
+	bool _narrow = false;
+	bool _botPhotoContentReady = false;
+	rpl::event_stream<> _emojiStatusClicks;
+
+	// clang-format on
 };
 
 ContactStatus::BgButton::BgButton(

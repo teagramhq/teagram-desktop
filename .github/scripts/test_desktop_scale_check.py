@@ -93,6 +93,16 @@ def make_sample(one_ms=10.0, hundred_ms=12.0, stalls=0):
     }
 
 
+def make_schema_v2_sample(one_ms=10.0, hundred_ms=12.0, stalls=0):
+    sample = make_sample(one_ms, hundred_ms, stalls)
+    sample["schema_version"] = 2
+    sample["scenarios"] = {
+        name: sample["scenarios"][name]
+        for name in scale_check.SCHEMA_V2_SCENARIOS
+    }
+    return sample
+
+
 def make_runner_harness(root, history=None):
     repo_root = Path(__file__).parents[2]
     runner_temp = root / "runner-temp"
@@ -383,6 +393,40 @@ class DesktopScaleCheckTests(unittest.TestCase):
                     "1x ±3σ 0.00 ms; 100x ±3σ 0.00 ms |",
                     summary,
                 )
+
+    def test_accepts_schema_v2_baselines_and_rejects_cold_chat(self):
+        self.require_implementation()
+        parsed = scale_check.parse_report(EXTENDED_REPORT)
+        self.assertEqual(parsed["schema_version"], 2)
+
+        sample = make_schema_v2_sample()
+        self.assertEqual(
+            set(sample["scenarios"]), set(scale_check.SCHEMA_V2_SCENARIOS)
+        )
+        self.assertTrue(scale_check._is_valid_record(sample))
+
+        with_cold_chat = dict(sample)
+        with_cold_chat["scenarios"] = dict(sample["scenarios"])
+        with_cold_chat["scenarios"][scale_check.COLD_CHAT_OPEN_SCENARIO] = (
+            make_sample()["scenarios"][scale_check.COLD_CHAT_OPEN_SCENARIO]
+        )
+        self.assertFalse(scale_check._is_valid_record(with_cold_chat))
+
+        history = []
+        for index in range(scale_check.MIN_DEV_RUNS):
+            record = make_schema_v2_sample()
+            record["created_at"] = f"2026-11-{index + 1:02d}T00:00:00Z"
+            history.append(record)
+        result = scale_check.evaluate(
+            history,
+            [sample, sample],
+            [sample, sample],
+            report_only=True,
+        )
+        self.assertEqual(result["record_count"], scale_check.MIN_DEV_RUNS)
+        self.assertEqual(
+            result["scenario_counts"][scale_check.COLD_CHAT_OPEN_SCENARIO], 0
+        )
 
     def test_accepts_legacy_dev_report_without_additional_scenarios(self):
         self.require_implementation()
