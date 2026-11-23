@@ -11779,6 +11779,21 @@ constexpr auto kMaxSchedulerProofOtherThreadWorkNanoseconds
 	= qint64(20'000'000);
 constexpr auto kMaxStartupWatchdogPingSilenceMilliseconds = qint64(100);
 
+struct CacheHistoryWorkBudgets final {
+	qint64 chatSwitchNanoseconds = kMaxChatSwitchNanoseconds;
+	qint64 startupNanoseconds = 0;
+};
+
+[[nodiscard]] CacheHistoryWorkBudgets
+CacheHistoryWorkBudgetsForRegression(std::size_t index, bool startupWork) {
+	return {
+		.chatSwitchNanoseconds = kMaxChatSwitchNanoseconds,
+		.startupNanoseconds = startupWork && (index > 0)
+								  ? kMaxStartupHeartbeatThreadWorkNanoseconds
+								  : 0,
+	};
+}
+
 [[nodiscard]] std::vector<qint64>
 SchedulerSampleOffsetsForDuration(qint64 durationNanoseconds) {
 	constexpr auto sampleIntervalNanoseconds = qint64(1'000'000);
@@ -13127,6 +13142,35 @@ void AccumulateMainThreadWorkEstimate(qint64 &aggregateNanoseconds,
 		= injectedChatSwitchStallRun.Observe(injectedChatSwitchStallAssessment,
 											 51'000'000,
 											 kMaxChatSwitchNanoseconds);
+	const auto initialHistoryBudgets
+		= CacheHistoryWorkBudgetsForRegression(0U, false);
+	const auto initialHistoryStartupBudgets
+		= CacheHistoryWorkBudgetsForRegression(0U, true);
+	const auto recurringHistoryBudgets
+		= CacheHistoryWorkBudgetsForRegression(1U, false);
+	const auto startupHistoryBudgets
+		= CacheHistoryWorkBudgetsForRegression(1U, true);
+	const auto injectedStartupUnderBudgetEstimate = EstimateMainThreadWork(
+		99'000'000, 99'000'000, u"R"_q, {0, 99'000'000});
+	const auto injectedStartupUnderBudgetAssessment
+		= AssessMainThreadWorkBudget(injectedStartupUnderBudgetEstimate,
+									 99'000'000,
+									 startupHistoryBudgets.startupNanoseconds);
+	auto injectedStartupUnderBudgetRun = MainThreadWorkBudgetRun();
+	const auto injectedStartupWorkWithinBudget
+		= injectedStartupUnderBudgetRun.Observe(
+			injectedStartupUnderBudgetAssessment, 99'000'000,
+			startupHistoryBudgets.startupNanoseconds);
+	const auto injectedStartupOverBudgetEstimate = EstimateMainThreadWork(
+		101'000'000, 101'000'000, u"R"_q, {0, 101'000'000});
+	const auto injectedStartupOverBudgetAssessment = AssessMainThreadWorkBudget(
+		injectedStartupOverBudgetEstimate, 101'000'000,
+		startupHistoryBudgets.startupNanoseconds);
+	auto injectedStartupOverBudgetRun = MainThreadWorkBudgetRun();
+	const auto injectedStartupWorkOverBudget
+		= injectedStartupOverBudgetRun.Observe(
+			injectedStartupOverBudgetAssessment, 101'000'000,
+			startupHistoryBudgets.startupNanoseconds);
 	const auto noInWindowSamples
 		= EstimateMainThreadWork(18'000'000, 225'000'000, u"RRR"_q,
 								 {226'000'000, 227'000'000, 228'000'000});
@@ -13904,6 +13948,23 @@ void AccumulateMainThreadWorkEstimate(qint64 &aggregateNanoseconds,
 		   && !untracedCpuStallRun.WithinBudget()
 		   && !injectedChatSwitchStallWithinBudget
 		   && !injectedChatSwitchStallRun.WithinBudget()
+		   && (initialHistoryBudgets.chatSwitchNanoseconds
+			   == kMaxChatSwitchNanoseconds)
+		   && (initialHistoryBudgets.startupNanoseconds == 0)
+		   && (initialHistoryStartupBudgets.chatSwitchNanoseconds
+			   == kMaxChatSwitchNanoseconds)
+		   && (initialHistoryStartupBudgets.startupNanoseconds == 0)
+		   && (recurringHistoryBudgets.chatSwitchNanoseconds
+			   == kMaxChatSwitchNanoseconds)
+		   && (recurringHistoryBudgets.startupNanoseconds == 0)
+		   && (startupHistoryBudgets.chatSwitchNanoseconds
+			   == kMaxChatSwitchNanoseconds)
+		   && (startupHistoryBudgets.startupNanoseconds
+			   == kMaxStartupHeartbeatThreadWorkNanoseconds)
+		   && injectedStartupWorkWithinBudget
+		   && injectedStartupUnderBudgetRun.WithinBudget()
+		   && !injectedStartupWorkOverBudget
+		   && !injectedStartupOverBudgetRun.WithinBudget()
 		   && !blockedSelectionAssessment.withinBudget
 		   && MainThreadCpuWorkWithinBudget(1'000'000,
 											kMaxChatSwitchNanoseconds)
@@ -14625,7 +14686,7 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 			= chatSwitchCpuClockAvailable && (mainThreadWorkNanoseconds >= 0);
 		chatSwitchProcessCpuClockAvailable = chatSwitchProcessCpuClockAvailable
 											 && (processWorkNanoseconds >= 0);
-		if ((index > 0) && !startupWork
+		if ((index > 0)
 			&& (mainThreadWorkNanoseconds
 				> result.maxChatSwitchMainThreadWorkNanoseconds)) {
 			result.maxChatSwitchMainThreadWorkNanoseconds
@@ -14633,17 +14694,17 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 			result.maxChatSwitchIndex = index;
 			result.maxChatSwitchPeerId = peerId;
 		}
-		if ((index == 0) && !startupWork) {
+		if (index == 0) {
 			result.initialHistorySelectionNanoseconds = wallDurationNanoseconds;
 			result.initialHistorySelectionMainThreadWorkNanoseconds
 				= mainThreadWorkNanoseconds;
 			result.initialHistorySelectionPeerId = peerId;
-		} else if (!startupWork) {
+		} else {
 			result.maxRecurringChatSwitchMainThreadWorkNanoseconds = std::max(
 				result.maxRecurringChatSwitchMainThreadWorkNanoseconds,
 				mainThreadWorkNanoseconds);
 		}
-		if ((index > 0) && !startupWork) {
+		if (index > 0) {
 			result.maxChatSwitchNanoseconds = std::max(
 				result.maxChatSwitchNanoseconds, wallDurationNanoseconds);
 		}
@@ -14666,8 +14727,10 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 			startedAtSteadyNanoseconds,
 			mainThreadAfter.value_or(-1),
 		};
-		(startupWork ? startupHistoryWindows : chatSwitchWindows)
-			.push_back(interval);
+		chatSwitchWindows.push_back(interval);
+		if (startupWork) {
+			startupHistoryWindows.push_back(interval);
+		}
 		return wallDurationNanoseconds;
 	};
 	// A separate test window has just been created. Let its initial layout and
@@ -14690,8 +14753,9 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 	showPeerHistoryMeasured(emptyFirstHistory);
 	settleHistoryUnfocused();
 	// Prime both populated histories before the recurring switch measurements.
-	// Their first display builds reactive peer-update subscriptions, so measure
-	// them against the startup budget before measuring recurring switches.
+	// Their first display builds reactive peer-update subscriptions. They
+	// remain 50 ms chat switches and also consume the startup budget as priming
+	// work.
 	for (const auto &target : {secondHistory, firstHistory}) {
 		showPeerHistoryMeasured(target, true);
 		settleHistoryUnfocused();
@@ -15613,11 +15677,9 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		chatSwitchSchedulerTimeline
 			= Core::UiStallWatchdog::RecentSchedulerSamplesForTesting();
 		for (auto i = 0U; i != chatSwitchWindows.size(); ++i) {
-			const auto budgetNanoseconds
-				= (i == 0) ? kMaxStartupHeartbeatThreadWorkNanoseconds
-						   : kMaxChatSwitchNanoseconds;
+			const auto budgets = CacheHistoryWorkBudgetsForRegression(i, false);
 			const auto &window = chatSwitchWindows[i];
-			if ((window.durationNanoseconds >= budgetNanoseconds)
+			if ((window.durationNanoseconds >= budgets.chatSwitchNanoseconds)
 				&& SchedulerTraceForInterval(window,
 											 chatSwitchSchedulerTimeline)
 					   .capturePending) {
@@ -15649,23 +15711,15 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		const auto estimate = EstimateMainThreadWork(
 			chatSwitchWindows[i].mainThreadWorkNanoseconds,
 			chatSwitchWindows[i].durationNanoseconds, schedulerSamples);
-		const auto windowBudgetNanoseconds
-			= (i == 0) ? kMaxStartupHeartbeatThreadWorkNanoseconds
-					   : kMaxChatSwitchNanoseconds;
+		const auto budgets = CacheHistoryWorkBudgetsForRegression(i, false);
+		const auto windowBudgetNanoseconds = budgets.chatSwitchNanoseconds;
 		const auto budgetAssessment = AssessMainThreadWorkBudget(
 			estimate, chatSwitchWindows[i].mainThreadWorkNanoseconds,
 			windowBudgetNanoseconds);
-		const auto withinBudget
-			= (i == 0) ? startupTimingBudgetRun.Observe(
-							 budgetAssessment,
-							 chatSwitchWindows[i].durationNanoseconds,
-							 windowBudgetNanoseconds,
-							 chatSwitchWindows[i].startedAtSteadyNanoseconds)
-					   : timingBudgetRun.Observe(
-							 budgetAssessment,
-							 chatSwitchWindows[i].durationNanoseconds,
-							 windowBudgetNanoseconds,
-							 chatSwitchWindows[i].startedAtSteadyNanoseconds);
+		const auto withinBudget = timingBudgetRun.Observe(
+			budgetAssessment, chatSwitchWindows[i].durationNanoseconds,
+			windowBudgetNanoseconds,
+			chatSwitchWindows[i].startedAtSteadyNanoseconds);
 		const auto runnerNoiseEligible
 			= MainThreadWorkBudgetIsUntracedWallOverrun(
 				budgetAssessment, chatSwitchWindows[i].durationNanoseconds,
@@ -15756,8 +15810,7 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 						   budgetAssessment.workNanoseconds);
 		}
 		if (i == 0) {
-			result.initialHistorySelectionWithinBudget
-				= withinBudgetWithNoiseAllowance;
+			result.initialHistorySelectionWithinBudget = withinBudget;
 			result.initialHistorySelectionBlockedNanoseconds
 				= estimate.blockedNanoseconds;
 			result.initialHistorySelectionEstimatedWorkNanoseconds
@@ -15806,9 +15859,8 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 	result.chatSwitchSchedulerPreemptionProven
 		= chatSwitchCpuClockAvailable && chatSwitchProcessCpuClockAvailable;
 	for (auto i = 0U; i != chatSwitchWindows.size(); ++i) {
-		const auto windowBudgetNanoseconds
-			= (i == 0) ? kMaxStartupHeartbeatThreadWorkNanoseconds
-					   : kMaxChatSwitchNanoseconds;
+		const auto budgets = CacheHistoryWorkBudgetsForRegression(i, false);
+		const auto windowBudgetNanoseconds = budgets.chatSwitchNanoseconds;
 		if (chatSwitchWindows[i].durationNanoseconds
 			< windowBudgetNanoseconds) {
 			continue;
@@ -15827,7 +15879,10 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 	}
 	const auto startupHistorySchedulerTimeline
 		= Core::UiStallWatchdog::RecentSchedulerSamplesForTesting();
-	for (const auto &window : startupHistoryWindows) {
+	for (auto i = 0U; i != startupHistoryWindows.size(); ++i) {
+		const auto budgets = CacheHistoryWorkBudgetsForRegression(i + 1, true);
+		const auto startupBudgetNanoseconds = budgets.startupNanoseconds;
+		const auto &window = startupHistoryWindows[i];
 		const auto schedulerSamples = SchedulerTraceForInterval(
 			window, startupHistorySchedulerTimeline);
 		const auto estimate = EstimateMainThreadWork(
@@ -15835,26 +15890,24 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 			schedulerSamples);
 		const auto budgetAssessment = AssessMainThreadWorkBudget(
 			estimate, window.mainThreadWorkNanoseconds,
-			kMaxStartupHeartbeatThreadWorkNanoseconds);
+			startupBudgetNanoseconds);
 		const auto withinBudget = startupTimingBudgetRun.Observe(
 			budgetAssessment, window.durationNanoseconds,
-			kMaxStartupHeartbeatThreadWorkNanoseconds,
-			window.startedAtSteadyNanoseconds);
+			startupBudgetNanoseconds, window.startedAtSteadyNanoseconds);
 		const auto label = window.label.toUtf8();
 		const auto trace = schedulerSamples.trace.isEmpty()
 							   ? QByteArray("none")
 							   : schedulerSamples.trace.toLatin1();
-		std::fprintf(
-			stderr,
-			"Cache startup history work: label=%s wall_ns=%lld "
-			"main_thread_work_ns=%lld estimated_work_ns=%lld "
-			"budget_ns=%lld trace=%s within_budget=%d.\n",
-			label.constData(),
-			static_cast<long long>(window.durationNanoseconds),
-			static_cast<long long>(window.mainThreadWorkNanoseconds),
-			static_cast<long long>(budgetAssessment.workNanoseconds),
-			static_cast<long long>(kMaxStartupHeartbeatThreadWorkNanoseconds),
-			trace.constData(), withinBudget);
+		std::fprintf(stderr,
+					 "Cache startup history work: label=%s wall_ns=%lld "
+					 "main_thread_work_ns=%lld estimated_work_ns=%lld "
+					 "budget_ns=%lld trace=%s within_budget=%d.\n",
+					 label.constData(),
+					 static_cast<long long>(window.durationNanoseconds),
+					 static_cast<long long>(window.mainThreadWorkNanoseconds),
+					 static_cast<long long>(budgetAssessment.workNanoseconds),
+					 static_cast<long long>(startupBudgetNanoseconds),
+					 trace.constData(), withinBudget);
 	}
 	auto slowHydrationEvidence
 		= std::vector<std::optional<Core::UiStallWatchdog::StallEvidence>>(
@@ -17174,14 +17227,13 @@ void RunAuthenticatedCacheSymlinkCases(
 					static_cast<long long>(
 						chatSwitch
 							.initialHistorySelectionEstimatedWorkNanoseconds),
-					static_cast<long long>(
-						kMaxStartupHeartbeatThreadWorkNanoseconds),
+					static_cast<long long>(kMaxChatSwitchNanoseconds),
 					initialHistorySelectionTraceLatin1.constData(),
 					chatSwitch.initialHistorySelectionWithinBudget,
 					MainThreadCpuWorkWithinBudget(
 						chatSwitch
 							.initialHistorySelectionMainThreadWorkNanoseconds,
-						kMaxStartupHeartbeatThreadWorkNanoseconds),
+						kMaxChatSwitchNanoseconds),
 					chatSwitch
 						.initialHistorySelectionSchedulerPreemptionProven);
 				std::fprintf(
