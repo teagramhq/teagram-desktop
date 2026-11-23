@@ -2470,6 +2470,8 @@ awk '
   || contract_fail 'AppKit must receive a final key-window activation request after each Qt window activation.'
 grep -Fq 'WindowActivationForRegressionResult::AppInactive' "$native_harness" \
   || contract_fail "$native_harness must classify focus checks as unavailable when AppKit has no active application."
+grep -Fq 'WindowActivationForRegressionResult::FocusUnavailable' "$native_harness" \
+  || contract_fail "$native_harness must keep route assertions runnable when the visible target cannot become the native key window."
 grep -Fq 'AppKit app remained inactive during focus verification.' "$native_harness" \
   || contract_fail "$native_harness must report AppKit inactivity after the focus wait."
 awk '
@@ -2478,7 +2480,7 @@ awk '
   in_activation && /if \(!activated\)/ { activation_timeout = NR }
   in_activation && /window->activate\(\)/ && !activation_call { activation_call = NR }
   in_activation && /WaitForRegressionCondition\(isActive, timeoutMs\)/ { bounded_wait = NR }
-  in_activation && /if \(!Platform::IsApplicationActiveForRegression\(\)\)/ {
+  in_activation && /if \(!applicationActive\)/ {
     if (activation_timeout) {
       timeout_appkit_check = NR
     } else {

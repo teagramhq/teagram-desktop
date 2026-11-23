@@ -5182,8 +5182,10 @@ ActivateWindowForRegression(Core::Application &app,
 		if (!applicationActive) {
 			std::fprintf(
 				stderr,
-				"Window activation unavailable: AppKit app remained inactive; "
-				"Qt and AppKit focus checks could not run. "
+				"Window activation unavailable: "
+				"AppKit app remained inactive during focus verification. "
+				"Qt and AppKit focus checks could not "
+				"run. "
 				"Waited %d ms.\n",
 				timeoutMs);
 			return WindowActivationForRegressionResult::AppInactive;
