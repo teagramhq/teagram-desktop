@@ -321,7 +321,7 @@ Main::Account &PeerData::account() const {
 }
 
 bool PeerData::usesCustomServer() const {
-	return account().mtp().dcOptions().hasCustomServer();
+	return session().usesCustomServer();
 }
 
 void PeerData::updateNameDelayed(

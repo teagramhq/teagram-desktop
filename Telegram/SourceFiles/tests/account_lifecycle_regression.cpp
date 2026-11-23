@@ -24609,15 +24609,13 @@ void RunCustomEmojiUiSmoke(Fn<void(int)> done) {
 		return fail("could not create the non-Premium sender session");
 	}
 	if (sender->session().premium() || sender->session().paidFeaturesSupported()
-		|| !sender->mtp().dcOptions().hasCustomServer()) {
+		|| !sender->mtp().dcOptions().hasCustomServer()
+		|| !sender->session().usesCustomServer()) {
 		return fail(
 			"sender fixture is not a non-Premium custom-server account");
 	}
 	const auto recipient = domain.add(MTP::Environment::Production);
 	recipient->mtp().stopForServerEnrollment();
-	if (!ConfigurePinnedServer(recipient, RegressionServerKey())) {
-		return fail("could not pin the recipient custom server");
-	}
 	recipient->setSessionUserId(kRecipientId);
 	if (!recipient->createSession(RegressionUser(kRecipientId, true, QString()),
 								  std::make_unique<Main::SessionSettings>())) {
@@ -24625,9 +24623,17 @@ void RunCustomEmojiUiSmoke(Fn<void(int)> done) {
 	}
 	if (recipient->session().premium()
 		|| recipient->session().paidFeaturesSupported()
-		|| !recipient->mtp().dcOptions().hasCustomServer()) {
+		|| recipient->mtp().dcOptions().hasCustomServer()
+		|| recipient->session().usesCustomServer()) {
+		return fail("unpinned recipient session was misclassified");
+	}
+	if (!ConfigurePinnedServer(recipient, RegressionServerKey())) {
+		return fail("could not pin the recipient custom server");
+	}
+	if (!recipient->mtp().dcOptions().hasCustomServer()
+		|| !recipient->session().usesCustomServer()) {
 		return fail(
-			"recipient fixture is not a non-Premium custom-server account");
+			"recipient session did not track its custom-server pin");
 	}
 	std::fprintf(stderr, "Custom emoji UI smoke: custom sessions ready.\n");
 

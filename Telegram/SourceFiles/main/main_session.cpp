@@ -101,6 +101,7 @@ Session::Session(
 	std::unique_ptr<SessionSettings> settings)
 : _userId(user.c_user().vid())
 , _account(account)
+, _usesCustomServer(account->mtp().dcOptions().hasCustomServer())
 , _settings(std::move(settings))
 , _changes(std::make_unique<Data::Changes>(this))
 , _api(std::make_unique<ApiWrap>(this))
@@ -173,6 +174,13 @@ Session::Session(
 , _fastButtonsBots(std::make_unique<Support::FastButtonsBots>(this))
 , _saveSettingsTimer([=] { saveSettings(); }) {
 	Expects(_settings != nullptr);
+
+	_account->mtp().dcOptions().changed(
+	) | rpl::on_next([=] {
+		_usesCustomServer.store(
+			_account->mtp().dcOptions().hasCustomServer(),
+			std::memory_order_relaxed);
+	}, _lifetime);
 
 	_api->requestTermsUpdate();
 	_api->requestFullPeer(_user);
