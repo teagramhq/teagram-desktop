@@ -14139,8 +14139,27 @@ PeerScopedUpdateRoutingRegressionPasses(not_null<Main::Session *> session,
 	changes.peerUpdated(second, Flag::Name);
 	changes.sendNotifications();
 	QCoreApplication::processEvents();
+	secondLifetime.destroy();
+	const auto scopesReleased
+		= changes.peerUpdateScopedStreamsEmptyForRegressionTest();
+	auto reconnectedLifetime = rpl::lifetime();
+	auto reconnectedUpdates = 0;
+	changes.peerUpdates(first, Flag::Name)
+		| rpl::on_next(
+			[&](const Data::PeerUpdate &update) {
+				if (update.peer == first && (update.flags & Flag::Name)) {
+					++reconnectedUpdates;
+				}
+			},
+			reconnectedLifetime);
+	changes.peerUpdated(first, Flag::Name);
+	changes.sendNotifications();
+	reconnectedLifetime.destroy();
+	QCoreApplication::processEvents();
 	return firstRoundRouted && (firstUpdates == 1) && (secondUpdates == 2)
-		   && (globalUpdates == 4);
+		   && (globalUpdates == 5) && scopesReleased
+		   && (reconnectedUpdates == 1)
+		   && changes.peerUpdateScopedStreamsEmptyForRegressionTest();
 }
 
 struct CacheChatSwitchRegressionResult final {

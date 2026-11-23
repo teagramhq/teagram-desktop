@@ -10,6 +10,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "base/flags.h"
 #include "data/data_chat_participant_status.h"
 
+#include <map>
 #include <memory>
 
 class History;
@@ -316,6 +317,7 @@ public:
 	[[nodiscard]] rpl::producer<PeerUpdate> peerUpdates(
 		not_null<PeerData*> peer,
 		PeerUpdate::Flags flags) const;
+	[[nodiscard]] bool peerUpdateScopedStreamsEmptyForRegressionTest() const;
 	[[nodiscard]] rpl::producer<PeerUpdate> peerFlagsValue(
 		not_null<PeerData*> peer,
 		PeerUpdate::Flags flags) const;
@@ -448,9 +450,18 @@ private:
 		void drop(not_null<DataType*> data);
 
 		void sendNotifications();
+		[[nodiscard]] bool scopedStreamsEmptyForRegressionTest() const {
+			return _scopedStreams->empty();
+		}
 
 	private:
 		static constexpr auto kCount = details::CountBit<Flag>() + 1;
+		struct ScopedStream final {
+			rpl::event_stream<UpdateType> stream;
+			int subscriptions = 0;
+		};
+		using ScopedStreams
+			= std::map<DataType *, std::shared_ptr<ScopedStream>>;
 
 		void sendRealtimeNotifications(
 			not_null<DataType*> data,
@@ -458,9 +469,8 @@ private:
 
 		std::array<rpl::event_stream<UpdateType>, kCount> _realtimeStreams;
 		base::flat_map<not_null<DataType*>, Flags> _updates;
-		mutable base::flat_map<not_null<DataType *>,
-							   std::shared_ptr<rpl::event_stream<UpdateType>>>
-			_scopedStreams;
+		std::shared_ptr<ScopedStreams> _scopedStreams
+			= std::make_shared<ScopedStreams>();
 		rpl::event_stream<UpdateType> _stream;
 
 	};

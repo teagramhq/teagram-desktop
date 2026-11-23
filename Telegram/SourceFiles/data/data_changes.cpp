@@ -24,9 +24,9 @@ void Changes::Manager<DataType, UpdateType>::updated(
 			_updates.erase(i);
 		}
 		const auto update = UpdateType{data, flags};
-		const auto scoped = _scopedStreams.find(data);
+		const auto scoped = _scopedStreams->find(data.get());
 		const auto scopedStream
-			= (scoped != _scopedStreams.end()) ? scoped->second : nullptr;
+			= (scoped != _scopedStreams->end()) ? scoped->second : nullptr;
 		_stream.fire_copy(update);
 		if (scopedStream) {
 			scopedStream->fire_copy(update);
@@ -62,13 +62,42 @@ template <typename DataType, typename UpdateType>
 rpl::producer<UpdateType>
 Changes::Manager<DataType, UpdateType>::updates(not_null<DataType *> data,
 												Flags flags) const {
-	auto &scopedStream = _scopedStreams[data];
-	if (!scopedStream) {
-		scopedStream = std::make_shared<rpl::event_stream<UpdateType>>();
-	}
-	return scopedStream->events() | rpl::filter([=](const UpdateType &update) {
-			   return (update.flags & flags);
-		   });
+	const auto streams = std::weak_ptr<ScopedStreams>(_scopedStreams);
+	return rpl::make_producer<UpdateType>(
+		[streams, data, flags](const auto &consumer) {
+			const auto strong = streams.lock();
+			if (!strong) {
+				return rpl::lifetime();
+			}
+			const auto key = data.get();
+			const auto i = strong->find(key);
+			auto scopedStream = (i != strong->end())
+									? i->second
+									: std::make_shared<ScopedStream>();
+			if (i == strong->end()) {
+				strong->emplace(key, scopedStream);
+			}
+			++scopedStream->subscriptions;
+			auto result = rpl::lifetime(
+				[streams, key, weakStream = std::weak_ptr(scopedStream)] {
+					const auto strong = streams.lock();
+					const auto scoped = weakStream.lock();
+					if (!strong || !scoped) {
+						return;
+					}
+					const auto i = strong->find(key);
+					if ((i != strong->end()) && (i->second == scoped)
+						&& (--scoped->subscriptions == 0)) {
+						strong->erase(i);
+					}
+				});
+			auto events = scopedStream->stream.events()
+						  | rpl::filter([=](const UpdateType &update) {
+								return (update.flags & flags);
+							});
+			result.add(std::move(events).start_existing(consumer));
+			return result;
+		});
 }
 
 template <typename DataType, typename UpdateType>
@@ -89,16 +118,16 @@ rpl::producer<UpdateType> Changes::Manager<DataType, UpdateType>::flagsValue(
 template <typename DataType, typename UpdateType>
 void Changes::Manager<DataType, UpdateType>::drop(not_null<DataType*> data) {
 	_updates.remove(data);
-	_scopedStreams.remove(data);
+	_scopedStreams->erase(data.get());
 }
 
 template <typename DataType, typename UpdateType>
 void Changes::Manager<DataType, UpdateType>::sendNotifications() {
 	for (const auto &[data, flags] : base::take(_updates)) {
 		const auto update = UpdateType{data, flags};
-		const auto scoped = _scopedStreams.find(data);
+		const auto scoped = _scopedStreams->find(data.get());
 		const auto scopedStream
-			= (scoped != _scopedStreams.end()) ? scoped->second : nullptr;
+			= (scoped != _scopedStreams->end()) ? scoped->second : nullptr;
 		_stream.fire_copy(update);
 		if (scopedStream) {
 			scopedStream->fire_copy(update);
@@ -144,6 +173,10 @@ rpl::producer<PeerUpdate> Changes::peerUpdates(
 		not_null<PeerData*> peer,
 		PeerUpdate::Flags flags) const {
 	return _peerChanges.updates(peer, flags);
+}
+
+bool Changes::peerUpdateScopedStreamsEmptyForRegressionTest() const {
+	return _peerChanges.scopedStreamsEmptyForRegressionTest();
 }
 
 rpl::producer<PeerUpdate> Changes::peerFlagsValue(
