@@ -12584,9 +12584,9 @@ struct MainThreadWorkBudgetAssessment final {
 	if (schedulerTrace.isEmpty() || (schedulerTrace == u"none"_q)) {
 		return {-1, fallbackWorkNanoseconds, false};
 	}
-	const auto pairedSamples = std::min(
-		static_cast<std::size_t>(schedulerTrace.size()),
-		sampleOffsetsNanoseconds.size());
+	const auto pairedSamples
+		= std::min(static_cast<std::size_t>(schedulerTrace.size()),
+				   sampleOffsetsNanoseconds.size());
 	const auto wallFallbackRequired = [&] {
 		for (auto i = std::size_t(0); i != pairedSamples; ++i) {
 			const auto offset = sampleOffsetsNanoseconds[i];
@@ -12595,15 +12595,15 @@ struct MainThreadWorkBudgetAssessment final {
 				return true;
 			}
 		}
-		for (auto i = pairedSamples; i != sampleOffsetsNanoseconds.size(); ++i) {
+		for (auto i = pairedSamples; i != sampleOffsetsNanoseconds.size();
+			 ++i) {
 			const auto offset = sampleOffsetsNanoseconds[i];
 			if ((offset >= 0) && (offset <= wallNanoseconds)) {
 				return true;
 			}
 		}
-		for (auto i = pairedSamples; i != static_cast<std::size_t>(
-				 schedulerTrace.size());
-			 ++i) {
+		for (auto i = pairedSamples;
+			 i != static_cast<std::size_t>(schedulerTrace.size()); ++i) {
 			if (schedulerTrace[qsizetype(i)] != u'R') {
 				return true;
 			}
@@ -12615,8 +12615,7 @@ struct MainThreadWorkBudgetAssessment final {
 		.estimatedWorkNanoseconds = fallbackWorkNanoseconds,
 		.wallFallbackRequired = wallFallbackRequired,
 	};
-	if (schedulerTrace.size()
-		!= qsizetype(sampleOffsetsNanoseconds.size())) {
+	if (schedulerTrace.size() != qsizetype(sampleOffsetsNanoseconds.size())) {
 		return incompleteEstimate;
 	} else if (mainThreadCpuNanoseconds < 0) {
 		return {};
@@ -13020,25 +13019,23 @@ void AccumulateMainThreadWorkEstimate(qint64 &aggregateNanoseconds,
 		uncoveredWaitingGap, 1'000'000, 100'000'000);
 	const auto unknownStateAssessment
 		= AssessMainThreadWorkBudget(unknownState, 18'000'000, 100'000'000);
-	const auto uncoveredUninterruptibleGapAssessment =
-		AssessMainThreadWorkBudget(uncoveredUninterruptibleGap, 1'000'000,
-								   100'000'000);
+	const auto uncoveredUninterruptibleGapAssessment
+		= AssessMainThreadWorkBudget(uncoveredUninterruptibleGap, 1'000'000,
+									 100'000'000);
 	const auto uncoveredUnknownGapAssessment = AssessMainThreadWorkBudget(
 		uncoveredUnknownGap, 1'000'000, 100'000'000);
 	const auto uncoveredRunnableGapAssessment = AssessMainThreadWorkBudget(
 		uncoveredRunnableGap, 1'000'000, 100'000'000);
 	auto uncoveredWaitingGapRun = MainThreadWorkBudgetRun();
-	const auto uncoveredWaitingGapWithinBudget
-		= uncoveredWaitingGapRun.Observe(uncoveredWaitingGapAssessment,
-										  200'000'000, 100'000'000);
+	const auto uncoveredWaitingGapWithinBudget = uncoveredWaitingGapRun.Observe(
+		uncoveredWaitingGapAssessment, 200'000'000, 100'000'000);
 	auto uncoveredUninterruptibleGapRun = MainThreadWorkBudgetRun();
 	const auto uncoveredUninterruptibleGapWithinBudget
 		= uncoveredUninterruptibleGapRun.Observe(
 			uncoveredUninterruptibleGapAssessment, 200'000'000, 100'000'000);
 	auto uncoveredUnknownGapRun = MainThreadWorkBudgetRun();
-	const auto uncoveredUnknownGapWithinBudget
-		= uncoveredUnknownGapRun.Observe(uncoveredUnknownGapAssessment,
-										  200'000'000, 100'000'000);
+	const auto uncoveredUnknownGapWithinBudget = uncoveredUnknownGapRun.Observe(
+		uncoveredUnknownGapAssessment, 200'000'000, 100'000'000);
 	auto uncoveredRunnableGapRun = MainThreadWorkBudgetRun();
 	const auto uncoveredRunnableGapWithinBudget
 		= uncoveredRunnableGapRun.Observe(uncoveredRunnableGapAssessment,
@@ -13046,9 +13043,8 @@ void AccumulateMainThreadWorkEstimate(qint64 &aggregateNanoseconds,
 	const auto sparseBlockedTailAssessment = AssessMainThreadWorkBudget(
 		sparseBlockedTail, 18'000'000, 100'000'000);
 	auto sparseBlockedTailRun = MainThreadWorkBudgetRun();
-	const auto sparseBlockedTailWithinBudget
-		= sparseBlockedTailRun.Observe(sparseBlockedTailAssessment,
-										   225'000'000, 100'000'000);
+	const auto sparseBlockedTailWithinBudget = sparseBlockedTailRun.Observe(
+		sparseBlockedTailAssessment, 225'000'000, 100'000'000);
 	const auto noSamples
 		= EstimateMainThreadWork(0, 101'000'000, u"none"_q, {});
 	const auto runnerSchedulingNoise
@@ -13582,9 +13578,9 @@ void AccumulateMainThreadWorkEstimate(qint64 &aggregateNanoseconds,
 		   && (unknownStateAssessment.workNanoseconds == 225'000'000)
 		   && !unknownStateAssessment.withinBudget
 		   && !MainThreadWorkEstimateWithinBudget(
-			   18'000'000, 225'000'000, QString(int(switchOffsets.size()),
-												 QChar(u'?')),
-			   switchOffsets, 100'000'000)
+			   18'000'000, 225'000'000,
+			   QString(int(switchOffsets.size()), QChar(u'?')), switchOffsets,
+			   100'000'000)
 		   && (partiallyUnknownState.blockedNanoseconds == -1)
 		   && (partiallyUnknownState.estimatedWorkNanoseconds == 225'000'000)
 		   && (negativeOffset.blockedNanoseconds == -1)
@@ -13605,46 +13601,44 @@ void AccumulateMainThreadWorkEstimate(qint64 &aggregateNanoseconds,
 			   0, 200'000'000, QString(5, QChar(u'R')),
 			   {0, 5'000'000, 10'000'000, 190'000'000, 200'000'000},
 			   100'000'000)
-			&& (uncoveredWaitingGap.blockedNanoseconds == -1)
-			&& (uncoveredWaitingGap.estimatedWorkNanoseconds == 200'000'000)
-			&& (uncoveredUninterruptibleGap.blockedNanoseconds == -1)
-			&& (uncoveredUninterruptibleGap.estimatedWorkNanoseconds
-				== 200'000'000)
-			&& (uncoveredUnknownGap.blockedNanoseconds == -1)
-			&& (uncoveredUnknownGap.estimatedWorkNanoseconds == 200'000'000)
-			&& (uncoveredRunnableGap.blockedNanoseconds == -1)
-			&& (uncoveredRunnableGap.estimatedWorkNanoseconds == 200'000'000)
-			&& !uncoveredWaitingGapAssessment.schedulerEvidenceAvailable
-			&& (uncoveredWaitingGapAssessment.workNanoseconds == 200'000'000)
-			&& !uncoveredWaitingGapAssessment.withinBudget
-			&& !MainThreadWorkEstimateWithinBudget(
-				1'000'000, 200'000'000, u"RW"_q, {0, 30'000'000}, 100'000'000)
-			&& !uncoveredUninterruptibleGapAssessment.schedulerEvidenceAvailable
-			&& (uncoveredUninterruptibleGapAssessment.workNanoseconds
-				== 200'000'000)
-			&& !uncoveredUninterruptibleGapAssessment.withinBudget
-			&& !MainThreadWorkEstimateWithinBudget(
-				1'000'000, 200'000'000, u"RU"_q, {0, 30'000'000}, 100'000'000)
-			&& !uncoveredUnknownGapAssessment.schedulerEvidenceAvailable
-			&& (uncoveredUnknownGapAssessment.workNanoseconds == 200'000'000)
-			&& !uncoveredUnknownGapAssessment.withinBudget
-			&& !MainThreadWorkEstimateWithinBudget(
-				1'000'000, 200'000'000, u"R?"_q, {0, 30'000'000},
-				100'000'000)
-			&& !uncoveredRunnableGapAssessment.schedulerEvidenceAvailable
-			&& (uncoveredRunnableGapAssessment.workNanoseconds == 1'000'000)
-			&& uncoveredRunnableGapAssessment.withinBudget
-			&& MainThreadWorkEstimateWithinBudget(
-				1'000'000, 200'000'000, u"RR"_q, {0, 30'000'000},
-				100'000'000)
-			&& !uncoveredWaitingGapWithinBudget
-			&& !uncoveredWaitingGapRun.WithinBudget()
-			&& !uncoveredUninterruptibleGapWithinBudget
-			&& !uncoveredUninterruptibleGapRun.WithinBudget()
-			&& !uncoveredUnknownGapWithinBudget
-			&& !uncoveredUnknownGapRun.WithinBudget()
-			&& !uncoveredRunnableGapWithinBudget
-			&& uncoveredRunnableGapRun.WithinBudget()
+		   && (uncoveredWaitingGap.blockedNanoseconds == -1)
+		   && (uncoveredWaitingGap.estimatedWorkNanoseconds == 200'000'000)
+		   && (uncoveredUninterruptibleGap.blockedNanoseconds == -1)
+		   && (uncoveredUninterruptibleGap.estimatedWorkNanoseconds
+			   == 200'000'000)
+		   && (uncoveredUnknownGap.blockedNanoseconds == -1)
+		   && (uncoveredUnknownGap.estimatedWorkNanoseconds == 200'000'000)
+		   && (uncoveredRunnableGap.blockedNanoseconds == -1)
+		   && (uncoveredRunnableGap.estimatedWorkNanoseconds == 200'000'000)
+		   && !uncoveredWaitingGapAssessment.schedulerEvidenceAvailable
+		   && (uncoveredWaitingGapAssessment.workNanoseconds == 200'000'000)
+		   && !uncoveredWaitingGapAssessment.withinBudget
+		   && !MainThreadWorkEstimateWithinBudget(
+			   1'000'000, 200'000'000, u"RW"_q, {0, 30'000'000}, 100'000'000)
+		   && !uncoveredUninterruptibleGapAssessment.schedulerEvidenceAvailable
+		   && (uncoveredUninterruptibleGapAssessment.workNanoseconds
+			   == 200'000'000)
+		   && !uncoveredUninterruptibleGapAssessment.withinBudget
+		   && !MainThreadWorkEstimateWithinBudget(
+			   1'000'000, 200'000'000, u"RU"_q, {0, 30'000'000}, 100'000'000)
+		   && !uncoveredUnknownGapAssessment.schedulerEvidenceAvailable
+		   && (uncoveredUnknownGapAssessment.workNanoseconds == 200'000'000)
+		   && !uncoveredUnknownGapAssessment.withinBudget
+		   && !MainThreadWorkEstimateWithinBudget(
+			   1'000'000, 200'000'000, u"R?"_q, {0, 30'000'000}, 100'000'000)
+		   && !uncoveredRunnableGapAssessment.schedulerEvidenceAvailable
+		   && (uncoveredRunnableGapAssessment.workNanoseconds == 1'000'000)
+		   && uncoveredRunnableGapAssessment.withinBudget
+		   && MainThreadWorkEstimateWithinBudget(
+			   1'000'000, 200'000'000, u"RR"_q, {0, 30'000'000}, 100'000'000)
+		   && !uncoveredWaitingGapWithinBudget
+		   && !uncoveredWaitingGapRun.WithinBudget()
+		   && !uncoveredUninterruptibleGapWithinBudget
+		   && !uncoveredUninterruptibleGapRun.WithinBudget()
+		   && !uncoveredUnknownGapWithinBudget
+		   && !uncoveredUnknownGapRun.WithinBudget()
+		   && !uncoveredRunnableGapWithinBudget
+		   && uncoveredRunnableGapRun.WithinBudget()
 		   && !Core::UiStallWatchdog::SchedulerTraceCoversDuration(
 			   u"RRR"_q, {0, 1'000'000, 2'000'000}, 200'000'000)
 		   && (sparseStartup.blockedNanoseconds == 50'000'000)
@@ -13660,10 +13654,10 @@ void AccumulateMainThreadWorkEstimate(qint64 &aggregateNanoseconds,
 			   sixMillisecondGapOffsets, 100'000'000)
 		   && (sparseBlockedTail.blockedNanoseconds == -1)
 		   && (sparseBlockedTail.estimatedWorkNanoseconds == 225'000'000)
-			&& (sparseBlockedTailAssessment.workNanoseconds == 225'000'000)
-			&& !sparseBlockedTailAssessment.withinBudget
-			&& !sparseBlockedTailWithinBudget
-			&& !sparseBlockedTailRun.WithinBudget()
+		   && (sparseBlockedTailAssessment.workNanoseconds == 225'000'000)
+		   && !sparseBlockedTailAssessment.withinBudget
+		   && !sparseBlockedTailWithinBudget
+		   && !sparseBlockedTailRun.WithinBudget()
 		   && !MainThreadWorkEstimateWithinBudget(
 			   18'000'000, 225'000'000, u"RRRW"_q, sparseBlockedTailOffsets,
 			   100'000'000)
@@ -13804,7 +13798,7 @@ void AccumulateMainThreadWorkEstimate(qint64 &aggregateNanoseconds,
 		   && (blockedSelectionAssessment.workNanoseconds == 60'000'000)
 		   && !blockedSelectionAssessment.withinBudget
 		   && MainThreadWorkEstimateWithinBudget(0, 101'000'000, u"none"_q, {},
-												  100'000'000)
+												 100'000'000)
 		   && (noInWindowSamples.blockedNanoseconds == -1)
 		   && (noInWindowSamples.estimatedWorkNanoseconds == 225'000'000)
 		   && (bracketedEstimate.estimatedWorkNanoseconds == 45'000'000)
