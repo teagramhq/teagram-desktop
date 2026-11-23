@@ -5127,6 +5127,7 @@ void LogWindowActivationForRegression(Core::Application &app,
 enum class WindowActivationForRegressionResult {
 	Activated,
 	AppInactive,
+	FocusUnavailable,
 	Failed,
 };
 
@@ -5168,18 +5169,33 @@ ActivateWindowForRegression(Core::Application &app,
 	retry.stop();
 	if (!activated) {
 		LogWindowActivationForRegression(app, window);
-		if (!Platform::IsApplicationActiveForRegression()) {
+		if (!window->widget()->isVisible()
+			|| !window->widget()->windowHandle()) {
 			std::fprintf(
 				stderr,
-				"Settings deep link activation unavailable: "
-				"AppKit app remained inactive during focus verification. "
+				"Window activation failed: target window is not visible "
+				"or has no native handle.\n");
+			return WindowActivationForRegressionResult::Failed;
+		}
+		const auto applicationActive
+			= Platform::IsApplicationActiveForRegression();
+		if (!applicationActive) {
+			std::fprintf(
+				stderr,
+				"Window activation unavailable: AppKit app remained inactive; "
+				"Qt and AppKit focus checks could not run. "
 				"Waited %d ms.\n",
 				timeoutMs);
 			return WindowActivationForRegressionResult::AppInactive;
 		}
+		std::fprintf(
+			stderr,
+			"Window activation unavailable: Qt target-active and AppKit "
+			"target-is-key checks remained false after %d ms.\n",
+			timeoutMs);
+		return WindowActivationForRegressionResult::FocusUnavailable;
 	}
-	return activated ? WindowActivationForRegressionResult::Activated
-					 : WindowActivationForRegressionResult::Failed;
+	return WindowActivationForRegressionResult::Activated;
 }
 
 [[nodiscard]] bool
@@ -14722,6 +14738,10 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 	const auto secondHistory = makeHistory(ChatId(1052));
 	const auto emptyFirstHistory = makeHistory(ChatId(1'050'051));
 	const auto emptySecondHistory = makeHistory(ChatId(1'050'052));
+	// These local slices are the complete test fixture. Do not leave history
+	// preloads pending to fail later inside a measured chat switch.
+	firstHistory->markLoadedAtTop();
+	secondHistory->markLoadedAtTop();
 	const auto makeUiHistory = [&](ChatId id, int messageId) {
 		data.processChats(MTP_vector<MTPChat>({MTP_chat(
 			MTP_flags(MTPDchat::Flags()), MTP_long(id.bare),
@@ -14746,6 +14766,7 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		  && secondUiHistory->loadedAtTop() && secondUiHistory->loadedAtBottom()
 		  && HasExpectedParticipants(data.chat(ChatId(1054)), UserId(1))
 		  && HasExpectedParticipants(data.chat(ChatId(1055)), UserId(1))
+		  && firstHistory->loadedAtTop() && secondHistory->loadedAtTop()
 		  && (firstHistory->unreadCount() == 7)
 		  && (secondHistory->unreadCount() == 6)
 		  && firstHistory->isReadyFor(ShowAtUnreadMsgId)
