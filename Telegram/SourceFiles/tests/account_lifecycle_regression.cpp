@@ -14156,7 +14156,9 @@ PeerScopedUpdateRoutingRegressionPasses(not_null<Main::Session *> session,
 	changes.peerUpdates(Flag::Name)
 		| rpl::on_next(
 			[&](const Data::PeerUpdate &update) {
-				deliveries.push_back({3, update.peer.get(), update.flags});
+				if ((update.peer == first) || (update.peer == second)) {
+					deliveries.push_back({3, update.peer.get(), update.flags});
+				}
 			},
 			globalLifetime);
 	subscribe(first, 4, survivingFirstLifetime);
