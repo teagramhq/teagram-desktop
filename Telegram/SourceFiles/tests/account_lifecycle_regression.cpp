@@ -13429,7 +13429,7 @@ void AccumulateMainThreadWorkEstimate(qint64 &aggregateNanoseconds,
 			 offset += 10'000'000) {
 			result.push_back({
 				.sampledAtSteadyNanoseconds = start + offset,
-				.state = offset ? 'W' : 'R',
+				.state = 'W',
 			});
 		}
 		return result;
@@ -13471,7 +13471,7 @@ void AccumulateMainThreadWorkEstimate(qint64 &aggregateNanoseconds,
 				.acknowledgedAtNanoseconds = start + 60'000'000,
 				.sequence = 1,
 				.postedAtSteadyNanoseconds = start,
-				.schedulerTrace = u"RWWWWWW"_q,
+				.schedulerTrace = u"WWWWWWW"_q,
 				.schedulerSampleOffsetsNanoseconds
 				= {0, 10'000'000, 20'000'000, 30'000'000, 40'000'000,
 				   50'000'000, 60'000'000},
@@ -13836,7 +13836,7 @@ void AccumulateMainThreadWorkEstimate(qint64 &aggregateNanoseconds,
 			   sparseStartupCapture.sampleOffsetsNanoseconds, 100'000'000)
 		   && uncapturedWindow.capturePending
 		   && pendingFirstAccessTimeoutSamples.capturePending
-		   && (pendingFirstAccessTimeoutSamples.trace == u"RWWWWWW"_q)
+		   && (pendingFirstAccessTimeoutSamples.trace == u"WWWWWWW"_q)
 		   && (pendingFirstAccessTimeoutSamples.sampleOffsetsNanoseconds.back()
 			   == 60'000'000)
 		   && !pendingFirstAccessAssessment.schedulerEvidenceAvailable
@@ -13848,11 +13848,11 @@ void AccumulateMainThreadWorkEstimate(qint64 &aggregateNanoseconds,
 		   && !pendingFirstAccessWithinBudget
 		   && !pendingFirstAccessRun.WithinBudget()
 		   && pendingAcknowledgementWindow.capturePending
-		   && (pendingAcknowledgementWindow.trace == u"RWWWWWW"_q)
+		   && (pendingAcknowledgementWindow.trace == u"WWWWWWW"_q)
 		   && (pendingAcknowledgementWindow.sampleOffsetsNanoseconds.back()
 			   == 60'000'000)
 		   && pendingStartupWork.schedulerSamples.capturePending
-		   && (pendingStartupWork.schedulerSamples.trace == u"RWWWWWW"_q)
+		   && (pendingStartupWork.schedulerSamples.trace == u"WWWWWWW"_q)
 		   && (pendingStartupAssessment.workNanoseconds == 110'000'000)
 		   && !pendingStartupAssessment.withinBudget
 		   && !pendingStartupWithinBudget && !pendingStartupRun.WithinBudget()
