@@ -2274,7 +2274,10 @@ grep -Fq 'showPeerHistoryMeasured(emptyFirstHistory)' "$temp_dir/cache-first-sel
 	&& grep -Fq 'showPeerHistoryMeasured(target)' "$temp_dir/cache-first-selection.cpp" \
 	|| contract_fail 'The cold selection, measured startup priming, and all eight measured warm-up switches must remain in the fixture.'
 grep -Fq 'startupTimingBudgetRun.Observe(' "$native_harness" \
-	&& grep -Fq 'const auto windowBudgetNanoseconds = (i == 0)' "$native_harness" \
+	&& tr -d '[:space:]' < "$native_harness" \
+		> "$temp_dir/native-harness-normalized.cpp" \
+	&& grep -Fq 'constautowindowBudgetNanoseconds=(i==0)?kMaxStartupHeartbeatThreadWorkNanoseconds:kMaxChatSwitchNanoseconds;' \
+		"$temp_dir/native-harness-normalized.cpp" \
 	&& grep -Fq 'kMaxStartupHeartbeatThreadWorkNanoseconds' "$native_harness" \
 	&& grep -Fq 'startupTimingBudgetRun.WithinBudget()' "$native_harness" \
 	&& grep -Fq 'result.initialHistorySelectionWithinBudget' "$native_harness" \
