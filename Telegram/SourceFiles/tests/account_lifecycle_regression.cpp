@@ -14093,10 +14093,10 @@ SchedulerEvidenceDiagnosticsRegressionPasses() {
 	return (workNanoseconds >= 0) && (workNanoseconds < budgetNanoseconds);
 }
 
-[[nodiscard]] bool PeerScopedUpdateRoutingRegressionPasses(
-		not_null<Main::Session*> session,
-		not_null<PeerData*> first,
-		not_null<PeerData*> second) {
+[[nodiscard]] bool
+PeerScopedUpdateRoutingRegressionPasses(not_null<Main::Session *> session,
+										not_null<PeerData *> first,
+										not_null<PeerData *> second) {
 	auto changes = Data::Changes(session);
 	auto firstLifetime = rpl::lifetime();
 	auto secondLifetime = rpl::lifetime();
@@ -14105,27 +14105,30 @@ SchedulerEvidenceDiagnosticsRegressionPasses() {
 	auto secondUpdates = 0;
 	auto globalUpdates = 0;
 	using Flag = Data::PeerUpdate::Flag;
-	changes.peerUpdates(first, Flag::Name) | rpl::on_next(
-		[&](const Data::PeerUpdate &update) {
-			if (update.peer == first && (update.flags & Flag::Name)) {
-				++firstUpdates;
-			}
-		},
-		firstLifetime);
-	changes.peerUpdates(second, Flag::Name) | rpl::on_next(
-		[&](const Data::PeerUpdate &update) {
-			if (update.peer == second && (update.flags & Flag::Name)) {
-				++secondUpdates;
-			}
-		},
-		secondLifetime);
-	changes.peerUpdates(Flag::Name) | rpl::on_next(
-		[&](const Data::PeerUpdate &update) {
-			if (update.flags & Flag::Name) {
-				++globalUpdates;
-			}
-		},
-		globalLifetime);
+	changes.peerUpdates(first, Flag::Name)
+		| rpl::on_next(
+			[&](const Data::PeerUpdate &update) {
+				if (update.peer == first && (update.flags & Flag::Name)) {
+					++firstUpdates;
+				}
+			},
+			firstLifetime);
+	changes.peerUpdates(second, Flag::Name)
+		| rpl::on_next(
+			[&](const Data::PeerUpdate &update) {
+				if (update.peer == second && (update.flags & Flag::Name)) {
+					++secondUpdates;
+				}
+			},
+			secondLifetime);
+	changes.peerUpdates(Flag::Name)
+		| rpl::on_next(
+			[&](const Data::PeerUpdate &update) {
+				if (update.flags & Flag::Name) {
+					++globalUpdates;
+				}
+			},
+			globalLifetime);
 	changes.peerUpdated(first, Flag::Name);
 	changes.peerUpdated(second, Flag::Name);
 	changes.sendNotifications();

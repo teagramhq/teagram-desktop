@@ -23,11 +23,10 @@ void Changes::Manager<DataType, UpdateType>::updated(
 			flags |= i->second;
 			_updates.erase(i);
 		}
-		const auto update = UpdateType{ data, flags };
+		const auto update = UpdateType{data, flags};
 		const auto scoped = _scopedStreams.find(data);
-		const auto scopedStream = (scoped != _scopedStreams.end())
-			? scoped->second
-			: nullptr;
+		const auto scopedStream
+			= (scoped != _scopedStreams.end()) ? scoped->second : nullptr;
 		_stream.fire_copy(update);
 		if (scopedStream) {
 			scopedStream->fire_copy(update);
@@ -60,18 +59,16 @@ rpl::producer<UpdateType> Changes::Manager<DataType, UpdateType>::updates(
 }
 
 template <typename DataType, typename UpdateType>
-rpl::producer<UpdateType> Changes::Manager<DataType, UpdateType>::updates(
-		not_null<DataType*> data,
-		Flags flags) const {
+rpl::producer<UpdateType>
+Changes::Manager<DataType, UpdateType>::updates(not_null<DataType *> data,
+												Flags flags) const {
 	auto &scopedStream = _scopedStreams[data];
 	if (!scopedStream) {
-		scopedStream
-			= std::make_shared<rpl::event_stream<UpdateType>>();
+		scopedStream = std::make_shared<rpl::event_stream<UpdateType>>();
 	}
-	return scopedStream->events(
-	) | rpl::filter([=](const UpdateType &update) {
-		return (update.flags & flags);
-	});
+	return scopedStream->events() | rpl::filter([=](const UpdateType &update) {
+			   return (update.flags & flags);
+		   });
 }
 
 template <typename DataType, typename UpdateType>
@@ -98,11 +95,10 @@ void Changes::Manager<DataType, UpdateType>::drop(not_null<DataType*> data) {
 template <typename DataType, typename UpdateType>
 void Changes::Manager<DataType, UpdateType>::sendNotifications() {
 	for (const auto &[data, flags] : base::take(_updates)) {
-		const auto update = UpdateType{ data, flags };
+		const auto update = UpdateType{data, flags};
 		const auto scoped = _scopedStreams.find(data);
-		const auto scopedStream = (scoped != _scopedStreams.end())
-			? scoped->second
-			: nullptr;
+		const auto scopedStream
+			= (scoped != _scopedStreams.end()) ? scoped->second : nullptr;
 		_stream.fire_copy(update);
 		if (scopedStream) {
 			scopedStream->fire_copy(update);
