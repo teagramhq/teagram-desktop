@@ -244,21 +244,24 @@ t6N/byY9Nw9p21Og3AoXSL2q/2IJ1WRUhebgAdGVMlV1fkuOQoEzR7EdpqtQD9Cs\n\
 
 } // namespace
 
+bool SameCustomServerEndpoint(const CustomServer &left,
+							  const CustomServer &right) {
+	return left.hostname == right.hostname && left.ip == right.ip
+		   && left.port == right.port && left.ipv6 == right.ipv6
+		   && left.webSocketEndpoint == right.webSocketEndpoint
+		   && left.webSocketOnly == right.webSocketOnly;
+}
+
 // Whether two pins name the same server: the same endpoint identity and
 // the same key bytes. The fingerprint alone would do in practice, but a
 // pin decision should not rest on a digest.
-bool SameCustomServerPin(
-		const CustomServer &a,
-		const CustomServer &b) {
-	if (a.webSocketEndpoint != b.webSocketEndpoint) {
+bool SameCustomServerPin(const CustomServer &a, const CustomServer &b) {
+	if (!SameCustomServerEndpoint(a, b)) {
 		return false;
 	}
-	if (a.dcId != b.dcId || a.hostname != b.hostname || a.ip != b.ip
-		|| a.port != b.port || a.ipv6 != b.ipv6
-		|| a.serverSelection != b.serverSelection
+	if (a.dcId != b.dcId || a.serverSelection != b.serverSelection
 		|| a.discoveryPolicy != b.discoveryPolicy
-		|| a.discoveryOrigin != b.discoveryOrigin
-		|| a.webSocketOnly != b.webSocketOnly) {
+		|| a.discoveryOrigin != b.discoveryOrigin) {
 		return false;
 	} else if (!a.key || !b.key) {
 		return false;
@@ -267,22 +270,76 @@ bool SameCustomServerPin(
 		&& a.key->getE() == b.key->getE();
 }
 
+bool SameCustomServerEndpointRefreshIdentity(const CustomServer &left,
+											 const CustomServer &right) {
+	return ClassifyCustomServerEndpointRefreshIdentityFailure(left, right)
+		   == CustomServerEndpointRefreshIdentityFailure::None;
+}
+
+CustomServerEndpointRefreshIdentityFailure
+ClassifyCustomServerEndpointRefreshIdentityFailure(
+	const CustomServer &original, const CustomServer &candidate) {
+	if (original.dcId != candidate.dcId) {
+		return CustomServerEndpointRefreshIdentityFailure::DcIdMismatch;
+	}
+	if (original.serverSelection != candidate.serverSelection
+		|| original.discoveryPolicy != candidate.discoveryPolicy
+		|| original.discoveryOrigin != candidate.discoveryOrigin) {
+		return CustomServerEndpointRefreshIdentityFailure::SelectionMismatch;
+	}
+	if (!original.key || !candidate.key
+		|| original.key->getN() != candidate.key->getN()
+		|| original.key->getE() != candidate.key->getE()) {
+		return CustomServerEndpointRefreshIdentityFailure::KeyMismatch;
+	}
+	return CustomServerEndpointRefreshIdentityFailure::None;
+}
+
 std::optional<CustomServer> BuildCustomServerFromDiscovery(
 		const ServerSelectionCheck &selection,
 		const ServerDiscoveryResult &result) {
-	if (!selection.valid()
-		|| !result
-		|| selection.policy != result.policy
-		|| (result.policy != ServerDiscoveryPolicy::PublicHttps
-			&& result.policy != ServerDiscoveryPolicy::LocalDirect)) {
-		return std::nullopt;
+	const auto expectedOrigin
+		= (result.policy == ServerDiscoveryPolicy::PublicHttps)
+			  ? PublicDiscoveryUrl(selection)
+			  : (u"local:"_q + selection.normalizedSelection);
+	return BuildCustomServerFromDiscovery(selection, result, expectedOrigin);
+}
+
+std::optional<CustomServer> BuildCustomServerFromDiscovery(
+	const ServerSelectionCheck &selection, const ServerDiscoveryResult &result,
+	const QString &expectedOrigin, CustomServerDiscoveryFailure *failure) {
+	if (failure) {
+		*failure = CustomServerDiscoveryFailure::None;
 	}
-	const auto expectedOrigin = (result.policy
-		== ServerDiscoveryPolicy::PublicHttps)
-		? PublicDiscoveryUrl(selection)
-		: (u"local:"_q + selection.normalizedSelection);
-	if (result.origin != expectedOrigin || result.dcId <= 0) {
-		return std::nullopt;
+	const auto refused = [&](CustomServerDiscoveryFailure reason) {
+		if (failure) {
+			*failure = reason;
+		}
+		return std::optional<CustomServer>();
+	};
+	if (!selection.valid()) {
+		return refused(CustomServerDiscoveryFailure::InvalidSelection);
+	}
+	if (!result) {
+		return refused(CustomServerDiscoveryFailure::InvalidResponse);
+	}
+	if (selection.policy != result.policy) {
+		return refused(CustomServerDiscoveryFailure::PolicyMismatch);
+	}
+	if (result.policy != ServerDiscoveryPolicy::PublicHttps
+		&& result.policy != ServerDiscoveryPolicy::LocalDirect) {
+		return refused(CustomServerDiscoveryFailure::UnsupportedPolicy);
+	}
+	const auto originAllowed
+		= (result.policy == ServerDiscoveryPolicy::PublicHttps)
+			  ? IsPublicDiscoveryOrigin(selection, expectedOrigin)
+			  : (expectedOrigin
+				 == (u"local:"_q + selection.normalizedSelection));
+	if (!originAllowed || result.origin != expectedOrigin) {
+		return refused(CustomServerDiscoveryFailure::InvalidOrigin);
+	}
+	if (result.dcId <= 0) {
+		return refused(CustomServerDiscoveryFailure::InvalidDcId);
 	}
 	auto webSocketEndpoint = QString();
 	if (!result.webSocketEndpoint.isEmpty()) {
@@ -292,7 +349,8 @@ std::optional<CustomServer> BuildCustomServerFromDiscovery(
 				result.webSocketEndpoint, selection);
 		}
 		if (!normalized || *normalized != result.webSocketEndpoint) {
-			return std::nullopt;
+			return refused(
+				CustomServerDiscoveryFailure::InvalidWebSocketEndpoint);
 		}
 		webSocketEndpoint = *normalized;
 	}
@@ -306,7 +364,7 @@ std::optional<CustomServer> BuildCustomServerFromDiscovery(
 			|| (selection.explicitPort
 				&& endpoint.normalizedSelection
 					   != selection.normalizedSelection)) {
-			return std::nullopt;
+			return refused(CustomServerDiscoveryFailure::InvalidEndpoint);
 		}
 		const auto url = QUrl(webSocketEndpoint, QUrl::StrictMode);
 		const auto host = url.host();
@@ -317,17 +375,18 @@ std::optional<CustomServer> BuildCustomServerFromDiscovery(
 		const auto webSocketCheck = CheckServerSelection(
 			bracketedHost + u":"_q + QString::number(port));
 		if (!MTP::IsPublicDiscoveryEndpoint(webSocketCheck, selection)) {
-			return std::nullopt;
+			return refused(CustomServerDiscoveryFailure::UnsafeEndpoint);
 		}
 		auto address = QHostAddress();
 		if (!address.setAddress(result.resolvedAddress)
 			|| !MTP::IsPublicDiscoveryAddress(selection, address)) {
-			return std::nullopt;
+			return refused(
+				CustomServerDiscoveryFailure::InvalidResolvedAddress);
 		}
 		auto endpointAddress = QHostAddress();
 		const auto endpointIsLiteral = endpointAddress.setAddress(host);
 		if (endpointIsLiteral && endpointAddress != address) {
-			return std::nullopt;
+			return refused(CustomServerDiscoveryFailure::InvalidEndpoint);
 		}
 		return CustomServer{
 			.dcId = result.dcId,
@@ -351,7 +410,7 @@ std::optional<CustomServer> BuildCustomServerFromDiscovery(
 			  ? IsPublicMtprotoDiscoveryEndpoint(endpoint, selection)
 			  : (endpoint && endpoint.policy == result.policy);
 	if (!endpointAllowed || !result.key.valid()) {
-		return std::nullopt;
+		return refused(CustomServerDiscoveryFailure::InvalidEndpoint);
 	}
 	const auto connectionHost = result.resolvedAddress.isEmpty()
 		? endpoint.host
@@ -384,7 +443,7 @@ std::optional<CustomServer> BuildCustomServerFromDiscovery(
 				&& connectionEndpoint.policy
 					== ServerDiscoveryPolicy::LocalDirect));
 	if (!connectionSafe) {
-		return std::nullopt;
+		return refused(CustomServerDiscoveryFailure::UnsafeEndpoint);
 	}
 	auto endpointAddress = QHostAddress();
 	const auto retainsHostname = result.policy
@@ -404,6 +463,35 @@ std::optional<CustomServer> BuildCustomServerFromDiscovery(
 		.webSocketEndpoint = webSocketEndpoint.toStdString(),
 		.webSocketOnly = false,
 	};
+}
+
+const char *
+CustomServerDiscoveryFailureName(CustomServerDiscoveryFailure failure) {
+	switch (failure) {
+	case CustomServerDiscoveryFailure::None:
+		return "none";
+	case CustomServerDiscoveryFailure::InvalidSelection:
+		return "invalid selection";
+	case CustomServerDiscoveryFailure::InvalidResponse:
+		return "invalid discovery response";
+	case CustomServerDiscoveryFailure::PolicyMismatch:
+		return "discovery policy mismatch";
+	case CustomServerDiscoveryFailure::UnsupportedPolicy:
+		return "unsupported discovery policy";
+	case CustomServerDiscoveryFailure::InvalidOrigin:
+		return "discovery origin mismatch";
+	case CustomServerDiscoveryFailure::InvalidDcId:
+		return "invalid DC id";
+	case CustomServerDiscoveryFailure::InvalidWebSocketEndpoint:
+		return "invalid WebSocket endpoint";
+	case CustomServerDiscoveryFailure::InvalidEndpoint:
+		return "invalid MTProto endpoint";
+	case CustomServerDiscoveryFailure::UnsafeEndpoint:
+		return "unsafe endpoint";
+	case CustomServerDiscoveryFailure::InvalidResolvedAddress:
+		return "invalid resolved address";
+	}
+	Unexpected("CustomServerDiscoveryFailure value.");
 }
 
 bool CanStartSpecialConfigRequest(
@@ -1445,6 +1533,37 @@ bool DcOptions::setCustomServer(
 	// Main::Account::startMtp() writes the config to tdata on this, and
 	// that write is what puts the pinned key in the serialized blob.
 	_changed.fire_copy(server.dcId);
+	return true;
+}
+
+bool DcOptions::refreshCustomServerEndpoint(const CustomServer &original,
+											const CustomServer &candidate) {
+	if (const auto problem = CustomServerProblem(candidate, true)) {
+		LOG(("MTP Error: endpoint refresh candidate is invalid (%1).")
+				.arg(QString::fromUtf8(problem)));
+		return false;
+	}
+	if (!SameCustomServerEndpointRefreshIdentity(original, candidate)) {
+		return false;
+	}
+	{
+		WriteLocker lock(this);
+		if (_immutable || _blocked || _unenrolled || !hasCustomServerUnlocked()
+			|| !isAuthorizedUnlocked(original.dcId)
+			|| !SameCustomServerEndpointRefreshIdentity(_customServer,
+														original)) {
+			return false;
+		}
+		auto refreshed = _customServer;
+		refreshed.hostname = candidate.hostname;
+		refreshed.ip = candidate.ip;
+		refreshed.port = candidate.port;
+		refreshed.ipv6 = candidate.ipv6;
+		refreshed.webSocketEndpoint = candidate.webSocketEndpoint;
+		refreshed.webSocketOnly = candidate.webSocketOnly;
+		applyCustomServerUnlocked(refreshed, true);
+	}
+	_changed.fire_copy(original.dcId);
 	return true;
 }
 

@@ -1023,7 +1023,7 @@ jobs:
             TDESKTOP_MAC_PROFILE_TEST_HOME="$regression_home" \
             ALSOFT_DRIVERS=null \
             TDESKTOP_AUTH_LIFECYCLE_REGRESSION=1 \
-            python3 - "$executable" "$regression_work" \
+            python3 - "$repo/.github/scripts" "$executable" "$regression_work" \
               "$diagnostics/stdout.log" "$diagnostics/stderr.log" \
               "$diagnostics/lldb.log" "$symbol_file" <<'PY'
           import os
@@ -1033,8 +1033,13 @@ jobs:
           import subprocess
           import sys
           import time
+          from pathlib import Path
 
-          executable, workdir, stdout_path, stderr_path, log_path, symbol_file = sys.argv[1:]
+          scripts_dir = sys.argv[1]
+          executable, workdir, stdout_path, stderr_path, log_path, symbol_file = sys.argv[2:]
+          sys.path.insert(0, scripts_dir)
+          sys.dont_write_bytecode = True
+          from macos_timeout_capture import authorization_timeout_report
           command = ["arch", "-arm64", "lldb", "--batch"]
           if symbol_file:
               command.extend(["-o", f"target symbols add {shlex.quote(symbol_file)}"])
@@ -1101,26 +1106,16 @@ jobs:
                   status = process.returncode
 
               if timeout_phase:
-                  if app_pid is not None:
-                      sample_path = os.path.join(
-                          os.path.dirname(log_path), "hang-sample.txt"
-                      )
-                      try:
-                          sample = subprocess.run(
-                              ["sample", str(app_pid), "1", "5", "-file", sample_path],
-                              stdout=log,
-                              stderr=subprocess.STDOUT,
-                              timeout=12,
-                              check=False,
-                          )
-                          log.write(
-                              f"Hang sample exit: {sample.returncode}; "
-                              f"sample: {sample_path}\n"
-                          )
-                      except (OSError, subprocess.TimeoutExpired) as error:
-                          log.write(f"Hang sample failed: {error}\n")
-                  else:
-                      log.write("Hang sample skipped: Teagram PID was not found.\n")
+                  sample_path = Path(
+                      os.path.join(os.path.dirname(log_path), "hang-sample.txt")
+                  )
+                  report = authorization_timeout_report(
+                      app_pid, timeout_phase, sample_path, timeout_seconds=12
+                  )
+                  if report.command_output:
+                      log.write(report.command_output + "\n")
+                  log.write(report.log_output + "\n")
+                  print(report.console_output)
 
                   for cleanup_signal in (signal.SIGTERM, signal.SIGKILL):
                       signal_pid(app_pid, "Teagram", cleanup_signal)

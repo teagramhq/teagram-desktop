@@ -77,7 +77,7 @@ private:
 		ScheduleEllipse,
 	};
 
-	[[nodiscard]] QPixmap grabContent();
+	[[nodiscard]] QPixmap grabContent(bool currentStateOnly = false);
 	void updateSize();
 
 	[[nodiscard]] StarsGeometry starsGeometry() const;
@@ -96,6 +96,7 @@ private:
 	void paintStarsToSend(QPainter &p, bool over);
 
 	void initVoiceRoundIcon(int index);
+	void animateVoiceRoundIcon(int index, int framesCount);
 	void paintVoiceRoundIcon(QPainter &p, bool over);
 	[[nodiscard]] static bool isVoiceRoundTransition(Type from, Type to);
 	void paintLottieIcon(QPainter &p, int index, bool over);
@@ -112,7 +113,10 @@ private:
 	Ui::Text::String _starsToSendText;
 
 	std::array<std::unique_ptr<Lottie::Icon>, 2> _voiceRoundIcons;
+	std::array<bool, 2> _voiceRoundPreparing = {};
+	std::array<bool, 2> _voiceRoundRetryScheduled = {};
 	bool _voiceRoundAnimating = false;
+	bool _grabCurrentContent = false;
 	RippleShape _lastRippleShape = RippleShape::SendEllipse;
 
 };

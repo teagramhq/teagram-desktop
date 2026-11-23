@@ -91,15 +91,10 @@ DesktopIntegrationFileNamesFor(const QString &desktopFileId,
 
 [[nodiscard]] inline QString
 SingleInstanceLocalServerName(const QString &hash,
-							  const QString &applicationName, bool snap,
-							  const QString &snapInstanceName) {
+							  const QString &applicationName, bool snap) {
 	if (snap) {
-		const auto result = u"snap.%1.%2"_q.arg(snapInstanceName, hash);
-#ifdef TDESKTOP_TEAGRAM
-		return result + '-' + applicationName;
-#else  // !TDESKTOP_TEAGRAM
-		return result;
-#endif // TDESKTOP_TEAGRAM
+		// The Snap runtime directory already identifies the installation.
+		return hash;
 	}
 	return hash + '-' + applicationName;
 }

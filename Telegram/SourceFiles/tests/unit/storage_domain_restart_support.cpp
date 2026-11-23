@@ -7,12 +7,14 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "main/main_account.h"
 
+#include "intro/intro_server_discovery.h"
 #include "main/main_domain.h"
 #include "mtproto/mtproto_config.h"
 #include "storage/storage_account.h"
 #include "storage/storage_domain.h"
 
 #include <QtCore/QDir>
+#include <QtCore/QTimer>
 
 namespace MTP {
 

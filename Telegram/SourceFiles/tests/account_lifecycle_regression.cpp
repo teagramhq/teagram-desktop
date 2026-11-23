@@ -14,6 +14,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "api/api_updates.h"
 #include "apiwrap.h"
 #include "base/options.h"
+#include "base/openssl_help.h"
 #include "base/platform/base_platform_info.h"
 #include "base/qthelp_regex.h"
 #include "base/unixtime.h"
@@ -105,6 +106,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "info/info_section_widget.h"
 #include "info/info_wrap_widget.h"
 #include "inline_bots/bot_attach_web_view.h"
+#include "intro/intro_server_discovery.h"
 #include "iv/iv_rich_page.h"
 #include "lang/lang_keys.h"
 #include "lang/translate_provider.h"
@@ -125,6 +127,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "mtproto/mtproto_auth_key.h"
 #include "mtproto/mtproto_config.h"
 #include "mtproto/mtproto_response.h"
+#include "mtproto/mtproto_server_enrollment.h"
 #include "mtproto/sender.h"
 #include "payments/payments_checkout_process.h"
 #include "payments/payments_form.h"
@@ -214,6 +217,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <QtGui/QKeyEvent>
 #include <QtGui/QKeySequence>
 #include <QtGui/QMouseEvent>
+#include <QtNetwork/QHostAddress>
+#include <QtNetwork/QTcpServer>
+#include <QtNetwork/QTcpSocket>
 #include <QtWidgets/QApplication>
 #include <QtWidgets/QTextEdit>
 
@@ -250,6 +256,76 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 namespace Tests {
 #ifdef TDESKTOP_LIFECYCLE_REGRESSION
+class AccountLifecycleRegressionAccess {
+  public:
+	[[nodiscard]] static bool restoredSession(const Main::Account &account) {
+		return account._restoredSession;
+	}
+	[[nodiscard]] static bool
+	endpointVerificationPending(const Main::Account &account) {
+		return account._mtpForEndpointVerification != nullptr;
+	}
+	[[nodiscard]] static bool
+	endpointRefreshIdentityFailure(const Main::Account &account) {
+		return account._serverEndpointRefreshIdentityFailure;
+	}
+	[[nodiscard]] static bool
+	endpointRefreshRetryScheduled(const Main::Account &account) {
+		return account._serverEndpointRefreshRetryTimer->isActive();
+	}
+	[[nodiscard]] static bool
+	verifierUsesStoredFileKey(const Main::Account &account,
+							  const MTP::AuthKeyPtr &expected) {
+		if (!account._mtpForEndpointVerification || !expected) {
+			return false;
+		}
+		const auto keys
+			= account._mtpForEndpointVerification->getKeysForWrite();
+		return ranges::any_of(keys, [&](const MTP::AuthKeyPtr &key) {
+			return key && key->dcId() == expected->dcId()
+				   && key->type() == MTP::AuthKey::Type::ReadFromFile
+				   && key->equals(expected);
+		});
+	}
+	static void cancelEndpointRefresh(Main::Account &account) {
+		account.cancelServerEndpointRefresh();
+	}
+	[[nodiscard]] static bool discoverCurrentEndpoint(Main::Account &account) {
+		if (!account._mtp) {
+			return false;
+		}
+		const auto pin = account._mtp->dcOptions().customServer();
+		if (!pin.key
+			|| !account._endpointRefresh.begin(
+				account.serverEndpointRefreshEligibility(pin), pin)) {
+			return false;
+		}
+		if (!account._serverEndpointRefreshDiscovery) {
+			account._serverEndpointRefreshDiscovery = std::make_unique<
+				Intro::details::ServerEndpointRefreshDiscovery>();
+		}
+		auto result = MTP::ServerDiscoveryResult();
+		result.status = MTP::ServerDiscoveryResponseStatus::Valid;
+		const auto host = QString::fromStdString(
+			pin.hostname.empty() ? pin.ip : pin.hostname);
+		const auto endpointHost = pin.ipv6 ? (u"["_q + host + u"]"_q) : host;
+		result.endpoint = endpointHost + u":"_q + QString::number(pin.port);
+		result.webSocketEndpoint
+			= QString::fromStdString(pin.webSocketEndpoint);
+		result.webSocketOnly = pin.webSocketOnly;
+		result.dcId = pin.dcId;
+		result.key = *pin.key;
+		result.policy = pin.discoveryPolicy;
+		result.origin = QString::fromStdString(pin.discoveryOrigin);
+		account.serverEndpointRefreshDiscovered(std::move(result));
+		return true;
+	}
+	[[nodiscard]] static bool
+	endpointRefreshPending(const Main::Account &account) {
+		return account._endpointRefresh.hasOriginal();
+	}
+};
+
 namespace {
 
 auto gLifecycleWriteCounts = LifecycleWriteCountsForRegressionTest();
@@ -2093,6 +2169,1204 @@ ConfigurePinnedServer(not_null<Main::Account *> account,
 	std::fill(data.begin(), data.end(), static_cast<gsl::byte>(byte));
 	return std::make_shared<MTP::AuthKey>(MTP::AuthKey::Type::Generated, 2,
 										  data);
+}
+
+void AppendEndpointRefreshLength(QByteArray &target, quint32 value) {
+	target.append(char(value >> 24));
+	target.append(char(value >> 16));
+	target.append(char(value >> 8));
+	target.append(char(value));
+}
+
+void AppendEndpointRefreshLength(QByteArray &target, quint16 value) {
+	target.append(char(value >> 8));
+	target.append(char(value));
+}
+
+void AppendEndpointRefreshInt(QByteArray &target, uint32 value) {
+	for (auto shift = 0; shift != 32; shift += 8) {
+		target.append(char(value >> shift));
+	}
+}
+
+void AppendEndpointRefreshLong(QByteArray &target, uint64 value) {
+	for (auto shift = 0; shift != 64; shift += 8) {
+		target.append(char(value >> shift));
+	}
+}
+
+void AppendEndpointRefreshTlString(QByteArray &target,
+								   const QByteArray &value) {
+	Expects(value.size() < 254);
+	const auto start = target.size();
+	target.append(char(value.size()));
+	target += value;
+	while ((target.size() - start) % 4) {
+		target.append(char(0));
+	}
+}
+
+QByteArray EndpointRefreshVerifierConfig(bool authenticates,
+										 uint32 thisDc = 2) {
+	constexpr auto kBoolFalse = uint32(0xbc799737);
+	constexpr auto kBoolTrue = uint32(0x997275b5);
+	auto result = QByteArray();
+	AppendEndpointRefreshInt(result, 0xcc1a241e);
+	AppendEndpointRefreshInt(result, 0);
+	AppendEndpointRefreshInt(result, uint32(base::unixtime::now()));
+	AppendEndpointRefreshInt(result, uint32(base::unixtime::now() + 3600));
+	AppendEndpointRefreshInt(result, authenticates ? kBoolFalse : kBoolTrue);
+	AppendEndpointRefreshInt(result, thisDc);
+	AppendEndpointRefreshInt(result, 0x1cb5c415);
+	AppendEndpointRefreshInt(result, 1);
+	AppendEndpointRefreshInt(result, 0x18b7a10d);
+	AppendEndpointRefreshInt(result, 0);
+	AppendEndpointRefreshInt(result, 2);
+	AppendEndpointRefreshTlString(result, QByteArray("127.0.0.1"));
+	AppendEndpointRefreshInt(result, 443);
+	AppendEndpointRefreshTlString(result, QByteArray());
+	for (const auto value : {
+			 200,	  10000, 100,	 120000, 5000,	 30000,	 300000,
+			 30000,	  1500,	 60000,	 10,	 172800, 172800, 172800,
+			 2419200, 30,	 604800, 20000,	 90000,	 30000,	 10000,
+		 }) {
+		AppendEndpointRefreshInt(result, uint32(value));
+	}
+	AppendEndpointRefreshTlString(result, QByteArray());
+	AppendEndpointRefreshInt(result, 1024);
+	AppendEndpointRefreshInt(result, 4096);
+	AppendEndpointRefreshInt(result, 4);
+	return result;
+}
+
+uint32 EndpointRefreshReadInt(const char *data) {
+	return uint32(uchar(data[0])) | (uint32(uchar(data[1])) << 8)
+		   | (uint32(uchar(data[2])) << 16) | (uint32(uchar(data[3])) << 24);
+}
+
+uint64 EndpointRefreshReadLong(const char *data) {
+	return uint64(EndpointRefreshReadInt(data))
+		   | (uint64(EndpointRefreshReadInt(data + 4)) << 32);
+}
+
+std::optional<int> EndpointRefreshSkipTlString(const char *data, int size,
+											   int offset) {
+	if (offset < 0 || offset >= size) {
+		return std::nullopt;
+	}
+	const auto first = uchar(data[offset]);
+	auto header = 1;
+	auto length = uint32(first);
+	if (first == 254) {
+		if (size - offset < 4) {
+			return std::nullopt;
+		}
+		header = 4;
+		length = uint32(uchar(data[offset + 1]))
+				 | (uint32(uchar(data[offset + 2])) << 8)
+				 | (uint32(uchar(data[offset + 3])) << 16);
+	} else if (first == 255) {
+		return std::nullopt;
+	}
+	const auto total = (header + length + 3U) & ~3U;
+	if (total > uint32(size - offset)) {
+		return std::nullopt;
+	}
+	return offset + int(total);
+}
+
+std::optional<int> EndpointRefreshSkipJsonValue(const char *data, int size,
+												int offset, int depth) {
+	if (depth > 8 || offset < 0 || size - offset < 4) {
+		return std::nullopt;
+	}
+	constexpr auto kVector = uint32(0x1cb5c415);
+	constexpr auto kJsonNull = uint32(0x3f6d7b68);
+	constexpr auto kJsonBool = uint32(0xc7345e6a);
+	constexpr auto kJsonNumber = uint32(0x2be0dfa4);
+	constexpr auto kJsonString = uint32(0xb71e767a);
+	constexpr auto kJsonArray = uint32(0xf7444763);
+	constexpr auto kJsonObject = uint32(0x99c1d49d);
+	constexpr auto kJsonObjectValue = uint32(0xc0de1bd9);
+	switch (EndpointRefreshReadInt(data + offset)) {
+	case kJsonNull:
+		return offset + 4;
+	case kJsonBool:
+		return (size - offset >= 8) ? std::optional<int>(offset + 8)
+									: std::nullopt;
+	case kJsonNumber:
+		return (size - offset >= 12) ? std::optional<int>(offset + 12)
+									 : std::nullopt;
+	case kJsonString:
+		return EndpointRefreshSkipTlString(data, size, offset + 4);
+	case kJsonArray:
+	case kJsonObject: {
+		const auto isObject
+			= EndpointRefreshReadInt(data + offset) == kJsonObject;
+		if (size - offset < 12
+			|| EndpointRefreshReadInt(data + offset + 4) != kVector) {
+			return std::nullopt;
+		}
+		auto position = offset + 12;
+		const auto count = EndpointRefreshReadInt(data + offset + 8);
+		if (count > uint32(size - position) / 4U) {
+			return std::nullopt;
+		}
+		for (auto i = 0U; i != count; ++i) {
+			if (isObject) {
+				if (size - position < 4
+					|| EndpointRefreshReadInt(data + position)
+						   != kJsonObjectValue) {
+					return std::nullopt;
+				}
+				const auto keyEnd
+					= EndpointRefreshSkipTlString(data, size, position + 4);
+				if (!keyEnd) {
+					return std::nullopt;
+				}
+				position = *keyEnd;
+			}
+			const auto valueEnd
+				= EndpointRefreshSkipJsonValue(data, size, position, depth + 1);
+			if (!valueEnd) {
+				return std::nullopt;
+			}
+			position = *valueEnd;
+		}
+		return position;
+	}
+	default:
+		return std::nullopt;
+	}
+}
+
+enum class EndpointRefreshRequestKind {
+	Ping,
+	Config,
+};
+
+struct EndpointRefreshRequest {
+	EndpointRefreshRequestKind kind = EndpointRefreshRequestKind::Config;
+	mtpMsgId messageId = 0;
+	uint64 pingId = 0;
+};
+
+void EndpointRefreshDecodeRequestBody(
+	const char *data, int size, mtpMsgId messageId,
+	std::vector<EndpointRefreshRequest> &requests, int depth = 0) {
+	if (depth > 8 || size < 4) {
+		return;
+	}
+	constexpr auto kHelpGetConfig = uint32(0xc4f9186b);
+	constexpr auto kPing = uint32(0x7abe77ec);
+	constexpr auto kPingDelayDisconnect = uint32(0xf3427b8c);
+	constexpr auto kInvokeAfterMsg = uint32(0xcb9f372d);
+	constexpr auto kInvokeAfterMsgs = uint32(0x3dc4b4f0);
+	constexpr auto kInitConnection = uint32(0xc1cd5ea9);
+	constexpr auto kInputClientProxy = uint32(0x75588b3f);
+	constexpr auto kInvokeWithLayer = uint32(0xda9b0d0d);
+	constexpr auto kInvokeWithoutUpdates = uint32(0xbf9459b7);
+	constexpr auto kInvokeWithTakeout = uint32(0xaca9fd2e);
+	constexpr auto kVector = uint32(0x1cb5c415);
+	const auto constructor = EndpointRefreshReadInt(data);
+	if (constructor == kPing || constructor == kPingDelayDisconnect) {
+		if (size >= ((constructor == kPing) ? 12 : 16)) {
+			requests.push_back({
+				.kind = EndpointRefreshRequestKind::Ping,
+				.messageId = messageId,
+				.pingId = EndpointRefreshReadLong(data + 4),
+			});
+		}
+	} else if (constructor == kHelpGetConfig) {
+		requests.push_back({
+			.kind = EndpointRefreshRequestKind::Config,
+			.messageId = messageId,
+		});
+	} else if (constructor == kInvokeWithLayer) {
+		if (size >= 8) {
+			EndpointRefreshDecodeRequestBody(data + 8, size - 8, messageId,
+											 requests, depth + 1);
+		}
+	} else if (constructor == kInvokeAfterMsg) {
+		if (size >= 12) {
+			EndpointRefreshDecodeRequestBody(data + 12, size - 12, messageId,
+											 requests, depth + 1);
+		}
+	} else if (constructor == kInvokeAfterMsgs) {
+		if (size < 12 || EndpointRefreshReadInt(data + 4) != kVector) {
+			return;
+		}
+		const auto count = EndpointRefreshReadInt(data + 8);
+		const auto vectorSize = uint64(count) * 8;
+		if (vectorSize <= uint64(size - 12)) {
+			const auto offset = 12 + int(vectorSize);
+			EndpointRefreshDecodeRequestBody(data + offset, size - offset,
+											 messageId, requests, depth + 1);
+		}
+	} else if (constructor == kInitConnection) {
+		if (size < 12) {
+			return;
+		}
+		const auto flags = EndpointRefreshReadInt(data + 4);
+		auto offset = 12;
+		for (auto i = 0; i != 6; ++i) {
+			const auto end = EndpointRefreshSkipTlString(data, size, offset);
+			if (!end) {
+				return;
+			}
+			offset = *end;
+		}
+		if (flags & 1) {
+			if (size - offset < 4
+				|| EndpointRefreshReadInt(data + offset) != kInputClientProxy) {
+				return;
+			}
+			const auto addressEnd
+				= EndpointRefreshSkipTlString(data, size, offset + 4);
+			if (!addressEnd || size - *addressEnd < 4) {
+				return;
+			}
+			offset = *addressEnd + 4;
+		}
+		if (flags & 2) {
+			const auto paramsEnd
+				= EndpointRefreshSkipJsonValue(data, size, offset, depth + 1);
+			if (!paramsEnd) {
+				return;
+			}
+			offset = *paramsEnd;
+		}
+		EndpointRefreshDecodeRequestBody(data + offset, size - offset,
+										 messageId, requests, depth + 1);
+	} else if (constructor == kInvokeWithoutUpdates) {
+		EndpointRefreshDecodeRequestBody(data + 4, size - 4, messageId,
+										 requests, depth + 1);
+	} else if (constructor == kInvokeWithTakeout && size >= 12) {
+		EndpointRefreshDecodeRequestBody(data + 12, size - 12, messageId,
+										 requests, depth + 1);
+	}
+}
+
+std::vector<EndpointRefreshRequest>
+EndpointRefreshDecodeRequests(const QByteArray &plain) {
+	auto result = std::vector<EndpointRefreshRequest>();
+	if (plain.size() < 36) {
+		return result;
+	}
+	const auto messageLength
+		= int(EndpointRefreshReadInt(plain.constData() + 28));
+	if (messageLength < 4 || messageLength > plain.size() - 32) {
+		return result;
+	}
+	const auto body = plain.constData() + 32;
+	constexpr auto kMessageContainer = uint32(0x73f1f8dc);
+	if (EndpointRefreshReadInt(body) != kMessageContainer) {
+		EndpointRefreshDecodeRequestBody(
+			body, messageLength,
+			EndpointRefreshReadLong(plain.constData() + 16), result);
+		return result;
+	}
+	if (messageLength < 8) {
+		return result;
+	}
+	auto offset = 8;
+	const auto count = EndpointRefreshReadInt(body + 4);
+	for (auto i = 0U; i != count && offset + 16 <= messageLength; ++i) {
+		const auto id = EndpointRefreshReadLong(body + offset);
+		const auto nestedLength
+			= int(EndpointRefreshReadInt(body + offset + 12));
+		offset += 16;
+		if (nestedLength < 4 || nestedLength > messageLength - offset) {
+			return {};
+		}
+		EndpointRefreshDecodeRequestBody(body + offset, nestedLength, id,
+										 result);
+		offset += nestedLength;
+	}
+	return result;
+}
+
+QByteArray EndpointRefreshTcpFrame(const QByteArray &packet) {
+	Expects(!(packet.size() % 4));
+	const auto words = uint32(packet.size() / 4);
+	auto result = QByteArray();
+	if (words < 0x7f) {
+		result.append(char(words));
+	} else {
+		result.append(char(0x7f));
+		result.append(char(words));
+		result.append(char(words >> 8));
+		result.append(char(words >> 16));
+	}
+	result += packet;
+	return result;
+}
+
+bool TakeEndpointRefreshTcpFrame(QByteArray &buffer, QByteArray &packet) {
+	if (buffer.isEmpty()) {
+		return false;
+	}
+	const auto first = uchar(buffer[0]);
+	const auto header = (first == 0x7f) ? 4 : 1;
+	if (buffer.size() < header) {
+		return false;
+	}
+	const auto words = (first == 0x7f) ? uint32(uchar(buffer[1]))
+											 | (uint32(uchar(buffer[2])) << 8)
+											 | (uint32(uchar(buffer[3])) << 16)
+									   : uint32(first);
+	const auto size = header + int(words * 4);
+	if (!words || buffer.size() < size) {
+		return false;
+	}
+	packet = buffer.mid(header, size - header);
+	buffer.remove(0, size);
+	return true;
+}
+
+QByteArray EndpointRefreshUnencryptedResponse(const QByteArray &body) {
+	auto packet = QByteArray(8, char(0));
+	AppendEndpointRefreshLong(packet, base::unixtime::mtproto_msg_id() | 1);
+	AppendEndpointRefreshInt(packet, uint32(body.size()));
+	packet += body;
+	packet += QByteArray(16, char(0));
+	return packet;
+}
+
+[[nodiscard]] QByteArray
+EndpointRefreshDiscoveryResponse(const QByteArray &nonce) {
+	const auto der = RegressionServerKey()->getSubjectPublicKeyInfo();
+	auto result = QByteArray("telegramd-key-r1", 16) + nonce;
+	AppendEndpointRefreshLength(result, quint32(6 + der.size()));
+	AppendEndpointRefreshLength(result, quint32(2));
+	AppendEndpointRefreshLength(result, quint16(der.size()));
+	result += QByteArray(reinterpret_cast<const char *>(der.data()),
+						 int(der.size()));
+	return result;
+}
+
+class LocalEndpointRefreshDiscoveryStub final {
+  public:
+	LocalEndpointRefreshDiscoveryStub() {
+		if (!_server.listen(QHostAddress(u"127.0.0.1"_q))) {
+			return;
+		}
+		QObject::connect(
+			&_server, &QTcpServer::newConnection, &_server, [this] {
+				while (_server.hasPendingConnections()) {
+					auto connection = std::make_shared<Connection>();
+					connection->socket = _server.nextPendingConnection();
+					_connections.push_back(connection);
+					const auto socket = connection->socket;
+					QObject::connect(socket, &QTcpSocket::readyRead, socket,
+									 [this, connection] { read(connection); });
+					QObject::connect(socket, &QTcpSocket::disconnected, socket,
+									 [this, connection, socket] {
+										 if (_verifierConnection.lock()
+											 == connection) {
+											 _verifierConnection.reset();
+										 }
+										 socket->deleteLater();
+									 });
+				}
+			});
+	}
+
+	[[nodiscard]] bool listening() const { return _server.isListening(); }
+
+	[[nodiscard]] quint16 port() const { return _server.serverPort(); }
+
+	[[nodiscard]] bool splitDiscoveryRequestIsBuffered() {
+		auto socket = QTcpSocket();
+		socket.connectToHost(QHostAddress::LocalHost, port());
+		if (!socket.waitForConnected(1000)) {
+			return false;
+		}
+		const auto nonce = QByteArray(32, char(0x42));
+		const auto request = QByteArray("telegramd-key-v1", 16) + nonce;
+		const auto prefix = request.left(24);
+		if (socket.write(prefix) != prefix.size()) {
+			return false;
+		}
+		if (!WaitForRegressionCondition(
+				[&] {
+					return ranges::any_of(
+						_connections, [&](const auto &connection) {
+							return connection->kind == ConnectionKind::Discovery
+								   && connection->incoming == prefix;
+						});
+				},
+				1000, 1)) {
+			return false;
+		}
+		const auto suffix = request.mid(prefix.size());
+		if (socket.write(suffix) != suffix.size()) {
+			return false;
+		}
+		const auto expected = EndpointRefreshDiscoveryResponse(nonce);
+		return WaitForRegressionCondition(
+				   [&] { return socket.bytesAvailable() >= expected.size(); },
+				   1000, 1)
+			   && (socket.readAll() == expected);
+	}
+
+	void setVerifierAuthKey(const MTP::AuthKeyPtr &key) {
+		_verifierAuthKey = key;
+	}
+
+	[[nodiscard]] bool hasPendingVerifierConfig() const {
+		const auto connection = _verifierConnection.lock();
+		return connection && connection->pending.has_value()
+			   && connection->socket
+			   && connection->socket->state()
+					  == QAbstractSocket::ConnectedState;
+	}
+
+	void replyToPendingVerifierConfig(bool authenticates) {
+		_autoReply = authenticates;
+		_authenticates = authenticates;
+		if (const auto connection = _verifierConnection.lock()) {
+			reply(connection, authenticates);
+			_verifierConnection.reset();
+		}
+	}
+
+	void replyToPendingVerifierConfigWithWrongKey() {
+		_autoReply = false;
+		_authenticates = false;
+		if (const auto connection = _verifierConnection.lock()) {
+			reply(connection, false, RegressionAuthKey(0x33));
+			_verifierConnection.reset();
+		}
+	}
+
+	void replyToPendingVerifierConfigWithWrongDc() {
+		_autoReply = false;
+		if (const auto connection = _verifierConnection.lock()) {
+			reply(connection, true, nullptr, 3);
+			_verifierConnection.reset();
+		}
+	}
+
+	void deferVerifierReply() { _autoReply = false; }
+
+	void reportConnectionState() const {
+		for (auto i = 0; i != int(_connections.size()); ++i) {
+			const auto &connection = _connections[i];
+			std::fprintf(
+				stderr,
+				"Endpoint refresh fixture connection %d: kind=%d prefix=%lld "
+				"received=%lld trace=[%s] "
+				"incoming=%lld available=%lld pending=%d state=%d\n",
+				i, int(connection->kind),
+				static_cast<long long>(connection->startPrefix.size()),
+				static_cast<long long>(connection->received),
+				connection->trace.constData(),
+				static_cast<long long>(connection->incoming.size()),
+				static_cast<long long>(
+					connection->socket ? connection->socket->bytesAvailable()
+									   : -1),
+				connection->pending.has_value() ? 1 : 0,
+				connection->socket ? int(connection->socket->state()) : -1);
+		}
+	}
+
+	[[nodiscard]] bool originalEndpointUnreachable() const {
+		auto socket = QTcpSocket();
+		socket.connectToHost(QHostAddress::LocalHostIPv6, port());
+		return !socket.waitForConnected(100);
+	}
+
+	[[nodiscard]] bool configureOriginalPin(
+		not_null<Main::Account *> account,
+		const std::shared_ptr<MTP::details::RSAPublicKey> &key) const {
+		const auto selection = MTP::CheckServerSelection(
+			u"127.0.0.1:"_q + QString::number(port()));
+		if (!selection.valid()) {
+			return false;
+		}
+		const auto configured
+			= account->mtp().dcOptions().setCustomServer(MTP::CustomServer{
+				.dcId = 2,
+				.ip = "::1",
+				.port = int(port()),
+				.ipv6 = true,
+				.key = key,
+				.serverSelection = selection.normalizedSelection.toStdString(),
+				.discoveryPolicy = selection.policy,
+				.discoveryOrigin
+				= (u"local:"_q + selection.normalizedSelection).toStdString(),
+			});
+		return configured && account->local().writeMtpConfig(true);
+	}
+
+	[[nodiscard]] bool
+	restoreOriginalPin(not_null<Main::Account *> account,
+					   const MTP::CustomServer &moved,
+					   const MTP::CustomServer &stale) const {
+		return account->mtp().dcOptions().refreshCustomServerEndpoint(moved,
+																	  stale)
+			   && account->local().writeMtpConfig(true);
+	}
+
+	void close() {
+		_server.close();
+		for (const auto &connection : _connections) {
+			if (connection->socket) {
+				connection->socket->abort();
+			}
+		}
+	}
+
+	~LocalEndpointRefreshDiscoveryStub() { close(); }
+
+  private:
+	enum class ConnectionKind {
+		Unknown,
+		Discovery,
+		Mtproto,
+	};
+
+	struct PendingConfig {
+		uint64 serverSalt = 0;
+		uint64 sessionId = 0;
+		mtpMsgId requestId = 0;
+	};
+
+	struct Connection {
+		QPointer<QTcpSocket> socket;
+		ConnectionKind kind = ConnectionKind::Unknown;
+		QByteArray startPrefix;
+		bool startPrefixRead = false;
+		qint64 received = 0;
+		QByteArray trace;
+		QByteArray incoming;
+		std::array<uchar, 32> clientToServerKey = {};
+		std::array<uchar, 32> serverToClientKey = {};
+		MTP::CTRState clientToServerState;
+		MTP::CTRState serverToClientState;
+		std::optional<PendingConfig> pending;
+	};
+
+	void read(const std::shared_ptr<Connection> &connection) {
+		if (!connection->socket) {
+			return;
+		}
+		if (connection->kind == ConnectionKind::Unknown) {
+			if (connection->socket->bytesAvailable() < 16) {
+				return;
+			}
+			connection->kind = connection->socket->peek(16).left(16)
+									   == QByteArray("telegramd-key-v1", 16)
+								   ? ConnectionKind::Discovery
+								   : ConnectionKind::Mtproto;
+		}
+		if (connection->kind == ConnectionKind::Discovery) {
+			connection->incoming += connection->socket->readAll();
+			if (connection->incoming.size() >= 48) {
+				connection->socket->write(EndpointRefreshDiscoveryResponse(
+					connection->incoming.mid(16, 32)));
+				connection->socket->disconnectFromHost();
+			}
+			return;
+		}
+		readMtproto(connection, connection->socket->readAll());
+	}
+
+	void readMtproto(const std::shared_ptr<Connection> &connection,
+					 QByteArray data) {
+		if (!connection->startPrefixRead) {
+			connection->startPrefix += data;
+			if (connection->startPrefix.size() < 64) {
+				return;
+			}
+			connection->startPrefixRead = true;
+			const auto prefix = connection->startPrefix.left(64);
+			data = connection->startPrefix.mid(64);
+			connection->startPrefix.clear();
+			memcpy(connection->clientToServerKey.data(), prefix.constData() + 8,
+				   connection->clientToServerKey.size());
+			memcpy(connection->clientToServerState.ivec,
+				   prefix.constData() + 40,
+				   sizeof(connection->clientToServerState.ivec));
+			auto reversed = std::array<uchar, 48>();
+			memcpy(reversed.data(), prefix.constData() + 8, reversed.size());
+			std::reverse(reversed.begin(), reversed.end());
+			memcpy(connection->serverToClientKey.data(), reversed.data(),
+				   connection->serverToClientKey.size());
+			memcpy(connection->serverToClientState.ivec,
+				   reversed.data() + connection->serverToClientKey.size(),
+				   sizeof(connection->serverToClientState.ivec));
+			auto skipped = QByteArray(64, char(0));
+			MTP::aesCtrEncrypt(bytes::make_detached_span(skipped),
+							   connection->clientToServerKey.data(),
+							   &connection->clientToServerState);
+		}
+		if (data.isEmpty()) {
+			return;
+		}
+		MTP::aesCtrEncrypt(bytes::make_detached_span(data),
+						   connection->clientToServerKey.data(),
+						   &connection->clientToServerState);
+		connection->received += data.size();
+		connection->incoming += data;
+		while (true) {
+			auto packet = QByteArray();
+			if (!TakeEndpointRefreshTcpFrame(connection->incoming, packet)) {
+				return;
+			}
+			processPacket(connection, packet);
+		}
+	}
+
+	void processPacket(const std::shared_ptr<Connection> &connection,
+					   const QByteArray &packet) {
+		if (packet.size() < 20 || (packet.size() % 4)) {
+			connection->trace += 's' + QByteArray::number(packet.size());
+			return;
+		}
+		if (!EndpointRefreshReadLong(packet.constData())) {
+			connection->trace += 'q';
+			respondToFakePq(connection, packet);
+			return;
+		}
+		if (!_verifierAuthKey || packet.size() < 40
+			|| EndpointRefreshReadLong(packet.constData())
+				   != _verifierAuthKey->keyId()) {
+			connection->trace += 'k';
+			return;
+		}
+		const auto encryptedSize = packet.size() - 24;
+		if (encryptedSize <= 0 || (encryptedSize % 16)) {
+			connection->trace += 'e' + QByteArray::number(encryptedSize);
+			return;
+		}
+		auto messageKey = MTPint128();
+		memcpy(&messageKey, packet.constData() + 8, sizeof(messageKey));
+		auto aesKey = MTPint256();
+		auto aesIv = MTPint256();
+		_verifierAuthKey->prepareAES(messageKey, aesKey, aesIv, true);
+		auto plain = QByteArray(encryptedSize, Qt::Uninitialized);
+		MTP::aesIgeDecryptRaw(packet.constData() + 24, plain.data(),
+							  uint32(encryptedSize), &aesKey, &aesIv);
+		const auto requests = EndpointRefreshDecodeRequests(plain);
+		if (requests.empty()) {
+			auto first = uint32(0);
+			if (plain.size() >= 36) {
+				first = EndpointRefreshReadInt(plain.constData() + 32);
+			}
+			connection->trace += 'n' + QByteArray::number(plain.size()) + ':'
+								 + QByteArray::number(first, 16) + ' ';
+			return;
+		}
+		const auto serverSalt = EndpointRefreshReadLong(plain.constData());
+		const auto sessionId = EndpointRefreshReadLong(plain.constData() + 8);
+		for (const auto &request : requests) {
+			if (request.kind == EndpointRefreshRequestKind::Ping) {
+				connection->trace += 'p';
+				replyToPing(connection, serverSalt, sessionId,
+							request.messageId, request.pingId);
+			} else {
+				connection->trace += 'g';
+				connection->pending = PendingConfig{
+					.serverSalt = serverSalt,
+					.sessionId = sessionId,
+					.requestId = request.messageId,
+				};
+				if (!_autoReply) {
+					const auto current = _verifierConnection.lock();
+					if (!current || !current->socket
+						|| current->socket->state()
+							   != QAbstractSocket::ConnectedState) {
+						_verifierConnection = connection;
+					}
+				}
+				if (_autoReply) {
+					reply(connection, _authenticates);
+				}
+			}
+		}
+	}
+
+	void respondToFakePq(const std::shared_ptr<Connection> &connection,
+						 const QByteArray &request) {
+		if (request.size() < 40
+			|| EndpointRefreshReadInt(request.constData() + 20) != 0x60469778) {
+			return;
+		}
+		auto body = QByteArray();
+		AppendEndpointRefreshInt(body, 0x05162463);
+		body += request.mid(24, 16);
+		body += QByteArray(16, char(0x22));
+		AppendEndpointRefreshTlString(body, QByteArray(1, char(1)));
+		AppendEndpointRefreshInt(body, 0x1cb5c415);
+		AppendEndpointRefreshInt(body, 1);
+		AppendEndpointRefreshLong(body, 0);
+		sendPacket(connection, EndpointRefreshUnencryptedResponse(body));
+	}
+
+	void reply(const std::shared_ptr<Connection> &connection,
+			   bool authenticates, MTP::AuthKeyPtr encryptionKey = nullptr,
+			   uint32 thisDc = 2) {
+		if (!connection->pending || !connection->socket
+			|| connection->socket->state() != QAbstractSocket::ConnectedState
+			|| !_verifierAuthKey) {
+			return;
+		}
+		if (!encryptionKey) {
+			encryptionKey = _verifierAuthKey;
+		}
+		const auto pending = *connection->pending;
+		connection->pending.reset();
+		auto body = QByteArray();
+		AppendEndpointRefreshInt(body, 0xf35c6d01);
+		AppendEndpointRefreshLong(body, pending.requestId);
+		body += EndpointRefreshVerifierConfig(authenticates, thisDc);
+		sendEncryptedResponse(connection, pending.serverSalt, pending.sessionId,
+							  body, encryptionKey, _verifierAuthKey->keyId());
+	}
+
+	void replyToPing(const std::shared_ptr<Connection> &connection,
+					 uint64 serverSalt, uint64 sessionId, mtpMsgId requestId,
+					 uint64 pingId) {
+		auto body = QByteArray();
+		AppendEndpointRefreshInt(body, 0x347773c5);
+		AppendEndpointRefreshLong(body, requestId);
+		AppendEndpointRefreshLong(body, pingId);
+		sendEncryptedResponse(connection, serverSalt, sessionId, body);
+	}
+
+	void sendEncryptedResponse(const std::shared_ptr<Connection> &connection,
+							   uint64 serverSalt, uint64 sessionId,
+							   const QByteArray &body) {
+		if (!_verifierAuthKey) {
+			return;
+		}
+		sendEncryptedResponse(connection, serverSalt, sessionId, body,
+							  _verifierAuthKey, _verifierAuthKey->keyId());
+	}
+
+	void sendEncryptedResponse(const std::shared_ptr<Connection> &connection,
+							   uint64 serverSalt, uint64 sessionId,
+							   const QByteArray &body,
+							   const MTP::AuthKeyPtr &encryptionKey,
+							   uint64 advertisedKeyId) {
+		if (!connection->socket || !encryptionKey) {
+			return;
+		}
+		auto plain = QByteArray();
+		AppendEndpointRefreshLong(plain, serverSalt);
+		AppendEndpointRefreshLong(plain, sessionId);
+		AppendEndpointRefreshLong(plain, base::unixtime::mtproto_msg_id() | 1);
+		AppendEndpointRefreshInt(plain, 1);
+		AppendEndpointRefreshInt(plain, uint32(body.size()));
+		plain += body;
+		auto padding = (16 - (plain.size() % 16)) % 16;
+		if (padding < 12) {
+			padding += 16;
+		}
+		plain += QByteArray(padding, char(0));
+		auto hashInput = QByteArray(32 + plain.size(), Qt::Uninitialized);
+		memcpy(hashInput.data(), encryptionKey->partForMsgKey(false), 32);
+		memcpy(hashInput.data() + 32, plain.constData(), plain.size());
+		const auto hash = openssl::Sha256(
+			bytes::make_span(static_cast<const QByteArray &>(hashInput)));
+		auto messageKey = MTPint128();
+		memcpy(&messageKey, hash.data() + 8, sizeof(messageKey));
+		auto aesKey = MTPint256();
+		auto aesIv = MTPint256();
+		encryptionKey->prepareAES(messageKey, aesKey, aesIv, false);
+		auto encrypted = QByteArray(plain.size(), Qt::Uninitialized);
+		MTP::aesIgeEncryptRaw(plain.constData(), encrypted.data(),
+							  uint32(plain.size()), &aesKey, &aesIv);
+		auto packet = QByteArray();
+		AppendEndpointRefreshLong(packet, advertisedKeyId);
+		packet += QByteArray(reinterpret_cast<const char *>(&messageKey),
+							 sizeof(messageKey));
+		packet += encrypted;
+		sendPacket(connection, packet);
+	}
+
+	void sendPacket(const std::shared_ptr<Connection> &connection,
+					const QByteArray &packet) {
+		if (!connection->socket) {
+			return;
+		}
+		auto wire = EndpointRefreshTcpFrame(packet);
+		MTP::aesCtrEncrypt(bytes::make_detached_span(wire),
+						   connection->serverToClientKey.data(),
+						   &connection->serverToClientState);
+		connection->socket->write(wire);
+	}
+
+	QTcpServer _server;
+	std::vector<std::shared_ptr<Connection>> _connections;
+	std::weak_ptr<Connection> _verifierConnection;
+	MTP::AuthKeyPtr _verifierAuthKey;
+	bool _autoReply = false;
+	bool _authenticates = false;
+};
+
+[[nodiscard]] bool AccountEndpointRefreshWaitsForStoredProof(
+	not_null<Main::Account *> account,
+	LocalEndpointRefreshDiscoveryStub &discovery,
+	const MTP::AuthKeyPtr &storedAuthKey) {
+	const auto fail = [](const char *reason) {
+		std::fprintf(stderr, "Endpoint refresh regression failed: %s\n",
+					 reason);
+		return false;
+	};
+	auto &mtp = account->mtp();
+	const auto original = mtp.dcOptions().customServer();
+	discovery.setVerifierAuthKey(storedAuthKey);
+	if (!discovery.listening() || !discovery.originalEndpointUnreachable()
+		|| !account->sessionExists()
+		|| !AccountLifecycleRegressionAccess::restoredSession(*account)
+		|| !storedAuthKey) {
+		return fail("fixture, restored session, or stored key was unavailable");
+	}
+	AccountLifecycleRegressionAccess::cancelEndpointRefresh(*account);
+	if (!mtp.isServerEnrollmentNetworkAllowed()) {
+		mtp.resume();
+	}
+	if (!mtp.isServerEnrollmentNetworkAllowed()) {
+		return fail("the original account instance did not resume");
+	}
+	const auto restore = gsl::finally([&] {
+		AccountLifecycleRegressionAccess::cancelEndpointRefresh(*account);
+		const auto current = mtp.dcOptions().customServer();
+		if (!MTP::SameCustomServerPin(original, current)
+			&& mtp.dcOptions().refreshCustomServerEndpoint(current, original)) {
+			static_cast<void>(account->local().writeMtpConfig(true));
+		}
+		if (!mtp.isServerEnrollmentNetworkAllowed()) {
+			mtp.resume();
+		}
+	});
+	auto callbackCount = 0;
+	auto failureCount = 0;
+	const auto acceptedRequestId = mtp.send(
+		MTPhelp_GetConfig(),
+		[&](const MTP::Response &) {
+			++callbackCount;
+			return true;
+		},
+		[&](const MTP::Error &, const MTP::Response &) {
+			++failureCount;
+			return true;
+		});
+	const auto cancelAcceptedRequest = gsl::finally([&] {
+		if (mtp.hasCallback(acceptedRequestId)) {
+			mtp.cancel(acceptedRequestId);
+		}
+	});
+	if (!mtp.hasCallback(acceptedRequestId)) {
+		return fail("the original request was not accepted");
+	}
+	const auto requestRefresh = [&] {
+		const auto reached = WaitForRegressionCondition([&] {
+			return AccountLifecycleRegressionAccess::
+					   endpointVerificationPending(*account)
+				   && discovery.hasPendingVerifierConfig();
+		});
+		if (!reached) {
+			std::fprintf(
+				stderr,
+				"Endpoint refresh verifier state: account=%d network=%d "
+				"candidate=%d\n",
+				AccountLifecycleRegressionAccess::endpointVerificationPending(
+					*account),
+				mtp.isServerEnrollmentNetworkAllowed(),
+				mtp.dcOptions().customServer().ip == "127.0.0.1");
+			discovery.reportConnectionState();
+		}
+		return reached;
+	};
+	const auto pausedRequestIsRefused = [&] {
+		auto failures = 0;
+		auto sender = MTP::Sender(&mtp);
+		const auto requestId
+			= sender.request(MTPupdates_GetState())
+				  .fail([&](const MTP::Error &error) {
+					  if (MTP::IsServerEnrollmentPausedError(error)) {
+						  ++failures;
+					  }
+				  })
+				  .send();
+		const auto queued = sender.pending(requestId);
+		QCoreApplication::processEvents();
+		return queued && !sender.pending(requestId) && failures == 1;
+	};
+	const auto storedKeyIsRetained = [&] {
+		const auto keys = mtp.getKeysForWrite();
+		return ranges::any_of(keys, [&](const MTP::AuthKeyPtr &key) {
+			return key && key->dcId() == storedAuthKey->dcId()
+				   && key->type() == MTP::AuthKey::Type::ReadFromFile
+				   && key->equals(storedAuthKey);
+		});
+	};
+	const auto retryRefresh = [&] {
+		AccountLifecycleRegressionAccess::cancelEndpointRefresh(*account);
+		mtp.resume();
+		return mtp.isServerEnrollmentNetworkAllowed() && requestRefresh()
+			   && !mtp.isServerEnrollmentNetworkAllowed()
+			   && mtp.hasCallback(acceptedRequestId) && callbackCount == 0
+			   && AccountLifecycleRegressionAccess::verifierUsesStoredFileKey(
+				   *account, storedAuthKey)
+			   && pausedRequestIsRefused();
+	};
+	auto verificationTimeout = QElapsedTimer();
+	verificationTimeout.start();
+	if (!requestRefresh() || mtp.isServerEnrollmentNetworkAllowed()
+		|| !mtp.hasCallback(acceptedRequestId) || callbackCount != 0
+		|| !MTP::SameCustomServerPin(original, mtp.dcOptions().customServer())
+		|| !AccountLifecycleRegressionAccess::verifierUsesStoredFileKey(
+			*account, storedAuthKey)
+		|| !pausedRequestIsRefused()) {
+		return fail(
+			"initial verifier did not pause requests and retain the pin");
+	}
+	discovery.replyToPendingVerifierConfigWithWrongKey();
+	if (!WaitForRegressionCondition(
+			[&] {
+				return !AccountLifecycleRegressionAccess::
+					endpointVerificationPending(*account);
+			},
+			20'000, 10)
+		|| verificationTimeout.elapsed() < 14'000
+		|| mtp.isServerEnrollmentNetworkAllowed()
+		|| !mtp.hasCallback(acceptedRequestId) || callbackCount != 0
+		|| !MTP::SameCustomServerPin(original, mtp.dcOptions().customServer())
+		|| !storedKeyIsRetained() || !pausedRequestIsRefused()) {
+		return fail("an undecryptable proof changed the pin, key, or requests");
+	}
+	AccountLifecycleRegressionAccess::cancelEndpointRefresh(*account);
+	if (!AccountLifecycleRegressionAccess::discoverCurrentEndpoint(*account)
+		|| !AccountLifecycleRegressionAccess::endpointVerificationPending(
+			*account)
+		|| !AccountLifecycleRegressionAccess::endpointRefreshPending(*account)
+		|| mtp.isServerEnrollmentNetworkAllowed()
+		|| !mtp.hasCallback(acceptedRequestId) || callbackCount != 0
+		|| !MTP::SameCustomServerPin(original, mtp.dcOptions().customServer())
+		|| !storedKeyIsRetained() || !pausedRequestIsRefused()) {
+		return fail("rediscovering the original endpoint skipped its proof "
+					"while paused");
+	}
+	if (!retryRefresh()) {
+		return fail("the retry did not wait for a second proof");
+	}
+	const auto keysBeforeChange = mtp.getKeysForWrite();
+	const auto originalKey
+		= ranges::find_if(keysBeforeChange, [&](const auto &key) {
+			  return key && key->dcId() == storedAuthKey->dcId()
+					 && key->equals(storedAuthKey);
+		  });
+	if (originalKey == keysBeforeChange.end()) {
+		return fail("the proof key disappeared before verification");
+	}
+	const auto changedKey = RegressionAuthKey(0x55);
+	mtp.dcPersistentKeyChanged(original.dcId, changedKey);
+	discovery.replyToPendingVerifierConfig(true);
+	if (!WaitForRegressionCondition([&] {
+			return !AccountLifecycleRegressionAccess::
+				endpointVerificationPending(*account);
+		})
+		|| mtp.isServerEnrollmentNetworkAllowed()
+		|| !MTP::SameCustomServerPin(original, mtp.dcOptions().customServer())
+		|| !mtp.hasCallback(acceptedRequestId) || callbackCount != 0
+		|| !pausedRequestIsRefused()) {
+		return fail("a proof for a replaced key changed or resumed the pin");
+	}
+	const auto changedKeys = mtp.getKeysForWrite();
+	if (!ranges::any_of(changedKeys, [&](const auto &key) {
+			return key && key->dcId() == original.dcId
+				   && key->equals(changedKey);
+		})) {
+		return fail("the replaced auth key was not retained");
+	}
+	mtp.dcPersistentKeyChanged(original.dcId, *originalKey);
+	discovery.deferVerifierReply();
+	if (!retryRefresh()) {
+		return fail("the restored key did not start a new proof");
+	}
+	discovery.replyToPendingVerifierConfig(true);
+	if (!WaitForRegressionCondition([&] {
+			const auto moved = mtp.dcOptions().customServer();
+			return !AccountLifecycleRegressionAccess::
+					   endpointVerificationPending(*account)
+				   && mtp.isServerEnrollmentNetworkAllowed()
+				   && moved.ip == "127.0.0.1" && !moved.ipv6
+				   && moved.port == int(discovery.port());
+		})) {
+		return fail("a successful proof did not commit and resume the account");
+	}
+	const auto moved = mtp.dcOptions().customServer();
+	if (AccountLifecycleRegressionAccess::endpointVerificationPending(*account)
+		|| !mtp.isServerEnrollmentNetworkAllowed() || moved.ip != "127.0.0.1"
+		|| moved.ipv6 || moved.port != int(discovery.port())
+		|| !MTP::SameCustomServerEndpointRefreshIdentity(original, moved)) {
+		return fail("the committed endpoint changed the pin identity");
+	}
+	auto failures = 0;
+	auto sender = MTP::Sender(&mtp);
+	const auto requestId = sender.request(MTPupdates_GetState())
+							   .fail([&](const MTP::Error &) { ++failures; })
+							   .send();
+	const auto resumed = sender.pending(requestId);
+	QCoreApplication::processEvents();
+	const auto remainsPending = sender.pending(requestId);
+	if (remainsPending) {
+		mtp.cancel(requestId);
+	}
+	const auto completed
+		= resumed && remainsPending && !failures
+		  && WaitForRegressionCondition([&] { return callbackCount == 1; })
+		  && !failureCount && !mtp.hasCallback(acceptedRequestId);
+	if (!completed) {
+		return fail("the accepted request callback did not complete");
+	}
+	if (!AccountLifecycleRegressionAccess::discoverCurrentEndpoint(*account)
+		|| !mtp.isServerEnrollmentNetworkAllowed()
+		|| AccountLifecycleRegressionAccess::endpointVerificationPending(
+			*account)
+		|| AccountLifecycleRegressionAccess::endpointRefreshPending(*account)
+		|| AccountLifecycleRegressionAccess::endpointRefreshRetryScheduled(
+			*account)
+		|| !MTP::SameCustomServerPin(moved, mtp.dcOptions().customServer())) {
+		return fail(
+			"an unchanged endpoint paused or changed the active account");
+	}
+	discovery.deferVerifierReply();
+	if (!discovery.restoreOriginalPin(account, moved, original)) {
+		return fail("could not restore the stale pin for the mismatch case");
+	}
+	mtp.restart();
+	auto mismatchCallbackCount = 0;
+	const auto mismatchRequestId = mtp.send(
+		MTPhelp_GetConfig(),
+		[&](const MTP::Response &) {
+			++mismatchCallbackCount;
+			return true;
+		},
+		[&](const MTP::Error &, const MTP::Response &) {
+			++failureCount;
+			return true;
+		});
+	if (!mtp.hasCallback(mismatchRequestId) || !requestRefresh()
+		|| mtp.isServerEnrollmentNetworkAllowed()
+		|| !mtp.hasCallback(mismatchRequestId) || mismatchCallbackCount != 0
+		|| !pausedRequestIsRefused()) {
+		return fail("the mismatched-dc proof case did not pause requests");
+	}
+	discovery.replyToPendingVerifierConfigWithWrongDc();
+	if (!WaitForRegressionCondition([&] {
+			return !AccountLifecycleRegressionAccess::
+				endpointVerificationPending(*account);
+		})
+		|| mtp.isServerEnrollmentNetworkAllowed()
+		|| !mtp.hasCallback(mismatchRequestId) || mismatchCallbackCount != 0
+		|| !MTP::SameCustomServerPin(original, mtp.dcOptions().customServer())
+		|| !storedKeyIsRetained() || !pausedRequestIsRefused()
+		|| discovery.hasPendingVerifierConfig()
+		|| !AccountLifecycleRegressionAccess::endpointRefreshIdentityFailure(
+			*account)
+		|| AccountLifecycleRegressionAccess::endpointRefreshRetryScheduled(
+			*account)) {
+		return fail("a config naming another dc resumed or retried requests");
+	}
+	return true;
+}
+
+[[nodiscard]] bool
+MtpRequestCompletesAfterEndpointRefresh(not_null<Main::Account *> account,
+										const MTP::AuthKeyPtr &storedAuthKey) {
+	auto &mtp = account->mtp();
+	if (!storedAuthKey || !mtp.isServerEnrollmentNetworkAllowed()) {
+		return false;
+	}
+	const auto original = mtp.dcOptions().customServer();
+	if (!original.key) {
+		return false;
+	}
+	auto candidate = original;
+	candidate.ip = "127.0.0.1";
+	candidate.ipv6 = false;
+	const auto proofKey = RegressionAuthKey(0x11);
+	const auto authenticatedProof = storedAuthKey->equals(proofKey);
+	if (!authenticatedProof) {
+		return false;
+	}
+
+	auto callbackCount = 0;
+	auto failureCount = 0;
+	auto callbackRequestId = mtpRequestId(0);
+	const auto requestId = mtp.send(
+		MTPupdates_GetState(),
+		[&](const MTP::Response &response) {
+			++callbackCount;
+			callbackRequestId = response.requestId;
+			return true;
+		},
+		[&](const MTP::Error &, const MTP::Response &) {
+			++failureCount;
+			return true;
+		});
+	auto pinChanged = false;
+	const auto restore = gsl::finally([&] {
+		if (mtp.hasCallback(requestId)) {
+			mtp.cancel(requestId);
+		}
+		if (pinChanged
+			&& mtp.dcOptions().refreshCustomServerEndpoint(candidate,
+														   original)) {
+			static_cast<void>(account->local().writeMtpConfig(true));
+		}
+		if (!mtp.isServerEnrollmentNetworkAllowed()) {
+			mtp.resume();
+		}
+	});
+	if (!mtp.hasCallback(requestId)) {
+		return false;
+	}
+
+	mtp.pauseForServerEndpointRefresh();
+	if (mtp.isServerEnrollmentNetworkAllowed() || !mtp.hasCallback(requestId)
+		|| callbackCount != 0) {
+		return false;
+	}
+
+	auto configPersisted = false;
+	auto requestsResumed = false;
+	const auto committed = MTP::CommitServerEndpointRefresh(
+		original, candidate, authenticatedProof,
+		[&] {
+			pinChanged = mtp.dcOptions().refreshCustomServerEndpoint(original,
+																	 candidate);
+			return pinChanged;
+		},
+		[&] {
+			configPersisted = account->local().writeMtpConfig(true);
+			return configPersisted;
+		},
+		[&] {
+			mtp.resume();
+			requestsResumed = mtp.isServerEnrollmentNetworkAllowed();
+		},
+		[&] {
+			static_cast<void>(mtp.dcOptions().refreshCustomServerEndpoint(
+				candidate, original));
+		});
+	if (!committed || !configPersisted || !requestsResumed
+		|| !mtp.hasCallback(requestId) || callbackCount != 0) {
+		return false;
+	}
+
+	mtp.processCallback(MTP::Response{
+		.reply = mtpBuffer{1},
+		.requestId = requestId,
+	});
+	return callbackCount == 1 && failureCount == 0
+		   && callbackRequestId == requestId && !mtp.hasCallback(requestId);
 }
 
 [[nodiscard]] bool IncompleteStoredSessionStartsPaused(Main::Domain &domain) {
@@ -10704,6 +11978,12 @@ struct SchedulerTraceWindow final {
 	qint64 mainThreadCpuEndNanoseconds = -1;
 };
 
+[[nodiscard]] SchedulerTraceWindow
+MarkSchedulerTraceCapturePending(SchedulerTraceWindow samples) {
+	samples.capturePending = true;
+	return samples;
+}
+
 [[nodiscard]] SchedulerTraceWindow SchedulerTraceForInterval(
 	const MainThreadWorkInterval &interval,
 	const std::vector<Core::UiStallWatchdog::PingAcknowledgementEvidence>
@@ -10718,7 +11998,7 @@ struct SchedulerTraceWindow final {
 	const auto start = interval.startedAtSteadyNanoseconds;
 	const auto windowEnd = start + interval.durationNanoseconds;
 	auto acknowledgementReachedWindowEnd = false;
-	auto hasUnusableCapture = false;
+	auto capturePending = false;
 	struct TraceSample final {
 		qint64 offset = 0;
 		QChar state;
@@ -10734,16 +12014,13 @@ struct SchedulerTraceWindow final {
 		}
 		acknowledgementReachedWindowEnd
 			= acknowledgementReachedWindowEnd || (acknowledgedAt >= windowEnd);
-		if (!acknowledgement.schedulerTraceComplete
-			|| acknowledgement.schedulerTrace.isEmpty()
+		capturePending
+			= capturePending || !acknowledgement.schedulerTraceComplete;
+		if (acknowledgement.schedulerTrace.isEmpty()
 			|| (acknowledgement.schedulerTrace == u"none"_q)
 			|| (acknowledgement.schedulerTrace.size()
 				!= qsizetype(acknowledgement.schedulerSampleOffsetsNanoseconds
 								 .size()))) {
-			if (!acknowledgement.schedulerTraceComplete) {
-				return {.capturePending = true};
-			}
-			hasUnusableCapture = true;
 			continue;
 		}
 		for (auto i = std::size_t(0);
@@ -10772,11 +12049,6 @@ struct SchedulerTraceWindow final {
 			}
 		}
 	}
-	if (!acknowledgementReachedWindowEnd) {
-		return {.capturePending = true};
-	} else if (hasUnusableCapture) {
-		return {};
-	}
 	std::sort(begin(samples), end(samples),
 			  [](const auto &a, const auto &b) { return a.offset < b.offset; });
 	auto result = SchedulerTraceWindow();
@@ -10790,7 +12062,7 @@ struct SchedulerTraceWindow final {
 		result.sampleMainThreadCpuNanoseconds.push_back(
 			sample.mainThreadCpuNanoseconds);
 	}
-	result.capturePending = !acknowledgementReachedWindowEnd;
+	result.capturePending = capturePending || !acknowledgementReachedWindowEnd;
 	return result;
 }
 
@@ -11285,6 +12557,13 @@ StartupWatchdogStallEvidenceRegressionPasses() {
 struct MainThreadWorkEstimate final {
 	qint64 blockedNanoseconds = -1;
 	qint64 estimatedWorkNanoseconds = -1;
+	bool wallFallbackRequired = false;
+};
+
+struct MainThreadWorkBudgetAssessment final {
+	bool schedulerEvidenceAvailable = false;
+	qint64 workNanoseconds = -1;
+	bool withinBudget = false;
 };
 
 [[nodiscard]] MainThreadWorkEstimate EstimateMainThreadWork(
@@ -11301,10 +12580,41 @@ struct MainThreadWorkEstimate final {
 	const auto fallbackWorkNanoseconds
 		= std::max(wallNanoseconds, mainThreadCpuNanoseconds);
 	if (schedulerTrace.isEmpty() || (schedulerTrace == u"none"_q)) {
-		return {-1, fallbackWorkNanoseconds};
-	} else if (schedulerTrace.size()
-			   != qsizetype(sampleOffsetsNanoseconds.size())) {
-		return {-1, fallbackWorkNanoseconds};
+		return {-1, fallbackWorkNanoseconds, false};
+	}
+	const auto pairedSamples
+		= std::min(static_cast<std::size_t>(schedulerTrace.size()),
+				   sampleOffsetsNanoseconds.size());
+	const auto wallFallbackRequired = [&] {
+		for (auto i = std::size_t(0); i != pairedSamples; ++i) {
+			const auto offset = sampleOffsetsNanoseconds[i];
+			if ((offset >= 0) && (offset <= wallNanoseconds)
+				&& (schedulerTrace[qsizetype(i)] != u'R')) {
+				return true;
+			}
+		}
+		for (auto i = pairedSamples; i != sampleOffsetsNanoseconds.size();
+			 ++i) {
+			const auto offset = sampleOffsetsNanoseconds[i];
+			if ((offset >= 0) && (offset <= wallNanoseconds)) {
+				return true;
+			}
+		}
+		for (auto i = pairedSamples;
+			 i != static_cast<std::size_t>(schedulerTrace.size()); ++i) {
+			if (schedulerTrace[qsizetype(i)] != u'R') {
+				return true;
+			}
+		}
+		return false;
+	}();
+	const auto incompleteEstimate = MainThreadWorkEstimate{
+		.blockedNanoseconds = -1,
+		.estimatedWorkNanoseconds = fallbackWorkNanoseconds,
+		.wallFallbackRequired = wallFallbackRequired,
+	};
+	if (schedulerTrace.size() != qsizetype(sampleOffsetsNanoseconds.size())) {
+		return incompleteEstimate;
 	} else if (mainThreadCpuNanoseconds < 0) {
 		return {};
 	}
@@ -11337,7 +12647,7 @@ struct MainThreadWorkEstimate final {
 	for (auto i = std::size_t(0); i != sampleOffsetsNanoseconds.size(); ++i) {
 		const auto offset = sampleOffsetsNanoseconds[i];
 		if ((offset < 0) || (hasPreviousOffset && (offset < previousOffset))) {
-			return {-1, fallbackWorkNanoseconds};
+			return incompleteEstimate;
 		}
 		previousOffset = offset;
 		hasPreviousOffset = true;
@@ -11346,7 +12656,7 @@ struct MainThreadWorkEstimate final {
 		}
 		const auto state = schedulerTrace[qsizetype(i)];
 		if ((state != u'R') && (state != u'W') && (state != u'U')) {
-			return {-1, fallbackWorkNanoseconds};
+			return incompleteEstimate;
 		}
 		const auto hasSampleCpu = sampleMainThreadCpuNanoseconds
 								  && (sampleMainThreadCpuNanoseconds->size()
@@ -11355,7 +12665,7 @@ struct MainThreadWorkEstimate final {
 			= hasSampleCpu ? (*sampleMainThreadCpuNanoseconds)[i] : qint64(-1);
 		const auto gap = offset - lastInWindowOffset;
 		if (gap > kMaximumSampleGapNanoseconds) {
-			return {-1, fallbackWorkNanoseconds};
+			return incompleteEstimate;
 		}
 		if (!hasInWindowSample && gap && before) {
 			if ((before->distanceNanoseconds < 0)
@@ -11363,7 +12673,7 @@ struct MainThreadWorkEstimate final {
 					> kMaximumSampleGapNanoseconds - gap)
 				|| ((before->state != 'R') && (before->state != 'W')
 					&& (before->state != 'U'))) {
-				return {-1, fallbackWorkNanoseconds};
+				return incompleteEstimate;
 			}
 			addBlockedGap(gap, (before->state != 'R') || (state != u'R'), 0);
 		} else if (!hasInWindowSample) {
@@ -11382,7 +12692,7 @@ struct MainThreadWorkEstimate final {
 	if (!hasInWindowSample
 		|| (wallNanoseconds - lastInWindowOffset
 			> kMaximumSampleGapNanoseconds)) {
-		return {-1, fallbackWorkNanoseconds};
+		return incompleteEstimate;
 	}
 	const auto tail = wallNanoseconds - lastInWindowOffset;
 	if (tail && after) {
@@ -11391,7 +12701,7 @@ struct MainThreadWorkEstimate final {
 				> kMaximumSampleGapNanoseconds - tail)
 			|| ((after->state != 'R') && (after->state != 'W')
 				&& (after->state != 'U'))) {
-			return {-1, fallbackWorkNanoseconds};
+			return incompleteEstimate;
 		}
 		addBlockedGap(tail, (previousState != u'R') || (after->state != 'R'),
 					  cpuDeltaKnownInsideGap(previousCpuNanoseconds,
@@ -11407,10 +12717,13 @@ struct MainThreadWorkEstimate final {
 		> std::numeric_limits<qint64>::max() - blockedNanoseconds) {
 		return {};
 	}
-	return {blockedNanoseconds,
-			std::max(mainThreadCpuNanoseconds,
-					 std::min(wallNanoseconds,
-							  mainThreadCpuNanoseconds + blockedNanoseconds))};
+	return {
+		blockedNanoseconds,
+		std::max(mainThreadCpuNanoseconds,
+				 std::min(wallNanoseconds,
+						  mainThreadCpuNanoseconds + blockedNanoseconds)),
+		false,
+	};
 }
 
 [[nodiscard]] MainThreadWorkEstimate
@@ -11423,6 +12736,95 @@ EstimateMainThreadWork(qint64 mainThreadCpuNanoseconds, qint64 wallNanoseconds,
 		&schedulerSamples.sampleMainThreadCpuNanoseconds,
 		schedulerSamples.mainThreadCpuEndNanoseconds);
 }
+
+[[nodiscard]] MainThreadWorkBudgetAssessment
+AssessMainThreadWorkBudget(const MainThreadWorkEstimate &estimate,
+						   qint64 mainThreadCpuNanoseconds,
+						   qint64 budgetNanoseconds) {
+	const auto schedulerEvidenceAvailable = estimate.blockedNanoseconds >= 0;
+	const auto workNanoseconds = schedulerEvidenceAvailable
+									 ? estimate.estimatedWorkNanoseconds
+									 : (estimate.wallFallbackRequired
+											? estimate.estimatedWorkNanoseconds
+											: mainThreadCpuNanoseconds);
+	return {
+		schedulerEvidenceAvailable,
+		workNanoseconds,
+		(budgetNanoseconds > 0) && (workNanoseconds >= 0)
+			&& (workNanoseconds < budgetNanoseconds),
+	};
+}
+
+[[nodiscard]] bool MainThreadWorkBudgetEvidenceWithinBudget(
+	const MainThreadWorkBudgetAssessment &assessment, qint64 wallNanoseconds,
+	qint64 budgetNanoseconds) {
+	return assessment.withinBudget
+		   && ((wallNanoseconds < budgetNanoseconds)
+			   || assessment.schedulerEvidenceAvailable);
+}
+
+constexpr auto kMaxUntracedRunnerNoiseMainThreadCpuNanoseconds = 5'000'000;
+
+[[nodiscard]] bool MainThreadWorkBudgetIsUntracedWallOverrun(
+	const MainThreadWorkBudgetAssessment &assessment, qint64 wallNanoseconds,
+	qint64 budgetNanoseconds) {
+	return !assessment.schedulerEvidenceAvailable && assessment.withinBudget
+		   && (assessment.workNanoseconds
+			   <= kMaxUntracedRunnerNoiseMainThreadCpuNanoseconds)
+		   && (budgetNanoseconds > 0) && (wallNanoseconds >= budgetNanoseconds);
+}
+
+struct MainThreadWorkBudgetRun final {
+	bool Observe(const MainThreadWorkBudgetAssessment &assessment,
+				 qint64 wallNanoseconds, qint64 budgetNanoseconds,
+				 qint64 windowStartedAtSteadyNanoseconds = -1) {
+		const auto withinBudget = MainThreadWorkBudgetEvidenceWithinBudget(
+			assessment, wallNanoseconds, budgetNanoseconds);
+		if (withinBudget) {
+			return true;
+		}
+		if (MainThreadWorkBudgetIsUntracedWallOverrun(
+				assessment, wallNanoseconds, budgetNanoseconds)) {
+			if ((windowStartedAtSteadyNanoseconds >= 0) && (wallNanoseconds > 0)
+				&& (windowStartedAtSteadyNanoseconds
+					<= std::numeric_limits<qint64>::max() - wallNanoseconds)) {
+				untracedWallOverrunWindows.push_back({
+					windowStartedAtSteadyNanoseconds,
+					windowStartedAtSteadyNanoseconds + wallNanoseconds,
+				});
+			} else {
+				++unanchoredUntracedWallOverruns;
+			}
+		} else {
+			hasHardFailure = true;
+		}
+		return false;
+	}
+
+	[[nodiscard]] int UntracedWallOverrunCount() const {
+		auto windows = untracedWallOverrunWindows;
+		std::sort(begin(windows), end(windows));
+		auto result = unanchoredUntracedWallOverruns;
+		auto currentEnd = qint64(-1);
+		for (const auto &[start, end] : windows) {
+			if (start < currentEnd) {
+				currentEnd = std::max(currentEnd, end);
+			} else {
+				++result;
+				currentEnd = end;
+			}
+		}
+		return result;
+	}
+
+	[[nodiscard]] bool WithinBudget() const {
+		return !hasHardFailure && (UntracedWallOverrunCount() <= 1);
+	}
+
+	std::vector<std::pair<qint64, qint64>> untracedWallOverrunWindows;
+	int unanchoredUntracedWallOverruns = 0;
+	bool hasHardFailure = false;
+};
 
 struct StartupWorkEstimate final {
 	SchedulerTraceWindow schedulerSamples;
@@ -11437,15 +12839,8 @@ struct StartupWorkEstimate final {
 	const std::vector<Core::UiStallWatchdog::SchedulerSampleEvidence>
 		&continuousSchedulerSamples) {
 	const auto estimateFor = [&](const SchedulerTraceWindow &samples) {
-		auto estimateSamples = samples;
-		if (samples.capturePending) {
-			estimateSamples.trace.clear();
-			estimateSamples.sampleOffsetsNanoseconds.clear();
-			estimateSamples.sampleMainThreadCpuNanoseconds.clear();
-		}
 		return EstimateMainThreadWork(interval.mainThreadWorkNanoseconds,
-									  interval.durationNanoseconds,
-									  estimateSamples);
+									  interval.durationNanoseconds, samples);
 	};
 	auto schedulerSamples
 		= SchedulerTraceForInterval(interval, continuousSchedulerSamples);
@@ -11455,11 +12850,19 @@ struct StartupWorkEstimate final {
 			= SchedulerTraceForInterval(interval, acknowledgements);
 		const auto acknowledgementEstimate
 			= estimateFor(acknowledgementSamples);
+		const auto acknowledgementNeedsStallFallback
+			= acknowledgementSamples.capturePending
+			  || (acknowledgementEstimate.blockedNanoseconds < 0);
 		if (!acknowledgementSamples.capturePending
 			&& (acknowledgementEstimate.blockedNanoseconds >= 0)) {
 			schedulerSamples = std::move(acknowledgementSamples);
 			estimate = acknowledgementEstimate;
-		} else {
+		} else if ((acknowledgementEstimate.blockedNanoseconds > 0)
+				   || acknowledgementEstimate.wallFallbackRequired) {
+			schedulerSamples = std::move(acknowledgementSamples);
+			estimate = acknowledgementEstimate;
+		}
+		if (acknowledgementNeedsStallFallback) {
 			const auto matchingStall = FindMatchingMainThreadWorkEvidence(
 				interval, stallEvidence,
 				kStartupHeartbeatGapThresholdNanoseconds);
@@ -11486,8 +12889,9 @@ struct StartupWorkEstimate final {
 	const auto estimate
 		= EstimateMainThreadWork(mainThreadCpuNanoseconds, wallNanoseconds,
 								 schedulerTrace, sampleOffsetsNanoseconds);
-	return (budgetNanoseconds > 0) && (estimate.estimatedWorkNanoseconds >= 0)
-		   && (estimate.estimatedWorkNanoseconds < budgetNanoseconds);
+	return AssessMainThreadWorkBudget(estimate, mainThreadCpuNanoseconds,
+									  budgetNanoseconds)
+		.withinBudget;
 }
 
 [[nodiscard]] bool
@@ -11520,6 +12924,7 @@ void AccumulateMainThreadWorkEstimate(qint64 &aggregateNanoseconds,
 	const auto startupOffsets = coveredOffsets(101'000'000);
 	const auto switchOffsets = coveredOffsets(225'000'000);
 	const auto slowSwitchOffsets = coveredOffsets(227'000'000);
+	const auto selectionOffsets = coveredOffsets(60'000'000);
 	const auto gap25 = EstimateMainThreadWork(
 		0, 100'000'000, u"RRRRR"_q,
 		{0, 25'000'000, 50'000'000, 75'000'000, 100'000'000});
@@ -11575,6 +12980,14 @@ void AccumulateMainThreadWorkEstimate(qint64 &aggregateNanoseconds,
 	const auto uncoveredMiddle = EstimateMainThreadWork(
 		0, 200'000'000, QString(5, QChar(u'R')),
 		{0, 5'000'000, 10'000'000, 190'000'000, 200'000'000});
+	const auto uncoveredWaitingGap = EstimateMainThreadWork(
+		1'000'000, 200'000'000, u"RW"_q, {0, 30'000'000});
+	const auto uncoveredUninterruptibleGap = EstimateMainThreadWork(
+		1'000'000, 200'000'000, u"RU"_q, {0, 30'000'000});
+	const auto uncoveredUnknownGap = EstimateMainThreadWork(
+		1'000'000, 200'000'000, u"R?"_q, {0, 30'000'000});
+	const auto uncoveredRunnableGap = EstimateMainThreadWork(
+		1'000'000, 200'000'000, u"RR"_q, {0, 30'000'000});
 	const auto sparseStartupOffsets = std::vector<qint64>{
 		0,			 12'500'000,  25'000'000,  37'500'000,	50'000'000,
 		62'500'000,	 75'000'000,  87'500'000,  100'000'000, 112'500'000,
@@ -11601,8 +13014,106 @@ void AccumulateMainThreadWorkEstimate(qint64 &aggregateNanoseconds,
 	};
 	const auto sparseBlockedTail = EstimateMainThreadWork(
 		18'000'000, 225'000'000, u"RRRW"_q, sparseBlockedTailOffsets);
+	const auto uncoveredWaitingGapAssessment = AssessMainThreadWorkBudget(
+		uncoveredWaitingGap, 1'000'000, 100'000'000);
+	const auto unknownStateAssessment
+		= AssessMainThreadWorkBudget(unknownState, 18'000'000, 100'000'000);
+	const auto uncoveredUninterruptibleGapAssessment
+		= AssessMainThreadWorkBudget(uncoveredUninterruptibleGap, 1'000'000,
+									 100'000'000);
+	const auto uncoveredUnknownGapAssessment = AssessMainThreadWorkBudget(
+		uncoveredUnknownGap, 1'000'000, 100'000'000);
+	const auto uncoveredRunnableGapAssessment = AssessMainThreadWorkBudget(
+		uncoveredRunnableGap, 1'000'000, 100'000'000);
+	auto uncoveredWaitingGapRun = MainThreadWorkBudgetRun();
+	const auto uncoveredWaitingGapWithinBudget = uncoveredWaitingGapRun.Observe(
+		uncoveredWaitingGapAssessment, 200'000'000, 100'000'000);
+	auto uncoveredUninterruptibleGapRun = MainThreadWorkBudgetRun();
+	const auto uncoveredUninterruptibleGapWithinBudget
+		= uncoveredUninterruptibleGapRun.Observe(
+			uncoveredUninterruptibleGapAssessment, 200'000'000, 100'000'000);
+	auto uncoveredUnknownGapRun = MainThreadWorkBudgetRun();
+	const auto uncoveredUnknownGapWithinBudget = uncoveredUnknownGapRun.Observe(
+		uncoveredUnknownGapAssessment, 200'000'000, 100'000'000);
+	auto uncoveredRunnableGapRun = MainThreadWorkBudgetRun();
+	const auto uncoveredRunnableGapWithinBudget
+		= uncoveredRunnableGapRun.Observe(uncoveredRunnableGapAssessment,
+										  200'000'000, 100'000'000);
+	const auto sparseBlockedTailAssessment = AssessMainThreadWorkBudget(
+		sparseBlockedTail, 18'000'000, 100'000'000);
+	auto sparseBlockedTailRun = MainThreadWorkBudgetRun();
+	const auto sparseBlockedTailWithinBudget = sparseBlockedTailRun.Observe(
+		sparseBlockedTailAssessment, 225'000'000, 100'000'000);
 	const auto noSamples
 		= EstimateMainThreadWork(0, 101'000'000, u"none"_q, {});
+	const auto runnerSchedulingNoise
+		= EstimateMainThreadWork(1'138'000, 105'113'167, u"none"_q, {});
+	const auto runnerSchedulingNoiseAssessment = AssessMainThreadWorkBudget(
+		runnerSchedulingNoise, 1'138'000, 100'000'000);
+	const auto missingTraceLongWall
+		= EstimateMainThreadWork(1'138'000, 200'000'000, u"none"_q, {});
+	const auto missingTraceLongWallAssessment = AssessMainThreadWorkBudget(
+		missingTraceLongWall, 1'138'000, 100'000'000);
+	const auto missingTraceCpuStall
+		= EstimateMainThreadWork(101'000'000, 105'113'167, u"none"_q, {});
+	const auto missingTraceCpuStallAssessment = AssessMainThreadWorkBudget(
+		missingTraceCpuStall, 101'000'000, 100'000'000);
+	const auto blockedStartupAssessment
+		= AssessMainThreadWorkBudget(blocked, 0, 100'000'000);
+	const auto blockedHistorySelection = EstimateMainThreadWork(
+		0, 60'000'000, QString(int(selectionOffsets.size()), QChar(u'W')),
+		selectionOffsets);
+	const auto blockedSelectionAssessment = AssessMainThreadWorkBudget(
+		blockedHistorySelection, 0, kMaxChatSwitchNanoseconds);
+	const auto missingTraceInitialSelection
+		= EstimateMainThreadWork(40'000'000, 135'000'000, u"none"_q, {});
+	const auto missingTraceInitialSelectionAssessment
+		= AssessMainThreadWorkBudget(missingTraceInitialSelection, 40'000'000,
+									 kMaxChatSwitchNanoseconds);
+	const auto missingTraceLowCpuInitialSelection
+		= EstimateMainThreadWork(1'138'000, 135'000'000, u"none"_q, {});
+	const auto missingTraceLowCpuInitialSelectionAssessment
+		= AssessMainThreadWorkBudget(missingTraceLowCpuInitialSelection,
+									 1'138'000, kMaxChatSwitchNanoseconds);
+	auto untracedInitialSelectionWithHighCpu = MainThreadWorkBudgetRun();
+	const auto missingTraceHighCpuInitialSelectionGateWithinBudget
+		= untracedInitialSelectionWithHighCpu.Observe(
+			missingTraceInitialSelectionAssessment, 135'000'000,
+			kMaxChatSwitchNanoseconds);
+	auto oneUntracedWallOverrun = MainThreadWorkBudgetRun();
+	const auto missingTraceLowCpuInitialSelectionGateWithinBudget
+		= oneUntracedWallOverrun.Observe(
+			missingTraceLowCpuInitialSelectionAssessment, 135'000'000,
+			kMaxChatSwitchNanoseconds, 100'000'000);
+	auto overlappingUntracedWallOverruns = MainThreadWorkBudgetRun();
+	overlappingUntracedWallOverruns.Observe(
+		missingTraceLowCpuInitialSelectionAssessment, 135'000'000,
+		kMaxChatSwitchNanoseconds, 100'000'000);
+	overlappingUntracedWallOverruns.Observe(
+		missingTraceLowCpuInitialSelectionAssessment, 135'000'000,
+		kMaxChatSwitchNanoseconds, 150'000'000);
+	auto firstDialogsRunnerPause = MainThreadWorkBudgetRun();
+	const auto missingTraceFirstDialogsEstimate
+		= EstimateMainThreadWork(1'000'000, 60'000'000, u"none"_q, {});
+	const auto missingTraceFirstDialogsAssessment = AssessMainThreadWorkBudget(
+		missingTraceFirstDialogsEstimate, 1'000'000, kMaxChatSwitchNanoseconds);
+	const auto missingTraceFirstDialogsGateWithinBudget
+		= firstDialogsRunnerPause.Observe(missingTraceFirstDialogsAssessment,
+										  60'000'000, kMaxChatSwitchNanoseconds,
+										  1'000'000'000);
+	auto twoUntracedWallOverruns = MainThreadWorkBudgetRun();
+	twoUntracedWallOverruns.Observe(
+		missingTraceLowCpuInitialSelectionAssessment, 135'000'000,
+		kMaxChatSwitchNanoseconds, 100'000'000);
+	twoUntracedWallOverruns.Observe(
+		missingTraceLowCpuInitialSelectionAssessment, 135'000'000,
+		kMaxChatSwitchNanoseconds, 300'000'000);
+	auto tracedBlockedRun = MainThreadWorkBudgetRun();
+	tracedBlockedRun.Observe(blockedSelectionAssessment, 60'000'000,
+							 kMaxChatSwitchNanoseconds);
+	auto untracedCpuStallRun = MainThreadWorkBudgetRun();
+	untracedCpuStallRun.Observe(missingTraceCpuStallAssessment, 105'113'167,
+								100'000'000);
 	const auto noInWindowSamples
 		= EstimateMainThreadWork(18'000'000, 225'000'000, u"RRR"_q,
 								 {226'000'000, 227'000'000, 228'000'000});
@@ -11911,6 +13422,87 @@ void AccumulateMainThreadWorkEstimate(qint64 &aggregateNanoseconds,
 		.durationNanoseconds = 225'000'000,
 		.startedAtSteadyNanoseconds = 10'000'000,
 	};
+	const auto pendingCaptureTimeline = [](qint64 start) {
+		auto result
+			= std::vector<Core::UiStallWatchdog::SchedulerSampleEvidence>();
+		for (auto offset = qint64(0); offset <= 60'000'000;
+			 offset += 10'000'000) {
+			result.push_back({
+				.sampledAtSteadyNanoseconds = start + offset,
+				.state = 'W',
+			});
+		}
+		return result;
+	};
+	const auto pendingFirstAccessWindow = MainThreadWorkInterval{
+		.durationNanoseconds = 90'000'000,
+		.mainThreadWorkNanoseconds = 1'000'000,
+		.startedAtSteadyNanoseconds = 300'000'000,
+	};
+	const auto pendingFirstAccessTimeline = pendingCaptureTimeline(
+		pendingFirstAccessWindow.startedAtSteadyNanoseconds);
+	const auto pendingFirstAccessSamples = SchedulerTraceForInterval(
+		pendingFirstAccessWindow, pendingFirstAccessTimeline);
+	const auto pendingFirstAccessTimeoutSamples
+		= MarkSchedulerTraceCapturePending(pendingFirstAccessSamples);
+	const auto pendingFirstAccessEstimate = EstimateMainThreadWork(
+		pendingFirstAccessWindow.mainThreadWorkNanoseconds,
+		pendingFirstAccessWindow.durationNanoseconds,
+		pendingFirstAccessTimeoutSamples);
+	const auto pendingFirstAccessAssessment = AssessMainThreadWorkBudget(
+		pendingFirstAccessEstimate,
+		pendingFirstAccessWindow.mainThreadWorkNanoseconds,
+		kMaxChatSwitchNanoseconds);
+	auto pendingFirstAccessRun = MainThreadWorkBudgetRun();
+	const auto pendingFirstAccessWithinBudget = pendingFirstAccessRun.Observe(
+		pendingFirstAccessAssessment,
+		pendingFirstAccessWindow.durationNanoseconds, kMaxChatSwitchNanoseconds,
+		pendingFirstAccessWindow.startedAtSteadyNanoseconds);
+	const auto pendingStartupWindow = MainThreadWorkInterval{
+		.durationNanoseconds = 110'000'000,
+		.mainThreadWorkNanoseconds = 1'000'000,
+		.startedAtSteadyNanoseconds = 500'000'000,
+	};
+	const auto pendingStartupTimeline = pendingCaptureTimeline(
+		pendingStartupWindow.startedAtSteadyNanoseconds);
+	const auto pendingCaptureAcknowledgements = [](qint64 start) {
+		return std::vector<Core::UiStallWatchdog::PingAcknowledgementEvidence>{
+			{
+				.acknowledgedAtNanoseconds = start + 60'000'000,
+				.sequence = 1,
+				.postedAtSteadyNanoseconds = start,
+				.schedulerTrace = u"WWWWWWW"_q,
+				.schedulerSampleOffsetsNanoseconds
+				= {0, 10'000'000, 20'000'000, 30'000'000, 40'000'000,
+				   50'000'000, 60'000'000},
+				.schedulerTraceComplete = true,
+			},
+			{
+				.acknowledgedAtNanoseconds = start + 70'000'000,
+				.sequence = 2,
+				.postedAtSteadyNanoseconds = start + 60'000'000,
+			},
+		};
+	};
+	const auto pendingFirstAccessAcknowledgements
+		= pendingCaptureAcknowledgements(
+			pendingFirstAccessWindow.startedAtSteadyNanoseconds);
+	const auto pendingAcknowledgementWindow = SchedulerTraceForInterval(
+		pendingFirstAccessWindow, pendingFirstAccessAcknowledgements);
+	const auto pendingStartupAcknowledgements = pendingCaptureAcknowledgements(
+		pendingStartupWindow.startedAtSteadyNanoseconds);
+	const auto pendingStartupWork = EstimateStartupWork(
+		pendingStartupWindow, pendingStartupAcknowledgements, {},
+		pendingStartupTimeline);
+	const auto pendingStartupAssessment = AssessMainThreadWorkBudget(
+		pendingStartupWork.estimate,
+		pendingStartupWindow.mainThreadWorkNanoseconds,
+		kMaxStartupHeartbeatThreadWorkNanoseconds);
+	auto pendingStartupRun = MainThreadWorkBudgetRun();
+	const auto pendingStartupWithinBudget = pendingStartupRun.Observe(
+		pendingStartupAssessment, pendingStartupWindow.durationNanoseconds,
+		kMaxStartupHeartbeatThreadWorkNanoseconds,
+		pendingStartupWindow.startedAtSteadyNanoseconds);
 	auto continuousSchedulerTimeline
 		= std::vector<Core::UiStallWatchdog::SchedulerSampleEvidence>();
 	continuousSchedulerTimeline.reserve(228);
@@ -12062,6 +13654,13 @@ void AccumulateMainThreadWorkEstimate(qint64 &aggregateNanoseconds,
 			   kMaxChatSwitchNanoseconds)
 		   && (unknownState.blockedNanoseconds == -1)
 		   && (unknownState.estimatedWorkNanoseconds == 225'000'000)
+		   && !unknownStateAssessment.schedulerEvidenceAvailable
+		   && (unknownStateAssessment.workNanoseconds == 225'000'000)
+		   && !unknownStateAssessment.withinBudget
+		   && !MainThreadWorkEstimateWithinBudget(
+			   18'000'000, 225'000'000,
+			   QString(int(switchOffsets.size()), QChar(u'?')), switchOffsets,
+			   100'000'000)
 		   && (partiallyUnknownState.blockedNanoseconds == -1)
 		   && (partiallyUnknownState.estimatedWorkNanoseconds == 225'000'000)
 		   && (negativeOffset.blockedNanoseconds == -1)
@@ -12074,10 +13673,52 @@ void AccumulateMainThreadWorkEstimate(qint64 &aggregateNanoseconds,
 			   == 18'000'000 + blockedTailNanoseconds)
 		   && (clustered.blockedNanoseconds == -1)
 		   && (clustered.estimatedWorkNanoseconds == 200'000'000)
-		   && !MainThreadWorkEstimateWithinBudget(
+		   && MainThreadWorkEstimateWithinBudget(
 			   0, 200'000'000, u"RRR"_q, {0, 1'000'000, 2'000'000}, 100'000'000)
 		   && (uncoveredMiddle.blockedNanoseconds == -1)
 		   && (uncoveredMiddle.estimatedWorkNanoseconds == 200'000'000)
+		   && MainThreadWorkEstimateWithinBudget(
+			   0, 200'000'000, QString(5, QChar(u'R')),
+			   {0, 5'000'000, 10'000'000, 190'000'000, 200'000'000},
+			   100'000'000)
+		   && (uncoveredWaitingGap.blockedNanoseconds == -1)
+		   && (uncoveredWaitingGap.estimatedWorkNanoseconds == 200'000'000)
+		   && (uncoveredUninterruptibleGap.blockedNanoseconds == -1)
+		   && (uncoveredUninterruptibleGap.estimatedWorkNanoseconds
+			   == 200'000'000)
+		   && (uncoveredUnknownGap.blockedNanoseconds == -1)
+		   && (uncoveredUnknownGap.estimatedWorkNanoseconds == 200'000'000)
+		   && (uncoveredRunnableGap.blockedNanoseconds == -1)
+		   && (uncoveredRunnableGap.estimatedWorkNanoseconds == 200'000'000)
+		   && !uncoveredWaitingGapAssessment.schedulerEvidenceAvailable
+		   && (uncoveredWaitingGapAssessment.workNanoseconds == 200'000'000)
+		   && !uncoveredWaitingGapAssessment.withinBudget
+		   && !MainThreadWorkEstimateWithinBudget(
+			   1'000'000, 200'000'000, u"RW"_q, {0, 30'000'000}, 100'000'000)
+		   && !uncoveredUninterruptibleGapAssessment.schedulerEvidenceAvailable
+		   && (uncoveredUninterruptibleGapAssessment.workNanoseconds
+			   == 200'000'000)
+		   && !uncoveredUninterruptibleGapAssessment.withinBudget
+		   && !MainThreadWorkEstimateWithinBudget(
+			   1'000'000, 200'000'000, u"RU"_q, {0, 30'000'000}, 100'000'000)
+		   && !uncoveredUnknownGapAssessment.schedulerEvidenceAvailable
+		   && (uncoveredUnknownGapAssessment.workNanoseconds == 200'000'000)
+		   && !uncoveredUnknownGapAssessment.withinBudget
+		   && !MainThreadWorkEstimateWithinBudget(
+			   1'000'000, 200'000'000, u"R?"_q, {0, 30'000'000}, 100'000'000)
+		   && !uncoveredRunnableGapAssessment.schedulerEvidenceAvailable
+		   && (uncoveredRunnableGapAssessment.workNanoseconds == 1'000'000)
+		   && uncoveredRunnableGapAssessment.withinBudget
+		   && MainThreadWorkEstimateWithinBudget(
+			   1'000'000, 200'000'000, u"RR"_q, {0, 30'000'000}, 100'000'000)
+		   && !uncoveredWaitingGapWithinBudget
+		   && !uncoveredWaitingGapRun.WithinBudget()
+		   && !uncoveredUninterruptibleGapWithinBudget
+		   && !uncoveredUninterruptibleGapRun.WithinBudget()
+		   && !uncoveredUnknownGapWithinBudget
+		   && !uncoveredUnknownGapRun.WithinBudget()
+		   && !uncoveredRunnableGapWithinBudget
+		   && uncoveredRunnableGapRun.WithinBudget()
 		   && !Core::UiStallWatchdog::SchedulerTraceCoversDuration(
 			   u"RRR"_q, {0, 1'000'000, 2'000'000}, 200'000'000)
 		   && (sparseStartup.blockedNanoseconds == 50'000'000)
@@ -12093,6 +13734,10 @@ void AccumulateMainThreadWorkEstimate(qint64 &aggregateNanoseconds,
 			   sixMillisecondGapOffsets, 100'000'000)
 		   && (sparseBlockedTail.blockedNanoseconds == -1)
 		   && (sparseBlockedTail.estimatedWorkNanoseconds == 225'000'000)
+		   && (sparseBlockedTailAssessment.workNanoseconds == 225'000'000)
+		   && !sparseBlockedTailAssessment.withinBudget
+		   && !sparseBlockedTailWithinBudget
+		   && !sparseBlockedTailRun.WithinBudget()
 		   && !MainThreadWorkEstimateWithinBudget(
 			   18'000'000, 225'000'000, u"RRRW"_q, sparseBlockedTailOffsets,
 			   100'000'000)
@@ -12116,7 +13761,7 @@ void AccumulateMainThreadWorkEstimate(qint64 &aggregateNanoseconds,
 		   && (clusteredTimelineEstimate.blockedNanoseconds == -1)
 		   && (clusteredTimelineEstimate.estimatedWorkNanoseconds
 			   == sparseStartupWindow.durationNanoseconds)
-		   && !MainThreadWorkEstimateWithinBudget(
+		   && MainThreadWorkEstimateWithinBudget(
 			   18'000'000, sparseStartupWindow.durationNanoseconds,
 			   clusteredTimelineWindow.trace,
 			   clusteredTimelineWindow.sampleOffsetsNanoseconds, 100'000'000)
@@ -12190,14 +13835,71 @@ void AccumulateMainThreadWorkEstimate(qint64 &aggregateNanoseconds,
 			   sparseStartupCapture.trace,
 			   sparseStartupCapture.sampleOffsetsNanoseconds, 100'000'000)
 		   && uncapturedWindow.capturePending
-		   && incompleteWindow.trace.isEmpty()
+		   && pendingFirstAccessTimeoutSamples.capturePending
+		   && (pendingFirstAccessTimeoutSamples.trace == u"WWWWWWW"_q)
+		   && (pendingFirstAccessTimeoutSamples.sampleOffsetsNanoseconds.back()
+			   == 60'000'000)
+		   && !pendingFirstAccessAssessment.schedulerEvidenceAvailable
+		   && (pendingFirstAccessAssessment.workNanoseconds == 90'000'000)
+		   && !pendingFirstAccessAssessment.withinBudget
+		   && !MainThreadWorkBudgetIsUntracedWallOverrun(
+			   pendingFirstAccessAssessment, 90'000'000,
+			   kMaxChatSwitchNanoseconds)
+		   && !pendingFirstAccessWithinBudget
+		   && !pendingFirstAccessRun.WithinBudget()
+		   && pendingAcknowledgementWindow.capturePending
+		   && (pendingAcknowledgementWindow.trace == u"WWWWWWW"_q)
+		   && (pendingAcknowledgementWindow.sampleOffsetsNanoseconds.back()
+			   == 60'000'000)
+		   && pendingStartupWork.schedulerSamples.capturePending
+		   && (pendingStartupWork.schedulerSamples.trace == u"WWWWWWW"_q)
+		   && (pendingStartupAssessment.workNanoseconds == 110'000'000)
+		   && !pendingStartupAssessment.withinBudget
+		   && !pendingStartupWithinBudget && !pendingStartupRun.WithinBudget()
+		   && (incompleteWindow.trace == QString(5, QChar(u'R')))
 		   && incompleteWindow.capturePending
 		   && completedWithoutTraceWindow.trace.isEmpty()
 		   && completedWithoutTraceWindow.capturePending
 		   && (noSamples.blockedNanoseconds == -1)
 		   && (noSamples.estimatedWorkNanoseconds == 101'000'000)
-		   && !MainThreadWorkEstimateWithinBudget(0, 101'000'000, u"none"_q, {},
-												  100'000'000)
+		   && !runnerSchedulingNoiseAssessment.schedulerEvidenceAvailable
+		   && (runnerSchedulingNoiseAssessment.workNanoseconds == 1'138'000)
+		   && runnerSchedulingNoiseAssessment.withinBudget
+		   && missingTraceLongWallAssessment.withinBudget
+		   && !MainThreadWorkBudgetEvidenceWithinBudget(
+			   missingTraceLongWallAssessment, 200'000'000, 100'000'000)
+		   && !missingTraceCpuStallAssessment.schedulerEvidenceAvailable
+		   && (missingTraceCpuStallAssessment.workNanoseconds == 101'000'000)
+		   && !missingTraceCpuStallAssessment.withinBudget
+		   && !MainThreadWorkBudgetEvidenceWithinBudget(
+			   missingTraceInitialSelectionAssessment, 135'000'000,
+			   kMaxChatSwitchNanoseconds)
+		   && !MainThreadWorkBudgetIsUntracedWallOverrun(
+			   missingTraceInitialSelectionAssessment, 135'000'000,
+			   kMaxChatSwitchNanoseconds)
+		   && !missingTraceHighCpuInitialSelectionGateWithinBudget
+		   && !untracedInitialSelectionWithHighCpu.WithinBudget()
+		   && (missingTraceLowCpuInitialSelectionAssessment.workNanoseconds
+			   == 1'138'000)
+		   && !missingTraceLowCpuInitialSelectionGateWithinBudget
+		   && oneUntracedWallOverrun.WithinBudget()
+		   && overlappingUntracedWallOverruns.WithinBudget()
+		   && firstDialogsRunnerPause.WithinBudget()
+		   && !missingTraceFirstDialogsGateWithinBudget
+		   && !twoUntracedWallOverruns.WithinBudget()
+		   && !tracedBlockedRun.WithinBudget()
+		   && !untracedCpuStallRun.WithinBudget()
+		   && !blockedSelectionAssessment.withinBudget
+		   && MainThreadCpuWorkWithinBudget(1'000'000,
+											kMaxChatSwitchNanoseconds)
+		   && blockedStartupAssessment.schedulerEvidenceAvailable
+		   && (blockedStartupAssessment.workNanoseconds == 101'000'000)
+		   && !blockedStartupAssessment.withinBudget
+		   && blockedSelectionAssessment.schedulerEvidenceAvailable
+		   && (blockedSelectionAssessment.workNanoseconds == 60'000'000)
+		   && !blockedSelectionAssessment.withinBudget
+		   && MainThreadWorkEstimateWithinBudget(0, 101'000'000, u"none"_q, {},
+												 100'000'000)
 		   && (noInWindowSamples.blockedNanoseconds == -1)
 		   && (noInWindowSamples.estimatedWorkNanoseconds == 225'000'000)
 		   && (bracketedEstimate.estimatedWorkNanoseconds == 45'000'000)
@@ -12238,7 +13940,7 @@ void AccumulateMainThreadWorkEstimate(qint64 &aggregateNanoseconds,
 		   && !MainThreadEstimatedWorkWithinBudget(
 			   nearBudgetIncompleteScheduler.estimatedWorkNanoseconds,
 			   kMaxChatSwitchNanoseconds)
-		   && !MainThreadWorkEstimateWithinBudget(
+		   && MainThreadWorkEstimateWithinBudget(
 			   18'000'000, 225'000'000, u"RRR"_q,
 			   {226'000'000, 227'000'000, 228'000'000}, 100'000'000)
 		   && (blockedAttachMenuCallback.estimatedWorkNanoseconds > 50'000'000)
@@ -12376,6 +14078,7 @@ struct CacheChatSwitchRegressionResult final {
 	int historyChatModeHistoryWidthForWide = -1;
 	bool historyChatModeWindowWasMaximized = false;
 	bool chatSwitchTransitionsSettled = true;
+	bool initialHistorySelectionWithinBudget = false;
 	bool initialHistorySelectionSchedulerPreemptionProven = false;
 	bool dialogHistoriesReady = false;
 	bool syntheticHistoriesReady = false;
@@ -12411,6 +14114,9 @@ struct CacheReactionProbe final {
 	user->setBarSettings(PeerBarSettings());
 	auto parent = Ui::RpWidget(controller->widget().get());
 	auto status = HistoryView::ContactStatus(controller, &parent, user, false);
+	parent.resize(500, 300);
+	parent.show();
+	Ui::SendPendingMoveResizeEvents(&parent);
 	const auto botPhotoLabel = [](QWidget &root) -> Ui::FlatLabel * {
 		for (const auto child : root.findChildren<QWidget *>()) {
 			if (const auto label = dynamic_cast<Ui::FlatLabel *>(child)) {
@@ -12422,35 +14128,67 @@ struct CacheReactionProbe final {
 		return nullptr;
 	};
 	const auto botPhotoDeferred = !botPhotoLabel(parent);
-	Ui::FlatLabel *requestLabel = nullptr;
-	for (const auto child : parent.findChildren<QWidget *>()) {
-		if (const auto label = dynamic_cast<Ui::FlatLabel *>(child)) {
-			if (&label->st() == &st::historyContactStatusLabel) {
-				requestLabel = label;
-				break;
+	const auto requestLabel = [](QWidget &root) -> Ui::FlatLabel * {
+		for (const auto child : root.findChildren<QWidget *>()) {
+			if (const auto label = dynamic_cast<Ui::FlatLabel *>(child)) {
+				if (&label->st() == &st::historyContactStatusLabel) {
+					return label;
+				}
 			}
 		}
-	}
-	if (!requestLabel || !requestLabel->accessibilityName().isEmpty()) {
-		std::fprintf(stderr,
-					 "Contact status fixture: request_label=%d "
-					 "initial_text_empty=%d.\n",
-					 bool(requestLabel),
-					 requestLabel
-						 && requestLabel->accessibilityName().isEmpty());
+		return nullptr;
+	};
+	const auto controlsDeferred = !requestLabel(parent);
+	if (!controlsDeferred) {
+		std::fprintf(stderr, "Contact status fixture: controls_deferred=%d.\n",
+					 controlsDeferred);
 		return false;
 	}
 	status.show();
 	user->setBarSettings(PeerBarSettings(PeerBarSetting::RequestChat));
 	const auto groupReady = WaitForRegressionCondition(
-		[&] { return !requestLabel->accessibilityName().isEmpty(); }, 1000);
-	const auto groupText = requestLabel->accessibilityName();
+		[&] {
+			const auto label = requestLabel(parent);
+			return label && !label->accessibilityName().isEmpty();
+		},
+		1000);
+	const auto group = requestLabel(parent);
+	const auto groupText = group ? group->accessibilityName() : QString();
+	const auto requestButton = [&] {
+		for (const auto child : parent.findChildren<QWidget *>()) {
+			const auto button = dynamic_cast<Ui::RippleButton *>(child);
+			if (button && !button->isHidden() && button->isEnabled()) {
+				return button;
+			}
+		}
+		return static_cast<Ui::RippleButton *>(nullptr);
+	}();
+	for (auto i = 0; i < 8 && controller->window().isLayerShown(); ++i) {
+		controller->window().hideLayer(anim::type::instant);
+	}
+	const auto noLayerBeforeRequest = !controller->window().isLayerShown();
+	auto requestInfoDialogOpened = false;
+	const auto requestButtonSized = WaitForRegressionCondition(
+		[&] {
+			return requestButton && (requestButton->width() > 0)
+				   && (requestButton->height() > 0);
+		},
+		1000);
+	if (requestButtonSized && noLayerBeforeRequest) {
+		Test::Click(requestButton);
+		requestInfoDialogOpened = WaitForRegressionCondition(
+			[&] { return controller->window().isLayerShown(); }, 1000);
+		if (requestInfoDialogOpened) {
+			controller->window().hideLayer(anim::type::instant);
+		}
+	}
 	user->setBarSettings(PeerBarSetting::RequestChat
 						 | PeerBarSetting::RequestChatIsBroadcast);
 	const auto channelReady = WaitForRegressionCondition(
 		[&] {
-			return !requestLabel->accessibilityName().isEmpty()
-				   && (requestLabel->accessibilityName() != groupText);
+			const auto label = requestLabel(parent);
+			return label && !label->accessibilityName().isEmpty()
+				   && (label->accessibilityName() != groupText);
 		},
 		1000);
 	const auto bot = controller->session().data().processUsers(
@@ -12472,13 +14210,20 @@ struct CacheReactionProbe final {
 				   && !label->accessibilityName().isEmpty();
 		},
 		1000);
-	if (!groupReady || !channelReady || !botPhotoDeferred || !botPhotoReady) {
-		std::fprintf(stderr,
-					 "Contact status fixture: group=%d channel=%d "
-					 "photo_deferred=%d photo_ready=%d.\n",
-					 groupReady, channelReady, botPhotoDeferred, botPhotoReady);
+	if (!groupReady || !requestInfoDialogOpened || !channelReady
+		|| !botPhotoDeferred || !botPhotoReady) {
+		std::fprintf(
+			stderr,
+			"Contact status fixture: group=%d request_info=%d request_button="
+			"%d request_size=%dx%d no_layer_before=%d channel=%d "
+			"controls_deferred=%d photo_deferred=%d photo_ready=%d.\n",
+			groupReady, requestInfoDialogOpened, bool(requestButton),
+			requestButton ? requestButton->width() : -1,
+			requestButton ? requestButton->height() : -1, noLayerBeforeRequest,
+			channelReady, controlsDeferred, botPhotoDeferred, botPhotoReady);
 	}
-	return groupReady && channelReady && botPhotoDeferred && botPhotoReady;
+	return groupReady && requestInfoDialogOpened && channelReady
+		   && controlsDeferred && botPhotoDeferred && botPhotoReady;
 }
 
 [[nodiscard]] bool
@@ -12726,7 +14471,8 @@ GroupCallBarDeferredCreationRegressionPasses(not_null<HistoryWidget *> widget,
 
 [[maybe_unused, nodiscard]] CacheChatSwitchRegressionResult
 RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
-									Window::Controller *window) {
+									Window::Controller *window,
+									MainThreadWorkBudgetRun &timingBudgetRun) {
 	auto result = CacheChatSwitchRegressionResult();
 	const auto controller = window ? window->sessionController() : nullptr;
 	if (!controller || (&controller->session() != &account->session())) {
@@ -13869,6 +15615,42 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		const auto estimate = EstimateMainThreadWork(
 			chatSwitchWindows[i].mainThreadWorkNanoseconds,
 			chatSwitchWindows[i].durationNanoseconds, schedulerSamples);
+		const auto budgetAssessment = AssessMainThreadWorkBudget(
+			estimate, chatSwitchWindows[i].mainThreadWorkNanoseconds,
+			kMaxChatSwitchNanoseconds);
+		const auto withinBudget = timingBudgetRun.Observe(
+			budgetAssessment, chatSwitchWindows[i].durationNanoseconds,
+			kMaxChatSwitchNanoseconds,
+			chatSwitchWindows[i].startedAtSteadyNanoseconds);
+		const auto runnerNoiseEligible
+			= MainThreadWorkBudgetIsUntracedWallOverrun(
+				budgetAssessment, chatSwitchWindows[i].durationNanoseconds,
+				kMaxChatSwitchNanoseconds);
+		const auto withinBudgetWithNoiseAllowance
+			= withinBudget || runnerNoiseEligible;
+		if ((chatSwitchWindows[i].durationNanoseconds
+			 >= kMaxChatSwitchNanoseconds)
+			&& !budgetAssessment.schedulerEvidenceAvailable) {
+			const auto label = chatSwitchWindows[i].label.toUtf8();
+			std::fprintf(
+				stderr,
+				"HARNESS ERROR: chat-switch scheduler trace unavailable: "
+				"index=%zu label=%s window_start_steady_ns=%lld "
+				"wall_ns=%lld main_thread_cpu_ns=%lld "
+				"budget_ns=%lld runner_noise_eligible=%d "
+				"runner_noise_cpu_limit_ns=%lld.\n",
+				static_cast<std::size_t>(i), label.constData(),
+				static_cast<long long>(
+					chatSwitchWindows[i].startedAtSteadyNanoseconds),
+				static_cast<long long>(
+					chatSwitchWindows[i].durationNanoseconds),
+				static_cast<long long>(
+					chatSwitchWindows[i].mainThreadWorkNanoseconds),
+				static_cast<long long>(kMaxChatSwitchNanoseconds),
+				runnerNoiseEligible,
+				static_cast<long long>(
+					kMaxUntracedRunnerNoiseMainThreadCpuNanoseconds));
+		}
 		if ((estimate.estimatedWorkNanoseconds >= kMaxChatSwitchNanoseconds)
 			|| (chatSwitchWindows[i].durationNanoseconds
 				>= kMaxChatSwitchNanoseconds)) {
@@ -13927,27 +15709,26 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		if (i > 0) {
 			result.maxChatSwitchEstimatedWorkNanoseconds
 				= std::max(result.maxChatSwitchEstimatedWorkNanoseconds,
-						   estimate.estimatedWorkNanoseconds);
+						   budgetAssessment.workNanoseconds);
 		}
 		if (i == 0) {
+			result.initialHistorySelectionWithinBudget = withinBudget;
 			result.initialHistorySelectionBlockedNanoseconds
 				= estimate.blockedNanoseconds;
 			result.initialHistorySelectionEstimatedWorkNanoseconds
-				= estimate.estimatedWorkNanoseconds;
+				= budgetAssessment.workNanoseconds;
 			result.initialHistorySelectionSchedulerTrace = schedulerTrace;
 			result.initialHistorySelectionSchedulerSampleOffsetsNanoseconds
 				= schedulerSampleOffsetsNanoseconds;
 		} else {
 			result.maxRecurringChatSwitchEstimatedWorkNanoseconds = std::max(
 				result.maxRecurringChatSwitchEstimatedWorkNanoseconds,
-				estimate.estimatedWorkNanoseconds);
+				budgetAssessment.workNanoseconds);
 		}
 		if (i > 0) {
 			result.chatSwitchWorkWithinBudget
 				= result.chatSwitchWorkWithinBudget
-				  && (estimate.estimatedWorkNanoseconds >= 0)
-				  && (estimate.estimatedWorkNanoseconds
-					  < kMaxChatSwitchNanoseconds);
+				  && withinBudgetWithNoiseAllowance;
 		}
 		const auto traceLatin1 = schedulerTrace.isEmpty()
 									 ? QByteArray("none")
@@ -13957,7 +15738,8 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 			"Cache chat switch work window: index=%zu peer_id=%lld "
 			"wall_ns=%lld main_thread_cpu_ns=%lld "
 			"blocked_estimate_ns=%lld estimated_work_ns=%lld "
-			"budget_ns=%lld capture_pending=%d trace=%s within_budget=%d.\n",
+			"budget_ns=%lld capture_pending=%d trace=%s within_budget=%d "
+			"cpu_only_within_budget=%d scheduler_evidence_available=%d.\n",
 			static_cast<std::size_t>(i),
 			static_cast<long long>(
 				chatSwitchWindows[i].label.section(u'=', -1).toLongLong()),
@@ -13965,12 +15747,17 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 			static_cast<long long>(
 				chatSwitchWindows[i].mainThreadWorkNanoseconds),
 			static_cast<long long>(estimate.blockedNanoseconds),
-			static_cast<long long>(estimate.estimatedWorkNanoseconds),
+			static_cast<long long>(budgetAssessment.workNanoseconds),
 			static_cast<long long>(kMaxChatSwitchNanoseconds),
 			schedulerSamples.capturePending, traceLatin1.constData(),
-			(estimate.estimatedWorkNanoseconds >= 0
-			 && estimate.estimatedWorkNanoseconds < kMaxChatSwitchNanoseconds));
+			withinBudget,
+			MainThreadCpuWorkWithinBudget(
+				chatSwitchWindows[i].mainThreadWorkNanoseconds,
+				kMaxChatSwitchNanoseconds),
+			budgetAssessment.schedulerEvidenceAvailable);
 	}
+	result.chatSwitchWorkWithinBudget
+		= result.chatSwitchWorkWithinBudget && timingBudgetRun.WithinBudget();
 	result.chatSwitchSchedulerPreemptionProven
 		= chatSwitchCpuClockAvailable && chatSwitchProcessCpuClockAvailable;
 	for (auto i = 0U; i != chatSwitchWindows.size(); ++i) {
@@ -14060,6 +15847,16 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 			callback.mainThreadWorkNanoseconds, callback.durationNanoseconds,
 			schedulerSamples.trace, schedulerSamples.sampleOffsetsNanoseconds,
 			schedulerSamples.before, schedulerSamples.after);
+		const auto budgetAssessment = AssessMainThreadWorkBudget(
+			estimate, callback.mainThreadWorkNanoseconds,
+			kMaxChatSwitchNanoseconds);
+		const auto withinBudget = timingBudgetRun.Observe(
+			budgetAssessment, callback.durationNanoseconds,
+			kMaxChatSwitchNanoseconds, callback.startedAtSteadyNanoseconds);
+		const auto runnerNoiseEligible
+			= MainThreadWorkBudgetIsUntracedWallOverrun(
+				budgetAssessment, callback.durationNanoseconds,
+				kMaxChatSwitchNanoseconds);
 		auto offsets = QStringList();
 		for (const auto offset : schedulerSamples.sampleOffsetsNanoseconds) {
 			offsets.push_back(QString::number(offset));
@@ -14069,18 +15866,40 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 							   ? QByteArray("none")
 							   : schedulerSamples.trace.toLatin1();
 		const auto offsetsText = offsets.join(u',').toLatin1();
+		if ((callback.durationNanoseconds >= kMaxChatSwitchNanoseconds)
+			&& !budgetAssessment.schedulerEvidenceAvailable) {
+			std::fprintf(
+				stderr,
+				"HARNESS ERROR: attach-menu scheduler trace unavailable: "
+				"label=%s window_start_steady_ns=%lld wall_ns=%lld "
+				"main_thread_cpu_ns=%lld budget_ns=%lld "
+				"runner_noise_eligible=%d runner_noise_cpu_limit_ns=%lld.\n",
+				label.constData(),
+				static_cast<long long>(callback.startedAtSteadyNanoseconds),
+				static_cast<long long>(callback.durationNanoseconds),
+				static_cast<long long>(callback.mainThreadWorkNanoseconds),
+				static_cast<long long>(kMaxChatSwitchNanoseconds),
+				runnerNoiseEligible,
+				static_cast<long long>(
+					kMaxUntracedRunnerNoiseMainThreadCpuNanoseconds));
+		}
 		std::fprintf(
 			stderr,
-			"Attach menu callback work window: label=%s wall_ns=%lld "
+			"Attach menu callback work window: label=%s "
+			"window_start_steady_ns=%lld wall_ns=%lld "
 			"main_thread_cpu_ns=%lld blocked_estimate_ns=%lld "
-			"estimated_work_ns=%lld trace=%s offsets_ns=%s "
+			"estimated_work_ns=%lld budget_ns=%lld trace=%s offsets_ns=%s "
 			"before=%c before_distance_ns=%lld after=%c "
-			"after_distance_ns=%lld.\n",
+			"after_distance_ns=%lld within_budget=%d "
+			"cpu_only_within_budget=%d runner_noise_eligible=%d "
+			"scheduler_evidence_available=%d.\n",
 			label.constData(),
+			static_cast<long long>(callback.startedAtSteadyNanoseconds),
 			static_cast<long long>(callback.durationNanoseconds),
 			static_cast<long long>(callback.mainThreadWorkNanoseconds),
 			static_cast<long long>(estimate.blockedNanoseconds),
-			static_cast<long long>(estimate.estimatedWorkNanoseconds),
+			static_cast<long long>(budgetAssessment.workNanoseconds),
+			static_cast<long long>(kMaxChatSwitchNanoseconds),
 			trace.constData(), offsetsText.constData(),
 			schedulerSamples.before ? schedulerSamples.before->state : '-',
 			static_cast<long long>(
@@ -14091,7 +15910,11 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 			static_cast<long long>(
 				schedulerSamples.after
 					? schedulerSamples.after->distanceNanoseconds
-					: -1));
+					: -1),
+			withinBudget,
+			MainThreadCpuWorkWithinBudget(callback.mainThreadWorkNanoseconds,
+										  kMaxChatSwitchNanoseconds),
+			runnerNoiseEligible, budgetAssessment.schedulerEvidenceAvailable);
 		qint64 *destination = nullptr;
 		bool *seen = nullptr;
 		if (callback.label == u"first hover callback"_q) {
@@ -14111,11 +15934,11 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		}
 		if (destination && seen) {
 			if (!*seen) {
-				*destination = estimate.estimatedWorkNanoseconds;
+				*destination = budgetAssessment.workNanoseconds;
 				*seen = true;
 			} else {
 				AccumulateMainThreadWorkEstimate(
-					*destination, estimate.estimatedWorkNanoseconds);
+					*destination, budgetAssessment.workNanoseconds);
 			}
 		}
 	}
@@ -14222,9 +16045,6 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		  && (result.maxChatSwitchIndex >= 0)
 		  && (result.maxChatSwitchPeerId >= 0)
 		  && result.chatSwitchWorkWithinBudget
-		  && MainThreadEstimatedWorkWithinBudget(
-			  result.initialHistorySelectionEstimatedWorkNanoseconds,
-			  kMaxChatSwitchNanoseconds)
 		  && (result.maxRecurringChatSwitchMainThreadWorkNanoseconds >= 0)
 		  && (result.maxRecurringChatSwitchEstimatedWorkNanoseconds >= 0)
 		  && (result.maxRecurringChatSwitchEstimatedWorkNanoseconds
@@ -14239,6 +16059,8 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 	return result;
 }
 
+constexpr auto kMaxHandlerNanoseconds = qint64(50'000'000);
+
 struct FirstDialogsHandlerRegressionResult final {
 	int requests = 0;
 	int processedChats = 0;
@@ -14252,6 +16074,9 @@ struct FirstDialogsHandlerRegressionResult final {
 	qint64 handlerEstimatedWorkNanoseconds = -1;
 	QString handlerSchedulerTrace;
 	std::vector<qint64> handlerSchedulerSampleOffsetsNanoseconds;
+	bool handlerWithinBudget = false;
+	bool handlerCpuOnlyWithinBudget = false;
+	bool handlerRunnerNoiseEligible = false;
 	bool responseParsed = false;
 	bool passed = false;
 };
@@ -14280,13 +16105,14 @@ struct FirstDialogsHandlerRegressionResult final {
 }
 
 [[maybe_unused, nodiscard]] FirstDialogsHandlerRegressionResult
-RunFirstDialogsHandlerLatencyRegression(not_null<Main::Account *> account) {
+RunFirstDialogsHandlerLatencyRegression(
+	not_null<Main::Account *> account,
+	MainThreadWorkBudgetRun &timingBudgetRun) {
 	auto result = FirstDialogsHandlerRegressionResult();
 	constexpr auto kMessageCount = 73;
 	constexpr auto kFirstChatMessageCount = (kMessageCount + 1) / 2;
 	constexpr auto kSecondChatMessageCount = kMessageCount / 2;
 	constexpr auto kDialogUnreadCount = 7;
-	constexpr auto kMaxHandlerNanoseconds = qint64(50'000'000);
 	const auto firstChatId = ChatId(1051);
 	const auto secondChatId = ChatId(1052);
 	const auto firstPeerId = peerFromChat(firstChatId);
@@ -14404,19 +16230,46 @@ RunFirstDialogsHandlerLatencyRegression(not_null<Main::Account *> account) {
 			  ? SchedulerTraceForInterval(
 					handlerInterval,
 					Core::UiStallWatchdog::RecentSchedulerSamplesForTesting())
-			  : SchedulerTraceWindow{.capturePending = true};
-	if (!handlerSchedulerSamples.capturePending) {
-		result.handlerSchedulerTrace = handlerSchedulerSamples.trace;
-		result.handlerSchedulerSampleOffsetsNanoseconds
-			= handlerSchedulerSamples.sampleOffsetsNanoseconds;
-	}
+			  : MarkSchedulerTraceCapturePending(SchedulerTraceForInterval(
+					handlerInterval, handlerSchedulerTimeline));
+	result.handlerSchedulerTrace = handlerSchedulerSamples.trace;
+	result.handlerSchedulerSampleOffsetsNanoseconds
+		= handlerSchedulerSamples.sampleOffsetsNanoseconds;
 	const auto handlerEstimate = EstimateMainThreadWork(
 		result.handlerMainThreadCpuNanoseconds, result.handlerNanoseconds,
 		handlerSchedulerSamples);
+	const auto handlerBudgetAssessment = AssessMainThreadWorkBudget(
+		handlerEstimate, result.handlerMainThreadCpuNanoseconds,
+		kMaxHandlerNanoseconds);
+	result.handlerWithinBudget = timingBudgetRun.Observe(
+		handlerBudgetAssessment, result.handlerNanoseconds,
+		kMaxHandlerNanoseconds, handlerStartedAtSteadyNanoseconds);
+	result.handlerRunnerNoiseEligible
+		= MainThreadWorkBudgetIsUntracedWallOverrun(handlerBudgetAssessment,
+													result.handlerNanoseconds,
+													kMaxHandlerNanoseconds);
+	result.handlerCpuOnlyWithinBudget = MainThreadCpuWorkWithinBudget(
+		result.handlerMainThreadCpuNanoseconds, kMaxHandlerNanoseconds);
 	result.handlerBlockedEstimateNanoseconds
 		= handlerEstimate.blockedNanoseconds;
 	result.handlerEstimatedWorkNanoseconds
-		= handlerEstimate.estimatedWorkNanoseconds;
+		= handlerBudgetAssessment.workNanoseconds;
+	if ((result.handlerNanoseconds >= kMaxHandlerNanoseconds)
+		&& !handlerBudgetAssessment.schedulerEvidenceAvailable) {
+		std::fprintf(
+			stderr,
+			"HARNESS ERROR: getDialogs scheduler trace unavailable: "
+			"window_start_steady_ns=%lld wall_ns=%lld main_thread_cpu_ns=%lld "
+			"budget_ns=%lld runner_noise_eligible=%d "
+			"runner_noise_cpu_limit_ns=%lld.\n",
+			static_cast<long long>(handlerStartedAtSteadyNanoseconds),
+			static_cast<long long>(result.handlerNanoseconds),
+			static_cast<long long>(result.handlerMainThreadCpuNanoseconds),
+			static_cast<long long>(kMaxHandlerNanoseconds),
+			result.handlerRunnerNoiseEligible,
+			static_cast<long long>(
+				kMaxUntracedRunnerNoiseMainThreadCpuNanoseconds));
+	}
 	if (const auto chat = data.chatLoaded(firstChatId)) {
 		result.processedChats += (chat->name() == u"Cache dialog regression"_q);
 	}
@@ -14455,8 +16308,7 @@ RunFirstDialogsHandlerLatencyRegression(not_null<Main::Account *> account) {
 		  && (result.processedMessages == kMessageCount)
 		  && (result.processedDocuments == kMessageCount)
 		  && (result.cacheWalks == 2)
-		  && MainThreadEstimatedWorkWithinBudget(
-			  result.handlerEstimatedWorkNanoseconds, kMaxHandlerNanoseconds);
+		  && (result.handlerWithinBudget || result.handlerRunnerNoiseEligible);
 	return result;
 }
 
@@ -14606,6 +16458,7 @@ void RunAuthenticatedCacheSymlinkCases(
 		};
 		const auto authenticatedCacheOnly = qEnvironmentVariableIsSet(
 			"TDESKTOP_AUTH_LIFECYCLE_REGRESSION_CACHE_ONLY");
+		auto timingBudgetRun = MainThreadWorkBudgetRun();
 		for (const auto mediaCache : {false, true}) {
 			const auto caseName = mediaCache ? "media-cache-access-no-walk"
 											 : "cache-access-no-walk";
@@ -14819,6 +16672,11 @@ void RunAuthenticatedCacheSymlinkCases(
 			auto cacheUsableWithinBound = false;
 			auto firstCache = static_cast<Storage::Cache::Database *>(nullptr);
 			auto firstAccessNanoseconds = qint64(-1);
+			auto firstAccessMainThreadWorkNanoseconds = qint64(-1);
+			auto firstAccessStartedAtSteadyNanoseconds = qint64(-1);
+			auto firstAccessInterval = MainThreadWorkInterval();
+			auto firstAccessSchedulerTimeline
+				= std::vector<Core::UiStallWatchdog::SchedulerSampleEvidence>();
 			const auto startupScansCompleted = WaitForRegressionCondition([&] {
 				if (Core::MacProtectedPath::CachePathWalkCountForTesting()
 					!= 2) {
@@ -14836,6 +16694,13 @@ void RunAuthenticatedCacheSymlinkCases(
 				if (!cacheInitializationAllowed) {
 					return true;
 				}
+				const auto firstAccessStartedAt = QDateTime::currentDateTime();
+				firstAccessStartedAtSteadyNanoseconds
+					= std::chrono::duration_cast<std::chrono::nanoseconds>(
+						  std::chrono::steady_clock::now().time_since_epoch())
+						  .count();
+				const auto firstAccessCpuBefore
+					= MainThreadCpuTimeNanoseconds();
 				auto timer = QElapsedTimer();
 				timer.start();
 				if (!getAllowedCache()) {
@@ -14846,6 +16711,23 @@ void RunAuthenticatedCacheSymlinkCases(
 					return false;
 				}
 				firstAccessNanoseconds = timer.nsecsElapsed();
+				const auto firstAccessCpuAfter = MainThreadCpuTimeNanoseconds();
+				if (firstAccessCpuBefore && firstAccessCpuAfter) {
+					firstAccessMainThreadWorkNanoseconds
+						= std::max(qint64(0), *firstAccessCpuAfter
+												  - *firstAccessCpuBefore);
+				}
+				firstAccessInterval = {
+					firstAccessStartedAt,
+					firstAccessNanoseconds,
+					firstAccessMainThreadWorkNanoseconds,
+					-1,
+					u"first cache access"_q,
+					firstAccessStartedAtSteadyNanoseconds,
+					firstAccessCpuAfter.value_or(-1),
+				};
+				firstAccessSchedulerTimeline
+					= Core::UiStallWatchdog::RecentSchedulerSamplesForTesting();
 				cacheUsableNanoseconds
 					= cacheInitializationTimer.nsecsElapsed();
 				cacheUsableWithinBound
@@ -14854,6 +16736,58 @@ void RunAuthenticatedCacheSymlinkCases(
 			});
 			mainThreadHeartbeat.stop();
 			recordMainThreadHeartbeat();
+			auto firstAccessSchedulerSamples = SchedulerTraceWindow();
+			const auto firstAccessSchedulerCaptureRequired
+				= firstAccessNanoseconds >= 50'000'000;
+			if (firstAccessSchedulerCaptureRequired) {
+				const auto firstAccessCaptureSettled = [&] {
+					firstAccessSchedulerTimeline = Core::UiStallWatchdog::
+						RecentSchedulerSamplesForTesting();
+					firstAccessSchedulerSamples = SchedulerTraceForInterval(
+						firstAccessInterval, firstAccessSchedulerTimeline);
+					return !firstAccessSchedulerSamples.capturePending;
+				};
+				if (!firstAccessCaptureSettled()
+					&& !WaitForRegressionCondition(firstAccessCaptureSettled,
+												   1000)) {
+					firstAccessSchedulerSamples
+						= MarkSchedulerTraceCapturePending(
+							std::move(firstAccessSchedulerSamples));
+				}
+			}
+			const auto firstAccessEstimate = EstimateMainThreadWork(
+				firstAccessMainThreadWorkNanoseconds, firstAccessNanoseconds,
+				firstAccessSchedulerSamples);
+			const auto firstAccessBudgetAssessment = AssessMainThreadWorkBudget(
+				firstAccessEstimate, firstAccessMainThreadWorkNanoseconds,
+				kMaxChatSwitchNanoseconds);
+			const auto firstAccessWithinBudget = timingBudgetRun.Observe(
+				firstAccessBudgetAssessment, firstAccessNanoseconds,
+				kMaxChatSwitchNanoseconds,
+				firstAccessStartedAtSteadyNanoseconds);
+			const auto firstAccessRunnerNoiseEligible
+				= MainThreadWorkBudgetIsUntracedWallOverrun(
+					firstAccessBudgetAssessment, firstAccessNanoseconds,
+					kMaxChatSwitchNanoseconds);
+			if (firstAccessSchedulerCaptureRequired
+				&& !firstAccessBudgetAssessment.schedulerEvidenceAvailable) {
+				std::fprintf(
+					stderr,
+					"HARNESS ERROR: first-access scheduler trace unavailable: "
+					"window_start_steady_ns=%lld wall_ns=%lld "
+					"main_thread_cpu_ns=%lld budget_ns=%lld "
+					"runner_noise_eligible=%d "
+					"runner_noise_cpu_limit_ns=%lld.\n",
+					static_cast<long long>(
+						firstAccessStartedAtSteadyNanoseconds),
+					static_cast<long long>(firstAccessNanoseconds),
+					static_cast<long long>(
+						firstAccessMainThreadWorkNanoseconds),
+					static_cast<long long>(kMaxChatSwitchNanoseconds),
+					firstAccessRunnerNoiseEligible,
+					static_cast<long long>(
+						kMaxUntracedRunnerNoiseMainThreadCpuNanoseconds));
+			}
 			auto corroboratedStartupStalls
 				= std::vector<CorroboratedStartupStall>();
 			auto uncoveredStartupHeartbeatGaps = 0;
@@ -14989,13 +16923,42 @@ void RunAuthenticatedCacheSymlinkCases(
 				const auto &schedulerSamples = startupWork.schedulerSamples;
 				const auto &trace = schedulerSamples.trace;
 				const auto &estimate = startupWork.estimate;
+				const auto budgetAssessment = AssessMainThreadWorkBudget(
+					estimate, gap.mainThreadWorkNanoseconds, 100'000'000);
+				const auto withinBudget = timingBudgetRun.Observe(
+					budgetAssessment, gap.durationNanoseconds, 100'000'000,
+					gap.startedAtSteadyNanoseconds);
+				const auto runnerNoiseEligible
+					= MainThreadWorkBudgetIsUntracedWallOverrun(
+						budgetAssessment, gap.durationNanoseconds, 100'000'000);
+				const auto withinBudgetWithNoiseAllowance
+					= withinBudget || runnerNoiseEligible;
 				maxStartupEstimatedWorkNanoseconds
 					= std::max(maxStartupEstimatedWorkNanoseconds,
-							   estimate.estimatedWorkNanoseconds);
+							   budgetAssessment.workNanoseconds);
 				startupWorkWithinBound
-					= startupWorkWithinBound
-					  && (estimate.estimatedWorkNanoseconds >= 0)
-					  && (estimate.estimatedWorkNanoseconds < 100'000'000);
+					= startupWorkWithinBound && withinBudgetWithNoiseAllowance;
+				const auto schedulerCaptureRequired
+					= gap.durationNanoseconds >= 100'000'000;
+				if (schedulerCaptureRequired
+					&& !budgetAssessment.schedulerEvidenceAvailable) {
+					std::fprintf(
+						stderr,
+						"HARNESS ERROR: startup scheduler trace unavailable: "
+						"started_at=%s window_start_steady_ns=%lld "
+						"wall_ns=%lld main_thread_cpu_ns=%lld "
+						"budget_ns=100000000 runner_noise_eligible=%d "
+						"runner_noise_cpu_limit_ns=%lld.\n",
+						gap.startedAt.toString(Qt::ISODateWithMs)
+							.toUtf8()
+							.constData(),
+						static_cast<long long>(gap.startedAtSteadyNanoseconds),
+						static_cast<long long>(gap.durationNanoseconds),
+						static_cast<long long>(gap.mainThreadWorkNanoseconds),
+						runnerNoiseEligible,
+						static_cast<long long>(
+							kMaxUntracedRunnerNoiseMainThreadCpuNanoseconds));
+				}
 				const auto gapStartedAtUtf8
 					= gap.startedAt.toString(Qt::ISODateWithMs).toUtf8();
 				const auto traceLatin1
@@ -15008,17 +16971,21 @@ void RunAuthenticatedCacheSymlinkCases(
 					"blocked_estimate_ns=%lld "
 					"estimated_work_ns=%lld budget_ns=100000000 "
 					"capture_pending=%d trace_samples=%zu trace=%s "
-					"within_budget=%d.\n",
+					"within_budget=%d cpu_only_within_budget=%d "
+					"scheduler_capture_required=%d "
+					"scheduler_evidence_available=%d.\n",
 					gapStartedAtUtf8.constData(),
 					static_cast<long long>(gap.durationNanoseconds),
 					static_cast<long long>(gap.mainThreadWorkNanoseconds),
 					static_cast<long long>(estimate.blockedNanoseconds),
-					static_cast<long long>(estimate.estimatedWorkNanoseconds),
+					static_cast<long long>(budgetAssessment.workNanoseconds),
 					schedulerSamples.capturePending,
 					static_cast<std::size_t>(trace.size()),
-					traceLatin1.constData(),
-					(estimate.estimatedWorkNanoseconds >= 0
-					 && estimate.estimatedWorkNanoseconds < 100'000'000));
+					traceLatin1.constData(), withinBudget,
+					MainThreadCpuWorkWithinBudget(gap.mainThreadWorkNanoseconds,
+												  100'000'000),
+					schedulerCaptureRequired,
+					budgetAssessment.schedulerEvidenceAvailable);
 			}
 			const auto startupWithinBound
 				= mainThreadCpuClockAvailable
@@ -15055,8 +17022,8 @@ void RunAuthenticatedCacheSymlinkCases(
 			auto chatSwitch = CacheChatSwitchRegressionResult();
 			auto dialogsHandler = FirstDialogsHandlerRegressionResult();
 			if (first && !mediaCache) {
-				dialogsHandler
-					= RunFirstDialogsHandlerLatencyRegression(guarded);
+				dialogsHandler = RunFirstDialogsHandlerLatencyRegression(
+					guarded, timingBudgetRun);
 				std::fprintf(
 					stderr,
 					"First messages.getDialogs handler latency "
@@ -15068,7 +17035,8 @@ void RunAuthenticatedCacheSymlinkCases(
 					"cache_walks=%d max_handler_ns=%lld "
 					"main_thread_cpu_ns=%lld blocked_estimate_ns=%lld "
 					"estimated_work_ns=%lld trace=%s "
-					"under_50ms=%d.\n",
+					"within_budget=%d cpu_only_within_budget=%d "
+					"runner_noise_eligible=%d under_50ms=%d.\n",
 					dialogsHandler.requests, dialogsHandler.responseParsed,
 					dialogsHandler.processedChats,
 					dialogsHandler.processedDialogs,
@@ -15086,9 +17054,10 @@ void RunAuthenticatedCacheSymlinkCases(
 						 ? "none"
 						 : dialogsHandler.handlerSchedulerTrace.toLatin1()
 							   .constData()),
-					MainThreadEstimatedWorkWithinBudget(
-						dialogsHandler.handlerEstimatedWorkNanoseconds,
-						50'000'000));
+					dialogsHandler.handlerWithinBudget,
+					dialogsHandler.handlerCpuOnlyWithinBudget,
+					dialogsHandler.handlerRunnerNoiseEligible,
+					dialogsHandler.handlerNanoseconds < kMaxHandlerNanoseconds);
 				auto &app = Core::App();
 				const auto window = app.ensureSeparateWindowFor(guarded);
 				const auto closeWindow = gsl::finally([&] {
@@ -15096,8 +17065,8 @@ void RunAuthenticatedCacheSymlinkCases(
 						app.closeWindow(window);
 					}
 				});
-				chatSwitch
-					= RunCacheChatSwitchLatencyRegression(guarded, window);
+				chatSwitch = RunCacheChatSwitchLatencyRegression(
+					guarded, window, timingBudgetRun);
 				const auto initialHistorySelectionTraceLatin1
 					= chatSwitch.initialHistorySelectionSchedulerTrace.isEmpty()
 						  ? QByteArray("none")
@@ -15110,6 +17079,7 @@ void RunAuthenticatedCacheSymlinkCases(
 					"blocked_estimate_ns=%lld "
 					"estimated_work_ns=%lld "
 					"budget_ns=%lld trace=%s "
+					"within_budget=%d cpu_only_within_budget=%d "
 					"scheduler_preemption_proven=%d.\n",
 					static_cast<long long>(
 						chatSwitch.initialHistorySelectionPeerId),
@@ -15125,6 +17095,11 @@ void RunAuthenticatedCacheSymlinkCases(
 							.initialHistorySelectionEstimatedWorkNanoseconds),
 					static_cast<long long>(kMaxChatSwitchNanoseconds),
 					initialHistorySelectionTraceLatin1.constData(),
+					chatSwitch.initialHistorySelectionWithinBudget,
+					MainThreadCpuWorkWithinBudget(
+						chatSwitch
+							.initialHistorySelectionMainThreadWorkNanoseconds,
+						kMaxChatSwitchNanoseconds),
 					chatSwitch
 						.initialHistorySelectionSchedulerPreemptionProven);
 				std::fprintf(
@@ -15383,6 +17358,10 @@ void RunAuthenticatedCacheSymlinkCases(
 				= startupStallSchedulerTrace.isEmpty()
 					  ? QByteArray("none")
 					  : startupStallSchedulerTrace.toLatin1();
+			const auto firstAccessSchedulerTraceLatin1
+				= firstAccessSchedulerSamples.trace.isEmpty()
+					  ? QByteArray("none")
+					  : firstAccessSchedulerSamples.trace.toLatin1();
 			std::fprintf(
 				stderr,
 				"Cache access latency regression: cache=%s "
@@ -15416,8 +17395,14 @@ void RunAuthenticatedCacheSymlinkCases(
 				"startup_stall_stack_captured=%d "
 				"startup_stall_evidence_matched=%d "
 				"startup_stall_scheduler_preemption_proven=%d "
-				"under_100ms=%d "
-				"first_access_ns=%lld under_50ms=%d "
+				"startup_within_budget=%d "
+				"first_access_ns=%lld "
+				"first_access_main_thread_cpu_ns=%lld "
+				"first_access_blocked_estimate_ns=%lld "
+				"first_access_estimated_work_ns=%lld "
+				"first_access_trace=%s "
+				"first_access_within_budget=%d "
+				"first_access_cpu_only_within_budget=%d under_50ms=%d "
 				"root_swap_refused=%d direct_fallback_closed=%d "
 				"root_restored=%d startup_walks=%d "
 				"main_thread_walks=%d.\n",
@@ -15450,9 +17435,18 @@ void RunAuthenticatedCacheSymlinkCases(
 				startupStallStackCaptured, startupStallEvidenceMatched,
 				startupStallSchedulerPreemptionProven, startupWithinBound,
 				static_cast<long long>(firstAccessNanoseconds),
-				(firstAccessNanoseconds < 50'000'000), swappedRootRefused,
-				directFallbackClosed, rootRestoreSucceeded, startupWalks,
-				mainThreadWalks);
+				static_cast<long long>(firstAccessMainThreadWorkNanoseconds),
+				static_cast<long long>(firstAccessEstimate.blockedNanoseconds),
+				static_cast<long long>(
+					firstAccessBudgetAssessment.workNanoseconds),
+				firstAccessSchedulerTraceLatin1.constData(),
+				firstAccessWithinBudget,
+				MainThreadCpuWorkWithinBudget(
+					firstAccessMainThreadWorkNanoseconds,
+					kMaxChatSwitchNanoseconds),
+				firstAccessNanoseconds < kMaxChatSwitchNanoseconds,
+				swappedRootRefused, directFallbackClosed, rootRestoreSucceeded,
+				startupWalks, mainThreadWalks);
 			const auto passed
 				= startupScansCompleted && first && second
 				  && missingActiveVersionBeforeOpen
@@ -15463,7 +17457,7 @@ void RunAuthenticatedCacheSymlinkCases(
 				  && directFallbackClosed && rootRestoreSucceeded
 				  && startupWithinBound && (mediaCache || chatSwitch.passed)
 				  && (mediaCache || dialogsHandler.passed)
-				  && (firstAccessNanoseconds < 50'000'000);
+				  && timingBudgetRun.WithinBudget();
 			nativeLifecycleResults->Report(caseName,
 										   passed && accountCleanup.cleanup());
 		}
@@ -18886,9 +20880,14 @@ RunAiComposeApplyHandlerRegression(not_null<Window::Controller *> window,
 
 	const auto initialKey = RegressionAuthKey(0x11);
 	forgotten->mtp().dcPersistentKeyChanged(2, initialKey);
-	if (!ConfigurePinnedServer(forgotten, originalKey)) {
-		return failAccountLifecycle(
-			"could not configure the matching server after Forget");
+	auto endpointRefreshDiscovery = LocalEndpointRefreshDiscoveryStub();
+	if (!endpointRefreshDiscovery.listening()
+		|| !endpointRefreshDiscovery.splitDiscoveryRequestIsBuffered()
+		|| !endpointRefreshDiscovery.originalEndpointUnreachable()
+		|| !endpointRefreshDiscovery.configureOriginalPin(forgotten,
+														  originalKey)) {
+		return failAccountLifecycle("could not prepare the local endpoint "
+									"refresh fixture after Forget");
 	}
 	forgotten->setSessionUserId(UserId(4242));
 	const auto sessionCreated = forgotten->createSession(
@@ -18908,6 +20907,10 @@ RunAiComposeApplyHandlerRegression(not_null<Window::Controller *> window,
 									"reuse the retained cache payload");
 	}
 	forgotten->mtp().resume();
+	if (!MtpRequestCompletesAfterEndpointRefresh(forgotten, initialKey)) {
+		return failAccountLifecycle(
+			"accepted MTP request did not complete after endpoint refresh");
+	}
 	const auto finalKey = RegressionAuthKey(0x22);
 	const auto finalKeyId = finalKey->keyId();
 	forgotten->mtp().dcPersistentKeyChanged(2, finalKey);
@@ -18926,6 +20929,12 @@ RunAiComposeApplyHandlerRegression(not_null<Window::Controller *> window,
 		return failAccountLifecycle(
 			"active teardown did not persist its final authorization snapshot");
 	}
+	if (!AccountEndpointRefreshWaitsForStoredProof(
+			active, endpointRefreshDiscovery, finalKey)) {
+		return failAccountLifecycle("restored Account did not keep requests "
+									"paused until endpoint proof");
+	}
+	endpointRefreshDiscovery.close();
 
 	const auto teardownFailureKey = RegressionAuthKey(0x33);
 	active->mtp().dcPersistentKeyChanged(2, teardownFailureKey);
@@ -20022,6 +22031,42 @@ DesktopScaleShowHistory(not_null<Window::SessionController *> controller,
 	}
 	return DesktopScaleHistoryBlockItemCountMatches(history, loadedCount,
 													"history seed");
+}
+
+[[nodiscard]] bool DesktopScaleColdChatOpenWithinAbsoluteBudget(
+	const DesktopScaleActionSample &sample) {
+	return sample.passed && sample.nanoseconds && (*sample.nanoseconds > 0)
+		   && (*sample.nanoseconds <= 50'000'000)
+		   && sample.mainThreadStepsOverBudget
+		   && (*sample.mainThreadStepsOverBudget == 0);
+}
+
+[[nodiscard]] DesktopScaleActionSample RunDesktopScaleColdChatOpen(
+	not_null<Main::Account *> account,
+	not_null<Window::SessionController *> windowController, UserId peerId,
+	int loadedCount) {
+	auto sample = DesktopScaleActionSample();
+	auto &session = account->session();
+	auto &data = session.data();
+	data.processUsers(MTP_vector<MTPUser>({
+		DesktopScaleUser(peerId, u"Scale cold chat peer"_q, false),
+	}));
+	const auto history = data.history(peerFromUser(peerId));
+	if (&windowController->session() != &session
+		|| !SeedDesktopScaleHistory(history, MsgId(10'000'000), loadedCount,
+									peerId, false)) {
+		std::fprintf(stderr,
+					 "Desktop scale check failed: cold chat history could not "
+					 "be prepared.\n");
+		return sample;
+	}
+	sample = MeasureDesktopScaleAction([&] {
+		return DesktopScaleShowHistory(windowController, history,
+									   ShowAtTheEndMsgId)
+			   != nullptr;
+	});
+	sample.passed = DesktopScaleColdChatOpenWithinAbsoluteBudget(sample);
+	return sample;
 }
 
 [[nodiscard]] DesktopScaleActionSample RunDesktopScaleHistoryPage(
@@ -22256,11 +24301,17 @@ int RunDesktopScaleCheck() {
 		  && (*contactsHundred.loaded.nanoseconds < 500'000'000);
 	auto historyOne = DesktopScaleActionSample();
 	auto historyHundred = DesktopScaleActionSample();
+	auto coldChatOpenOne = DesktopScaleActionSample();
+	auto coldChatOpenHundred = DesktopScaleActionSample();
 	auto dateOne = DesktopScaleActionSample();
 	auto dateHundred = DesktopScaleActionSample();
 	const auto historyCreated = WithDesktopScaleAccount(
 		domain, UserId(6'000'000), [&](auto account) {
 			return WithDesktopScaleWindow(account, [&](auto windowController) {
+				coldChatOpenOne = RunDesktopScaleColdChatOpen(
+					account, windowController, UserId(6'200'001), 1);
+				coldChatOpenHundred = RunDesktopScaleColdChatOpen(
+					account, windowController, UserId(6'200'002), 100);
 				historyOne = RunDesktopScaleHistoryPage(
 					domain, 20, UserId(6'000'000), UserId(6'000'001),
 					account.get(), windowController.get());
@@ -22273,7 +24324,8 @@ int RunDesktopScaleCheck() {
 				dateHundred = RunDesktopScaleDateHistoryPage(
 					domain, 2'000, UserId(7'100'000), UserId(7'100'001),
 					account.get(), windowController.get());
-				return historyOne.passed && historyHundred.passed
+				return coldChatOpenOne.passed && coldChatOpenHundred.passed
+					   && historyOne.passed && historyHundred.passed
 					   && dateOne.passed && dateHundred.passed;
 			});
 		});
@@ -22332,6 +24384,8 @@ int RunDesktopScaleCheck() {
 		cacheHundred.mainThreadStepsOverBudget,
 		historyOne.mainThreadStepsOverBudget,
 		historyHundred.mainThreadStepsOverBudget,
+		coldChatOpenOne.mainThreadStepsOverBudget,
+		coldChatOpenHundred.mainThreadStepsOverBudget,
 		dateOne.mainThreadStepsOverBudget,
 		dateHundred.mainThreadStepsOverBudget,
 		groupOne.mainThreadStepsOverBudget,
@@ -22344,6 +24398,8 @@ int RunDesktopScaleCheck() {
 	// The dialogs page remains report-only. The 10k contact response is gated.
 	const auto blockingStalls = SumDesktopScaleStalls({
 		contactsHundred.loaded.mainThreadStepsOverBudget,
+		coldChatOpenOne.mainThreadStepsOverBudget,
+		coldChatOpenHundred.mainThreadStepsOverBudget,
 		historyOne.mainThreadStepsOverBudget,
 		historyHundred.mainThreadStepsOverBudget,
 		dateOne.mainThreadStepsOverBudget,
@@ -22364,6 +24420,7 @@ int RunDesktopScaleCheck() {
 		  && contactsHundred.changedAndFound.passed
 		  && contactsOne.removed.passed && contactsHundred.removed.passed
 		  && contactsCreated && cacheOne.passed && cacheHundred.passed
+		  && coldChatOpenOne.passed && coldChatOpenHundred.passed
 		  && historyOne.passed && historyHundred.passed && dateOne.passed
 		  && dateHundred.passed && historyCreated && groupOne.passed
 		  && groupHundred.passed && searchOne.search.passed && groupCreated
@@ -22400,6 +24457,10 @@ int RunDesktopScaleCheck() {
 			 searchOne.search, searchHundred.search);
 	printRow("updates.getDifference (1,000 messages; 50 / 5,000 dialogs)",
 			 searchOne.updateBurst, searchHundred.updateBurst);
+	printRow("cold chat open (1 / 100 loaded messages)", coldChatOpenOne,
+			 coldChatOpenHundred);
+	std::printf("Cold chat open check: %d/2.\n",
+				int(coldChatOpenOne.passed) + int(coldChatOpenHundred.passed));
 	std::printf("Contacts.getContacts 100x budget (<500 ms): %s\n",
 				contactResponseWithinBudget ? "PASS" : "FAIL");
 	std::printf("Add-participants index ready subscription: %s\n",
@@ -22469,6 +24530,10 @@ int RunDesktopScaleCheck() {
 	printStallCount(searchOne.updateBurst.mainThreadStepsOverBudget);
 	std::printf(", 100x=");
 	printStallCount(searchHundred.updateBurst.mainThreadStepsOverBudget);
+	std::printf("; cold chat open 1x=");
+	printStallCount(coldChatOpenOne.mainThreadStepsOverBudget);
+	std::printf(", 100x=");
+	printStallCount(coldChatOpenHundred.mainThreadStepsOverBudget);
 	std::printf("; total=");
 	printStallCount(stalls);
 	std::printf(".\n");

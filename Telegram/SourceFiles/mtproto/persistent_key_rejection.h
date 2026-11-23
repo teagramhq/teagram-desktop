@@ -25,6 +25,7 @@ struct ConnectionErrorInfo {
 	int proxyPort = 0;
 	QString dialledAddress;
 	QString pinnedHostname;
+	bool unprovenEndpoint = false;
 };
 
 enum class PersistentKeyErrorDecision {
@@ -39,7 +40,7 @@ enum class PersistentKeyErrorDecision {
 		uint64 currentGeneration,
 		uint64 encryptionKeyId,
 		uint64 persistentKeyId) {
-	if (connection.proxied) {
+	if (connection.proxied || connection.unprovenEndpoint) {
 		return PersistentKeyErrorDecision::KeepAndStop;
 	}
 	const auto samePin = connection.pin.key
