@@ -24610,7 +24610,7 @@ void RunCustomEmojiUiSmoke(Fn<void(int)> done) {
 	}
 	if (sender->session().premium() || sender->session().paidFeaturesSupported()
 		|| !sender->mtp().dcOptions().hasCustomServer()
-		|| !sender->session().usesCustomServer()) {
+		|| !sender->session().usesCustomServerForPeerBadge()) {
 		return fail(
 			"sender fixture is not a non-Premium custom-server account");
 	}
@@ -24621,18 +24621,21 @@ void RunCustomEmojiUiSmoke(Fn<void(int)> done) {
 								  std::make_unique<Main::SessionSettings>())) {
 		return fail("could not create the non-Premium recipient session");
 	}
-	if (recipient->session().premium()
-		|| recipient->session().paidFeaturesSupported()
-		|| recipient->mtp().dcOptions().hasCustomServer()
-		|| recipient->session().usesCustomServer()) {
+	if (recipient->mtp().dcOptions().hasCustomServer()
+		|| recipient->session().usesCustomServerForPeerBadge()) {
 		return fail("unpinned recipient session was misclassified");
 	}
 	if (!ConfigurePinnedServer(recipient, RegressionServerKey())) {
 		return fail("could not pin the recipient custom server");
 	}
 	if (!recipient->mtp().dcOptions().hasCustomServer()
-		|| !recipient->session().usesCustomServer()) {
+		|| !recipient->session().usesCustomServerForPeerBadge()) {
 		return fail("recipient session did not track its custom-server pin");
+	}
+	if (recipient->session().premium()
+		|| recipient->session().paidFeaturesSupported()) {
+		return fail("pinned recipient fixture is not a non-Premium "
+					"custom-server account");
 	}
 	std::fprintf(stderr, "Custom emoji UI smoke: custom sessions ready.\n");
 

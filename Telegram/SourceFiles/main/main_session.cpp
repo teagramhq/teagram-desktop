@@ -174,12 +174,13 @@ Session::Session(
 , _saveSettingsTimer([=] { saveSettings(); }) {
 	Expects(_settings != nullptr);
 
-	_usesCustomServer.store(_account->mtp().dcOptions().hasCustomServer(),
-							std::memory_order_relaxed);
+	_usesCustomServerForPeerBadge.store(
+		_account->mtp().dcOptions().hasCustomServer(),
+		std::memory_order_relaxed);
 	_account->mtp().dcOptions().changed()
 		| rpl::on_next(
 			[=] {
-				_usesCustomServer.store(
+				_usesCustomServerForPeerBadge.store(
 					_account->mtp().dcOptions().hasCustomServer(),
 					std::memory_order_relaxed);
 			},
