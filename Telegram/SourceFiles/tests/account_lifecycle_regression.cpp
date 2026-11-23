@@ -11978,6 +11978,12 @@ struct SchedulerTraceWindow final {
 	qint64 mainThreadCpuEndNanoseconds = -1;
 };
 
+[[nodiscard]] SchedulerTraceWindow
+MarkSchedulerTraceCapturePending(SchedulerTraceWindow samples) {
+	samples.capturePending = true;
+	return samples;
+}
+
 [[nodiscard]] SchedulerTraceWindow SchedulerTraceForInterval(
 	const MainThreadWorkInterval &interval,
 	const std::vector<Core::UiStallWatchdog::PingAcknowledgementEvidence>
@@ -11992,7 +11998,7 @@ struct SchedulerTraceWindow final {
 	const auto start = interval.startedAtSteadyNanoseconds;
 	const auto windowEnd = start + interval.durationNanoseconds;
 	auto acknowledgementReachedWindowEnd = false;
-	auto hasUnusableCapture = false;
+	auto capturePending = false;
 	struct TraceSample final {
 		qint64 offset = 0;
 		QChar state;
@@ -12008,16 +12014,13 @@ struct SchedulerTraceWindow final {
 		}
 		acknowledgementReachedWindowEnd
 			= acknowledgementReachedWindowEnd || (acknowledgedAt >= windowEnd);
-		if (!acknowledgement.schedulerTraceComplete
-			|| acknowledgement.schedulerTrace.isEmpty()
+		capturePending
+			= capturePending || !acknowledgement.schedulerTraceComplete;
+		if (acknowledgement.schedulerTrace.isEmpty()
 			|| (acknowledgement.schedulerTrace == u"none"_q)
 			|| (acknowledgement.schedulerTrace.size()
 				!= qsizetype(acknowledgement.schedulerSampleOffsetsNanoseconds
 								 .size()))) {
-			if (!acknowledgement.schedulerTraceComplete) {
-				return {.capturePending = true};
-			}
-			hasUnusableCapture = true;
 			continue;
 		}
 		for (auto i = std::size_t(0);
@@ -12046,11 +12049,6 @@ struct SchedulerTraceWindow final {
 			}
 		}
 	}
-	if (!acknowledgementReachedWindowEnd) {
-		return {.capturePending = true};
-	} else if (hasUnusableCapture) {
-		return {};
-	}
 	std::sort(begin(samples), end(samples),
 			  [](const auto &a, const auto &b) { return a.offset < b.offset; });
 	auto result = SchedulerTraceWindow();
@@ -12064,7 +12062,7 @@ struct SchedulerTraceWindow final {
 		result.sampleMainThreadCpuNanoseconds.push_back(
 			sample.mainThreadCpuNanoseconds);
 	}
-	result.capturePending = !acknowledgementReachedWindowEnd;
+	result.capturePending = capturePending || !acknowledgementReachedWindowEnd;
 	return result;
 }
 
@@ -12841,15 +12839,8 @@ struct StartupWorkEstimate final {
 	const std::vector<Core::UiStallWatchdog::SchedulerSampleEvidence>
 		&continuousSchedulerSamples) {
 	const auto estimateFor = [&](const SchedulerTraceWindow &samples) {
-		auto estimateSamples = samples;
-		if (samples.capturePending) {
-			estimateSamples.trace.clear();
-			estimateSamples.sampleOffsetsNanoseconds.clear();
-			estimateSamples.sampleMainThreadCpuNanoseconds.clear();
-		}
 		return EstimateMainThreadWork(interval.mainThreadWorkNanoseconds,
-									  interval.durationNanoseconds,
-									  estimateSamples);
+									  interval.durationNanoseconds, samples);
 	};
 	auto schedulerSamples
 		= SchedulerTraceForInterval(interval, continuousSchedulerSamples);
@@ -12859,11 +12850,19 @@ struct StartupWorkEstimate final {
 			= SchedulerTraceForInterval(interval, acknowledgements);
 		const auto acknowledgementEstimate
 			= estimateFor(acknowledgementSamples);
+		const auto acknowledgementNeedsStallFallback
+			= acknowledgementSamples.capturePending
+			  || (acknowledgementEstimate.blockedNanoseconds < 0);
 		if (!acknowledgementSamples.capturePending
 			&& (acknowledgementEstimate.blockedNanoseconds >= 0)) {
 			schedulerSamples = std::move(acknowledgementSamples);
 			estimate = acknowledgementEstimate;
-		} else {
+		} else if ((acknowledgementEstimate.blockedNanoseconds > 0)
+				   || acknowledgementEstimate.wallFallbackRequired) {
+			schedulerSamples = std::move(acknowledgementSamples);
+			estimate = acknowledgementEstimate;
+		}
+		if (acknowledgementNeedsStallFallback) {
 			const auto matchingStall = FindMatchingMainThreadWorkEvidence(
 				interval, stallEvidence,
 				kStartupHeartbeatGapThresholdNanoseconds);
@@ -13423,6 +13422,87 @@ void AccumulateMainThreadWorkEstimate(qint64 &aggregateNanoseconds,
 		.durationNanoseconds = 225'000'000,
 		.startedAtSteadyNanoseconds = 10'000'000,
 	};
+	const auto pendingCaptureTimeline = [](qint64 start) {
+		auto result
+			= std::vector<Core::UiStallWatchdog::SchedulerSampleEvidence>();
+		for (auto offset = qint64(0); offset <= 60'000'000;
+			 offset += 10'000'000) {
+			result.push_back({
+				.sampledAtSteadyNanoseconds = start + offset,
+				.state = offset ? 'W' : 'R',
+			});
+		}
+		return result;
+	};
+	const auto pendingFirstAccessWindow = MainThreadWorkInterval{
+		.durationNanoseconds = 90'000'000,
+		.mainThreadWorkNanoseconds = 1'000'000,
+		.startedAtSteadyNanoseconds = 300'000'000,
+	};
+	const auto pendingFirstAccessTimeline = pendingCaptureTimeline(
+		pendingFirstAccessWindow.startedAtSteadyNanoseconds);
+	const auto pendingFirstAccessSamples = SchedulerTraceForInterval(
+		pendingFirstAccessWindow, pendingFirstAccessTimeline);
+	const auto pendingFirstAccessTimeoutSamples
+		= MarkSchedulerTraceCapturePending(pendingFirstAccessSamples);
+	const auto pendingFirstAccessEstimate = EstimateMainThreadWork(
+		pendingFirstAccessWindow.mainThreadWorkNanoseconds,
+		pendingFirstAccessWindow.durationNanoseconds,
+		pendingFirstAccessTimeoutSamples);
+	const auto pendingFirstAccessAssessment = AssessMainThreadWorkBudget(
+		pendingFirstAccessEstimate,
+		pendingFirstAccessWindow.mainThreadWorkNanoseconds,
+		kMaxChatSwitchNanoseconds);
+	auto pendingFirstAccessRun = MainThreadWorkBudgetRun();
+	const auto pendingFirstAccessWithinBudget = pendingFirstAccessRun.Observe(
+		pendingFirstAccessAssessment,
+		pendingFirstAccessWindow.durationNanoseconds, kMaxChatSwitchNanoseconds,
+		pendingFirstAccessWindow.startedAtSteadyNanoseconds);
+	const auto pendingStartupWindow = MainThreadWorkInterval{
+		.durationNanoseconds = 110'000'000,
+		.mainThreadWorkNanoseconds = 1'000'000,
+		.startedAtSteadyNanoseconds = 500'000'000,
+	};
+	const auto pendingStartupTimeline = pendingCaptureTimeline(
+		pendingStartupWindow.startedAtSteadyNanoseconds);
+	const auto pendingCaptureAcknowledgements = [](qint64 start) {
+		return std::vector<Core::UiStallWatchdog::PingAcknowledgementEvidence>{
+			{
+				.acknowledgedAtNanoseconds = start + 60'000'000,
+				.sequence = 1,
+				.postedAtSteadyNanoseconds = start,
+				.schedulerTrace = u"RWWWWWW"_q,
+				.schedulerSampleOffsetsNanoseconds
+				= {0, 10'000'000, 20'000'000, 30'000'000, 40'000'000,
+				   50'000'000, 60'000'000},
+				.schedulerTraceComplete = true,
+			},
+			{
+				.acknowledgedAtNanoseconds = start + 70'000'000,
+				.sequence = 2,
+				.postedAtSteadyNanoseconds = start + 60'000'000,
+			},
+		};
+	};
+	const auto pendingFirstAccessAcknowledgements
+		= pendingCaptureAcknowledgements(
+			pendingFirstAccessWindow.startedAtSteadyNanoseconds);
+	const auto pendingAcknowledgementWindow = SchedulerTraceForInterval(
+		pendingFirstAccessWindow, pendingFirstAccessAcknowledgements);
+	const auto pendingStartupAcknowledgements = pendingCaptureAcknowledgements(
+		pendingStartupWindow.startedAtSteadyNanoseconds);
+	const auto pendingStartupWork = EstimateStartupWork(
+		pendingStartupWindow, pendingStartupAcknowledgements, {},
+		pendingStartupTimeline);
+	const auto pendingStartupAssessment = AssessMainThreadWorkBudget(
+		pendingStartupWork.estimate,
+		pendingStartupWindow.mainThreadWorkNanoseconds,
+		kMaxStartupHeartbeatThreadWorkNanoseconds);
+	auto pendingStartupRun = MainThreadWorkBudgetRun();
+	const auto pendingStartupWithinBudget = pendingStartupRun.Observe(
+		pendingStartupAssessment, pendingStartupWindow.durationNanoseconds,
+		kMaxStartupHeartbeatThreadWorkNanoseconds,
+		pendingStartupWindow.startedAtSteadyNanoseconds);
 	auto continuousSchedulerTimeline
 		= std::vector<Core::UiStallWatchdog::SchedulerSampleEvidence>();
 	continuousSchedulerTimeline.reserve(228);
@@ -13755,7 +13835,28 @@ void AccumulateMainThreadWorkEstimate(qint64 &aggregateNanoseconds,
 			   sparseStartupCapture.trace,
 			   sparseStartupCapture.sampleOffsetsNanoseconds, 100'000'000)
 		   && uncapturedWindow.capturePending
-		   && incompleteWindow.trace.isEmpty()
+		   && pendingFirstAccessTimeoutSamples.capturePending
+		   && (pendingFirstAccessTimeoutSamples.trace == u"RWWWWWW"_q)
+		   && (pendingFirstAccessTimeoutSamples.sampleOffsetsNanoseconds.back()
+			   == 60'000'000)
+		   && !pendingFirstAccessAssessment.schedulerEvidenceAvailable
+		   && (pendingFirstAccessAssessment.workNanoseconds == 90'000'000)
+		   && !pendingFirstAccessAssessment.withinBudget
+		   && !MainThreadWorkBudgetIsUntracedWallOverrun(
+			   pendingFirstAccessAssessment, 90'000'000,
+			   kMaxChatSwitchNanoseconds)
+		   && !pendingFirstAccessWithinBudget
+		   && !pendingFirstAccessRun.WithinBudget()
+		   && pendingAcknowledgementWindow.capturePending
+		   && (pendingAcknowledgementWindow.trace == u"RWWWWWW"_q)
+		   && (pendingAcknowledgementWindow.sampleOffsetsNanoseconds.back()
+			   == 60'000'000)
+		   && pendingStartupWork.schedulerSamples.capturePending
+		   && (pendingStartupWork.schedulerSamples.trace == u"RWWWWWW"_q)
+		   && (pendingStartupAssessment.workNanoseconds == 110'000'000)
+		   && !pendingStartupAssessment.withinBudget
+		   && !pendingStartupWithinBudget && !pendingStartupRun.WithinBudget()
+		   && (incompleteWindow.trace == QString(5, QChar(u'R')))
 		   && incompleteWindow.capturePending
 		   && completedWithoutTraceWindow.trace.isEmpty()
 		   && completedWithoutTraceWindow.capturePending
@@ -16129,12 +16230,11 @@ RunFirstDialogsHandlerLatencyRegression(
 			  ? SchedulerTraceForInterval(
 					handlerInterval,
 					Core::UiStallWatchdog::RecentSchedulerSamplesForTesting())
-			  : SchedulerTraceWindow{.capturePending = true};
-	if (!handlerSchedulerSamples.capturePending) {
-		result.handlerSchedulerTrace = handlerSchedulerSamples.trace;
-		result.handlerSchedulerSampleOffsetsNanoseconds
-			= handlerSchedulerSamples.sampleOffsetsNanoseconds;
-	}
+			  : MarkSchedulerTraceCapturePending(SchedulerTraceForInterval(
+					handlerInterval, handlerSchedulerTimeline));
+	result.handlerSchedulerTrace = handlerSchedulerSamples.trace;
+	result.handlerSchedulerSampleOffsetsNanoseconds
+		= handlerSchedulerSamples.sampleOffsetsNanoseconds;
 	const auto handlerEstimate = EstimateMainThreadWork(
 		result.handlerMainThreadCpuNanoseconds, result.handlerNanoseconds,
 		handlerSchedulerSamples);
@@ -16651,7 +16751,8 @@ void RunAuthenticatedCacheSymlinkCases(
 					&& !WaitForRegressionCondition(firstAccessCaptureSettled,
 												   1000)) {
 					firstAccessSchedulerSamples
-						= SchedulerTraceWindow{.capturePending = true};
+						= MarkSchedulerTraceCapturePending(
+							std::move(firstAccessSchedulerSamples));
 				}
 			}
 			const auto firstAccessEstimate = EstimateMainThreadWork(
