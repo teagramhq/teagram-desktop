@@ -53,6 +53,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_ai_compose_tones.h"
 #include "data/data_channel.h"
 #include "data/data_chat.h"
+#include "data/data_changes.h"
 #include "data/data_cloud_themes.h"
 #include "data/data_download_manager.h"
 #include "data/data_document.h"
@@ -14092,6 +14093,53 @@ SchedulerEvidenceDiagnosticsRegressionPasses() {
 	return (workNanoseconds >= 0) && (workNanoseconds < budgetNanoseconds);
 }
 
+[[nodiscard]] bool PeerScopedUpdateRoutingRegressionPasses(
+		not_null<Main::Session*> session,
+		not_null<PeerData*> first,
+		not_null<PeerData*> second) {
+	auto changes = Data::Changes(session);
+	auto firstLifetime = rpl::lifetime();
+	auto secondLifetime = rpl::lifetime();
+	auto globalLifetime = rpl::lifetime();
+	auto firstUpdates = 0;
+	auto secondUpdates = 0;
+	auto globalUpdates = 0;
+	using Flag = Data::PeerUpdate::Flag;
+	changes.peerUpdates(first, Flag::Name) | rpl::on_next(
+		[&](const Data::PeerUpdate &update) {
+			if (update.peer == first && (update.flags & Flag::Name)) {
+				++firstUpdates;
+			}
+		},
+		firstLifetime);
+	changes.peerUpdates(second, Flag::Name) | rpl::on_next(
+		[&](const Data::PeerUpdate &update) {
+			if (update.peer == second && (update.flags & Flag::Name)) {
+				++secondUpdates;
+			}
+		},
+		secondLifetime);
+	changes.peerUpdates(Flag::Name) | rpl::on_next(
+		[&](const Data::PeerUpdate &update) {
+			if (update.flags & Flag::Name) {
+				++globalUpdates;
+			}
+		},
+		globalLifetime);
+	changes.peerUpdated(first, Flag::Name);
+	changes.peerUpdated(second, Flag::Name);
+	changes.sendNotifications();
+	const auto firstRoundRouted
+		= (firstUpdates == 1) && (secondUpdates == 1) && (globalUpdates == 2);
+	firstLifetime.destroy();
+	changes.peerUpdated(first, Flag::Name);
+	changes.peerUpdated(second, Flag::Name);
+	changes.sendNotifications();
+	QCoreApplication::processEvents();
+	return firstRoundRouted && (firstUpdates == 1) && (secondUpdates == 2)
+		   && (globalUpdates == 4);
+}
+
 struct CacheChatSwitchRegressionResult final {
 	int attachMenuBotCount = 0;
 	int reactions = 0;
@@ -14158,6 +14206,7 @@ struct CacheChatSwitchRegressionResult final {
 	bool initialHistorySelectionSchedulerPreemptionProven = false;
 	bool dialogHistoriesReady = false;
 	bool syntheticHistoriesReady = false;
+	bool peerScopedUpdateRouting = false;
 	bool attachMenuCacheReused = false;
 	bool attachMenuInvalidationRebuilt = false;
 	bool attachMenuBuildDeferredUntilHover = false;
@@ -14599,6 +14648,8 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		= emptyFirstHistory->isEmpty() && emptySecondHistory->isEmpty()
 		  && emptyFirstHistory->isReadyFor(ShowAtUnreadMsgId)
 		  && emptySecondHistory->isReadyFor(ShowAtUnreadMsgId);
+	result.peerScopedUpdateRouting = PeerScopedUpdateRoutingRegressionPasses(
+		&session, firstHistory->peer, secondHistory->peer);
 	const auto historyWidget
 		= controller->content()->historyWidgetForRegressionTest();
 	if (!historyWidget) {
@@ -16129,6 +16180,7 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 			  == kReactionCount * kDocumentsPerReaction)
 		  && (result.chatSwitches == kExpectedChatSwitches)
 		  && result.dialogHistoriesReady && result.syntheticHistoriesReady
+		  && result.peerScopedUpdateRouting
 		  && (result.cachedDocuments
 			  == (kReactionCount / 2 + 1) * kDocumentsPerReaction)
 		  && result.historyScaleInvalidationRebuilt
@@ -17317,6 +17369,7 @@ void RunAuthenticatedCacheSymlinkCases(
 					"history_chat_mode_invalidation_rebuilt=%d "
 					"dialog_histories_ready=%d "
 					"synthetic_histories_ready=%d "
+					"peer_scoped_update_routing=%d "
 					"max_stall_ns=%lld within_budgets=%d.\n",
 					chatSwitch.reactions, chatSwitch.hydratedDocuments,
 					chatSwitch.chatSwitches, chatSwitch.attachMenuBotCount,
@@ -17385,6 +17438,7 @@ void RunAuthenticatedCacheSymlinkCases(
 					chatSwitch.historyChatModeInvalidationRebuilt,
 					chatSwitch.dialogHistoriesReady,
 					chatSwitch.syntheticHistoriesReady,
+					chatSwitch.peerScopedUpdateRouting,
 					static_cast<long long>(chatSwitch.maxStallNanoseconds),
 					chatSwitch.passed);
 				std::fprintf(

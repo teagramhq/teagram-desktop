@@ -23,7 +23,16 @@ void Changes::Manager<DataType, UpdateType>::updated(
 			flags |= i->second;
 			_updates.erase(i);
 		}
-		_stream.fire({ data, flags });
+		const auto update = UpdateType{ data, flags };
+		const auto scoped = _scopedStreams.find(data);
+		const auto scopedStream = (scoped != _scopedStreams.end())
+			? scoped->second
+			: nullptr;
+		_stream.fire_copy(update);
+		if (scopedStream) {
+			scopedStream->fire_copy(update);
+		}
+		drop(data);
 	} else {
 		_updates[data] |= flags;
 	}
@@ -54,10 +63,14 @@ template <typename DataType, typename UpdateType>
 rpl::producer<UpdateType> Changes::Manager<DataType, UpdateType>::updates(
 		not_null<DataType*> data,
 		Flags flags) const {
-	return _stream.events(
+	auto &scopedStream = _scopedStreams[data];
+	if (!scopedStream) {
+		scopedStream
+			= std::make_shared<rpl::event_stream<UpdateType>>();
+	}
+	return scopedStream->events(
 	) | rpl::filter([=](const UpdateType &update) {
-		const auto &[updateData, updateFlags] = update;
-		return (updateData == data) && (updateFlags & flags);
+		return (update.flags & flags);
 	});
 }
 
@@ -79,12 +92,21 @@ rpl::producer<UpdateType> Changes::Manager<DataType, UpdateType>::flagsValue(
 template <typename DataType, typename UpdateType>
 void Changes::Manager<DataType, UpdateType>::drop(not_null<DataType*> data) {
 	_updates.remove(data);
+	_scopedStreams.remove(data);
 }
 
 template <typename DataType, typename UpdateType>
 void Changes::Manager<DataType, UpdateType>::sendNotifications() {
 	for (const auto &[data, flags] : base::take(_updates)) {
-		_stream.fire({ data, flags });
+		const auto update = UpdateType{ data, flags };
+		const auto scoped = _scopedStreams.find(data);
+		const auto scopedStream = (scoped != _scopedStreams.end())
+			? scoped->second
+			: nullptr;
+		_stream.fire_copy(update);
+		if (scopedStream) {
+			scopedStream->fire_copy(update);
+		}
 	}
 }
 

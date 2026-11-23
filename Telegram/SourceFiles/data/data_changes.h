@@ -10,6 +10,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "base/flags.h"
 #include "data/data_chat_participant_status.h"
 
+#include <memory>
+
 class History;
 class PeerData;
 class UserData;
@@ -456,6 +458,9 @@ private:
 
 		std::array<rpl::event_stream<UpdateType>, kCount> _realtimeStreams;
 		base::flat_map<not_null<DataType*>, Flags> _updates;
+		mutable base::flat_map<
+			not_null<DataType*>,
+			std::shared_ptr<rpl::event_stream<UpdateType>>> _scopedStreams;
 		rpl::event_stream<UpdateType> _stream;
 
 	};
