@@ -320,9 +320,7 @@ Main::Account &PeerData::account() const {
 	return session().account();
 }
 
-bool PeerData::usesCustomServer() const {
-	return session().usesCustomServer();
-}
+bool PeerData::usesCustomServer() const { return session().usesCustomServer(); }
 
 void PeerData::updateNameDelayed(
 		const QString &newName,

@@ -24632,8 +24632,7 @@ void RunCustomEmojiUiSmoke(Fn<void(int)> done) {
 	}
 	if (!recipient->mtp().dcOptions().hasCustomServer()
 		|| !recipient->session().usesCustomServer()) {
-		return fail(
-			"recipient session did not track its custom-server pin");
+		return fail("recipient session did not track its custom-server pin");
 	}
 	std::fprintf(stderr, "Custom emoji UI smoke: custom sessions ready.\n");
 
