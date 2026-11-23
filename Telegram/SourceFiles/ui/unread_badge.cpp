@@ -12,6 +12,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_user.h"
 #include "data/data_session.h"
 #include "data/stickers/data_custom_emoji.h"
+#include "data/stickers/data_custom_emoji_policy.h"
 #include "main/main_session.h"
 #include "lang/lang_keys.h"
 #include "ui/painter.h"
@@ -240,17 +241,19 @@ int PeerBadge::drawGetWidth(Painter &p, Descriptor &&descriptor) {
 	const auto peer = descriptor.peer;
 	if ((descriptor.scam && (peer->isScam() || peer->isFake()))
 		|| (descriptor.direct && peer->isMonoforum())) {
+		_emojiStatus = nullptr;
 		return drawTextBadge(p, descriptor);
 	}
 	const auto verifyCheck = descriptor.verified && peer->isVerified();
 	const auto premiumMark = descriptor.premium
 		&& peer->session().premiumBadgesShown();
-	const auto emojiStatus = premiumMark
-		&& peer->emojiStatusId()
-		&& (peer->isPremium() || peer->isChannel());
-	const auto premiumStar = premiumMark
-		&& !emojiStatus
-		&& peer->isPremium();
+	const auto emojiStatus
+		= descriptor.premium && peer->emojiStatusId()
+		  && Data::details::EmojiStatusVisibleForPeerBadge(
+			  peer->session().premiumBadgesShown(),
+			  peer->isPremium() || peer->isChannel(),
+			  peer->isUser() && peer->session().usesCustomServerForPeerBadge());
+	const auto premiumStar = premiumMark && !emojiStatus && peer->isPremium();
 
 	const auto paintVerify = verifyCheck
 		&& (descriptor.prioritizeVerification
@@ -259,6 +262,9 @@ int PeerBadge::drawGetWidth(Painter &p, Descriptor &&descriptor) {
 	const auto paintEmoji = emojiStatus
 		&& (!paintVerify || descriptor.bothVerifyAndStatus);
 	const auto paintStar = premiumStar && !paintVerify;
+	if (!paintEmoji) {
+		_emojiStatus = nullptr;
+	}
 
 	auto result = 0;
 	if (paintEmoji) {

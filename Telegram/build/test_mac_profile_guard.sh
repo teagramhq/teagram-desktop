@@ -455,6 +455,7 @@ run_spoiler_cache_symlink_case() {
 	local SOCKET_LISTENER_READY=false
 	local SOCKET_FILE_READY=false
 	local FIRST_PROCESS_ALIVE=false
+	local CACHE_REFUSAL_READY=false
 	local FAILURES=0
 	local quit_status
 	local first_status
@@ -511,6 +512,10 @@ run_spoiler_cache_symlink_case() {
 		if [[ -S "$SOCKET_PATH" ]]; then
 			SOCKET_FILE_READY=true
 		fi
+		if grep -F -q 'class=group-container callsite=emojiCacheFolder' \
+			"$START_LOG" "$PROFILE/log.txt" 2>/dev/null; then
+			CACHE_REFUSAL_READY=true
+		fi
 		if kill -0 "$FIRST_PID" 2>/dev/null; then
 			FIRST_PROCESS_ALIVE=true
 		fi
@@ -520,6 +525,7 @@ run_spoiler_cache_symlink_case() {
 			&& "$SOCKET_PATH_READY" == true \
 			&& "$SOCKET_LISTENER_READY" == true \
 			&& "$SOCKET_FILE_READY" == true \
+			&& "$CACHE_REFUSAL_READY" == true \
 			&& "$FIRST_PROCESS_ALIVE" == true ]]; then
 			break
 		fi

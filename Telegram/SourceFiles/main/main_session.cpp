@@ -174,6 +174,18 @@ Session::Session(
 , _saveSettingsTimer([=] { saveSettings(); }) {
 	Expects(_settings != nullptr);
 
+	_usesCustomServerForPeerBadge.store(
+		_account->mtp().dcOptions().hasCustomServer(),
+		std::memory_order_relaxed);
+	_account->mtp().dcOptions().changed()
+		| rpl::on_next(
+			[=] {
+				_usesCustomServerForPeerBadge.store(
+					_account->mtp().dcOptions().hasCustomServer(),
+					std::memory_order_relaxed);
+			},
+			_lifetime);
+
 	_api->requestTermsUpdate();
 	_api->requestFullPeer(_user);
 

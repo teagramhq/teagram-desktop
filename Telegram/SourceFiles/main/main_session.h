@@ -7,6 +7,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #pragma once
 
+#include <atomic>
 #include <rpl/filter.h>
 #include <rpl/variable.h>
 #include "base/timer.h"
@@ -129,6 +130,9 @@ public:
 	[[nodiscard]] bool premiumPossible() const;
 	[[nodiscard]] rpl::producer<bool> premiumPossibleValue() const;
 	[[nodiscard]] bool premiumBadgesShown() const;
+	[[nodiscard]] bool usesCustomServerForPeerBadge() const {
+		return _usesCustomServerForPeerBadge.load(std::memory_order_relaxed);
+	}
 	[[nodiscard]] bool premiumCanBuy() const;
 	[[nodiscard]] bool callsSupported() const;
 	[[nodiscard]] bool botAppsSupported() const;
@@ -314,6 +318,8 @@ private:
 
 	const UserId _userId;
 	const not_null<Account*> _account;
+	// Updated on DC options changes; badge painting avoids the DC options lock.
+	std::atomic_bool _usesCustomServerForPeerBadge = false;
 
 	const std::unique_ptr<SessionSettings> _settings;
 	const std::unique_ptr<Data::Changes> _changes;
