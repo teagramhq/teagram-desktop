@@ -2269,9 +2269,23 @@ awk '
   copy { print }
 ' "$native_harness" > "$temp_dir/cache-first-selection.cpp"
 grep -Fq 'showPeerHistoryMeasured(emptyFirstHistory)' "$temp_dir/cache-first-selection.cpp" \
-	&& grep -Fq 'showPeerHistoryMeasured(target)' "$temp_dir/cache-first-selection.cpp" \
+	&& grep -Fq 'showPeerHistoryMeasured(target, true)' "$temp_dir/cache-first-selection.cpp" \
 	&& grep -Fq 'constexpr auto kWarmupChatSwitches = 8;' "$temp_dir/cache-first-selection.cpp" \
-	|| contract_fail 'The cold history selection and all eight warm-up switches must use the measured path.'
+	&& grep -Fq 'showPeerHistoryMeasured(target)' "$temp_dir/cache-first-selection.cpp" \
+	|| contract_fail 'The cold selection, measured startup priming, and all eight measured warm-up switches must remain in the fixture.'
+grep -Fq 'startupTimingBudgetRun.Observe(' "$native_harness" \
+	&& grep -Fq 'const auto windowBudgetNanoseconds = (i == 0)' "$native_harness" \
+	&& grep -Fq 'kMaxStartupHeartbeatThreadWorkNanoseconds' "$native_harness" \
+	&& grep -Fq 'startupTimingBudgetRun.WithinBudget()' "$native_harness" \
+	&& grep -Fq 'result.initialHistorySelectionWithinBudget' "$native_harness" \
+	|| contract_fail 'The cold selection and measured history priming must use and enforce the existing 100 ms startup budget.'
+grep -Fq "kMaxChatSwitchNanoseconds = qint64(50'000'000)" "$native_harness" \
+	&& grep -Fq "kMaxStartupHeartbeatThreadWorkNanoseconds = qint64(100'000'000)" "$native_harness" \
+	|| contract_fail 'The 50 ms chat-switch and 100 ms startup budgets must remain unchanged.'
+grep -Fq 'injectedChatSwitchStallAssessment' "$native_harness" \
+	&& grep -Fq '!injectedChatSwitchStallWithinBudget' "$native_harness" \
+	&& grep -Fq '!injectedChatSwitchStallRun.WithinBudget()' "$native_harness" \
+	|| contract_fail 'An injected main-thread stall above the 50 ms chat-switch budget must still fail.'
 awk '
   /void Sandbox::startFontDatabaseWarmup\(\)/ { copy = 1 }
   copy && /_fontDatabaseWarmupThread = std::thread/ { print; exit }
@@ -2441,6 +2455,16 @@ awk '
   END { exit !reads_appkit }
 ' "$mac_platform" \
   || contract_fail "$mac_platform must expose the current AppKit application activation state."
+awk '
+  /^ActivateWindowForRegression\(/ { in_activation = 1 }
+  in_activation && /window->activate\(\)/ { qt_activate = NR }
+  in_activation && /Platform::ActivateThisProcess\(window->widget\(\)\)/ {
+    appkit_activate = NR
+  }
+  in_activation && /^}/ { exit }
+  END { exit !(qt_activate && appkit_activate > qt_activate) }
+' "$native_harness" \
+  || contract_fail 'AppKit must receive a final key-window activation request after each Qt window activation.'
 grep -Fq 'WindowActivationForRegressionResult::AppInactive' "$native_harness" \
   || contract_fail "$native_harness must classify focus checks as unavailable when AppKit has no active application."
 grep -Fq 'AppKit app remained inactive during focus verification.' "$native_harness" \
