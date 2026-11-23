@@ -29,7 +29,7 @@ void Changes::Manager<DataType, UpdateType>::updated(
 			= (scoped != _scopedStreams->end()) ? scoped->second : nullptr;
 		_stream.fire_copy(update);
 		if (scopedStream) {
-			scopedStream->fire_copy(update);
+			scopedStream->stream.fire_copy(update);
 		}
 		drop(data);
 	} else {
@@ -130,7 +130,7 @@ void Changes::Manager<DataType, UpdateType>::sendNotifications() {
 			= (scoped != _scopedStreams->end()) ? scoped->second : nullptr;
 		_stream.fire_copy(update);
 		if (scopedStream) {
-			scopedStream->fire_copy(update);
+			scopedStream->stream.fire_copy(update);
 		}
 	}
 }
