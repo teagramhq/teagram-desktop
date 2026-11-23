@@ -317,7 +317,8 @@ public:
 	[[nodiscard]] rpl::producer<PeerUpdate> peerUpdates(
 		not_null<PeerData*> peer,
 		PeerUpdate::Flags flags) const;
-	[[nodiscard]] bool peerUpdateScopedStreamsEmptyForRegressionTest() const;
+	[[nodiscard]] int peerUpdateScopedSubscriptionCountForRegressionTest(
+		not_null<PeerData *> peer) const;
 	[[nodiscard]] rpl::producer<PeerUpdate> peerFlagsValue(
 		not_null<PeerData*> peer,
 		PeerUpdate::Flags flags) const;
@@ -450,18 +451,29 @@ private:
 		void drop(not_null<DataType*> data);
 
 		void sendNotifications();
-		[[nodiscard]] bool scopedStreamsEmptyForRegressionTest() const {
-			return _scopedStreams->empty();
+		[[nodiscard]] int scopedSubscriptionCountForRegressionTest(
+			not_null<DataType *> data) const {
+			const auto i = _scopedStreams->find(data.get());
+			return (i == _scopedStreams->end())
+					   ? 0
+					   : int(i->second->subscriptions.size());
 		}
 
 	private:
 		static constexpr auto kCount = details::CountBit<Flag>() + 1;
 		struct ScopedStream final {
-			rpl::event_stream<UpdateType> stream;
-			int subscriptions = 0;
+			using SubscriptionId = uint64;
+			std::map<SubscriptionId,
+					 std::shared_ptr<rpl::event_stream<UpdateType>>>
+				subscriptions;
+			SubscriptionId nextSubscriptionId = 0;
 		};
 		using ScopedStreams
 			= std::map<DataType *, std::shared_ptr<ScopedStream>>;
+
+		void sendScopedNotifications(
+			const std::shared_ptr<ScopedStream> &scopedStream,
+			const UpdateType &update) const;
 
 		void sendRealtimeNotifications(
 			not_null<DataType*> data,

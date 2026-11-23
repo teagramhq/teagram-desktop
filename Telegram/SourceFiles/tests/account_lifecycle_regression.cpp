@@ -14097,69 +14097,127 @@ SchedulerEvidenceDiagnosticsRegressionPasses() {
 PeerScopedUpdateRoutingRegressionPasses(not_null<Main::Session *> session,
 										not_null<PeerData *> first,
 										not_null<PeerData *> second) {
-	auto changes = Data::Changes(session);
+	auto &changes = session->changes();
+	using Flag = Data::PeerUpdate::Flag;
+	using Flags = Data::PeerUpdate::Flags;
+	struct Delivery final {
+		int subscriber = 0;
+		PeerData *peer = nullptr;
+		Flags flags;
+	};
+	auto deliveries = std::vector<Delivery>();
+	auto expected = std::vector<Delivery>();
+	const auto deliveriesMatch = [&] {
+		if (deliveries.size() != expected.size()) {
+			return false;
+		}
+		for (auto i = 0U; i != deliveries.size(); ++i) {
+			if ((deliveries[i].subscriber != expected[i].subscriber)
+				|| (deliveries[i].peer != expected[i].peer)
+				|| (deliveries[i].flags != expected[i].flags)) {
+				return false;
+			}
+		}
+		return true;
+	};
+	const auto subscribe
+		= [&](not_null<PeerData *> peer, int subscriber,
+			  rpl::lifetime &lifetime, Flags flags = Flag::Name) {
+			  changes.peerUpdates(peer, flags)
+				  | rpl::on_next(
+					  [&, subscriber](const Data::PeerUpdate &update) {
+						  deliveries.push_back({
+							  subscriber,
+							  update.peer.get(),
+							  update.flags,
+						  });
+					  },
+					  lifetime);
+		  };
+	const auto send = [&](not_null<PeerData *> peer, Flags flags,
+						  std::vector<int> subscribers) {
+		changes.peerUpdated(peer, flags);
+		changes.sendNotifications();
+		for (const auto subscriber : subscribers) {
+			expected.push_back({subscriber, peer.get(), flags});
+		}
+		return deliveriesMatch();
+	};
+	const auto firstBaseline
+		= changes.peerUpdateScopedSubscriptionCountForRegressionTest(first);
+	const auto secondBaseline
+		= changes.peerUpdateScopedSubscriptionCountForRegressionTest(second);
 	auto firstLifetime = rpl::lifetime();
 	auto secondLifetime = rpl::lifetime();
 	auto globalLifetime = rpl::lifetime();
-	auto firstUpdates = 0;
-	auto secondUpdates = 0;
-	auto globalUpdates = 0;
-	using Flag = Data::PeerUpdate::Flag;
-	changes.peerUpdates(first, Flag::Name)
-		| rpl::on_next(
-			[&](const Data::PeerUpdate &update) {
-				if (update.peer == first && (update.flags & Flag::Name)) {
-					++firstUpdates;
-				}
-			},
-			firstLifetime);
-	changes.peerUpdates(second, Flag::Name)
-		| rpl::on_next(
-			[&](const Data::PeerUpdate &update) {
-				if (update.peer == second && (update.flags & Flag::Name)) {
-					++secondUpdates;
-				}
-			},
-			secondLifetime);
+	auto survivingFirstLifetime = rpl::lifetime();
+	subscribe(first, 1, firstLifetime);
+	subscribe(second, 2, secondLifetime);
 	changes.peerUpdates(Flag::Name)
 		| rpl::on_next(
 			[&](const Data::PeerUpdate &update) {
-				if (update.flags & Flag::Name) {
-					++globalUpdates;
-				}
+				deliveries.push_back({3, update.peer.get(), update.flags});
 			},
 			globalLifetime);
-	changes.peerUpdated(first, Flag::Name);
-	changes.peerUpdated(second, Flag::Name);
-	changes.sendNotifications();
-	const auto firstRoundRouted
-		= (firstUpdates == 1) && (secondUpdates == 1) && (globalUpdates == 2);
+	subscribe(first, 4, survivingFirstLifetime);
+	auto countsMatch = [&] {
+		return (changes.peerUpdateScopedSubscriptionCountForRegressionTest(
+					first)
+				== firstBaseline + 2)
+			   && (changes.peerUpdateScopedSubscriptionCountForRegressionTest(
+					   second)
+				   == secondBaseline + 1);
+	};
+	auto routingPassed = countsMatch();
+	routingPassed = send(first, Flag::Name, {3, 1, 4}) && routingPassed;
+	routingPassed = send(second, Flag::Name, {3, 2}) && routingPassed;
+	routingPassed = send(first, Flag::About, {}) && routingPassed;
 	firstLifetime.destroy();
-	changes.peerUpdated(first, Flag::Name);
-	changes.peerUpdated(second, Flag::Name);
-	changes.sendNotifications();
-	QCoreApplication::processEvents();
+	routingPassed
+		= (changes.peerUpdateScopedSubscriptionCountForRegressionTest(first)
+		   == firstBaseline + 1)
+		  && routingPassed;
+	for (auto i = 0; i != 64; ++i) {
+		auto churnLifetime = rpl::lifetime();
+		subscribe(first, 100 + i, churnLifetime);
+		routingPassed
+			= (changes.peerUpdateScopedSubscriptionCountForRegressionTest(first)
+			   == firstBaseline + 2)
+			  && routingPassed;
+		churnLifetime.destroy();
+		routingPassed
+			= (changes.peerUpdateScopedSubscriptionCountForRegressionTest(first)
+			   == firstBaseline + 1)
+			  && routingPassed;
+	}
+	routingPassed = send(first, Flag::Name, {3, 4}) && routingPassed;
+	routingPassed = send(second, Flag::Name, {3, 2}) && routingPassed;
+	routingPassed = send(first, Flag::About, {}) && routingPassed;
+	survivingFirstLifetime.destroy();
 	secondLifetime.destroy();
-	const auto scopesReleased
-		= changes.peerUpdateScopedStreamsEmptyForRegressionTest();
+	routingPassed
+		= (changes.peerUpdateScopedSubscriptionCountForRegressionTest(first)
+		   == firstBaseline)
+		  && (changes.peerUpdateScopedSubscriptionCountForRegressionTest(second)
+			  == secondBaseline)
+		  && routingPassed;
 	auto reconnectedLifetime = rpl::lifetime();
-	auto reconnectedUpdates = 0;
-	changes.peerUpdates(first, Flag::Name)
-		| rpl::on_next(
-			[&](const Data::PeerUpdate &update) {
-				if (update.peer == first && (update.flags & Flag::Name)) {
-					++reconnectedUpdates;
-				}
-			},
-			reconnectedLifetime);
-	changes.peerUpdated(first, Flag::Name);
-	changes.sendNotifications();
+	subscribe(first, 5, reconnectedLifetime);
+	routingPassed
+		= (changes.peerUpdateScopedSubscriptionCountForRegressionTest(first)
+		   == firstBaseline + 1)
+		  && routingPassed;
+	routingPassed = send(first, Flag::Name, {3, 5}) && routingPassed;
 	reconnectedLifetime.destroy();
+	globalLifetime.destroy();
 	QCoreApplication::processEvents();
-	return firstRoundRouted && (firstUpdates == 1) && (secondUpdates == 2)
-		   && (globalUpdates == 5) && scopesReleased
-		   && (reconnectedUpdates == 1)
-		   && changes.peerUpdateScopedStreamsEmptyForRegressionTest();
+	return routingPassed
+		   && (changes.peerUpdateScopedSubscriptionCountForRegressionTest(first)
+			   == firstBaseline)
+		   && (changes.peerUpdateScopedSubscriptionCountForRegressionTest(
+				   second)
+			   == secondBaseline)
+		   && deliveriesMatch();
 }
 
 struct CacheChatSwitchRegressionResult final {
@@ -15883,7 +15941,8 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 						   budgetAssessment.workNanoseconds);
 		}
 		if (i == 0) {
-			result.initialHistorySelectionWithinBudget = withinBudget;
+			result.initialHistorySelectionWithinBudget
+				= withinBudgetWithNoiseAllowance;
 			result.initialHistorySelectionBlockedNanoseconds
 				= estimate.blockedNanoseconds;
 			result.initialHistorySelectionEstimatedWorkNanoseconds

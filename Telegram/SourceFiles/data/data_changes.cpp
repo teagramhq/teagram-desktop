@@ -29,7 +29,7 @@ void Changes::Manager<DataType, UpdateType>::updated(
 			= (scoped != _scopedStreams->end()) ? scoped->second : nullptr;
 		_stream.fire_copy(update);
 		if (scopedStream) {
-			scopedStream->stream.fire_copy(update);
+			sendScopedNotifications(scopedStream, update);
 		}
 		drop(data);
 	} else {
@@ -46,6 +46,27 @@ void Changes::Manager<DataType, UpdateType>::sendRealtimeNotifications(
 		if (flags & flag) {
 			_realtimeStreams[i].fire({ data, flags });
 		}
+	}
+}
+
+template <typename DataType, typename UpdateType>
+void Changes::Manager<DataType, UpdateType>::sendScopedNotifications(
+	const std::shared_ptr<ScopedStream> &scopedStream,
+	const UpdateType &update) const {
+	const auto lastSubscriptionId
+		= scopedStream->subscriptions.empty()
+			  ? ScopedStream::SubscriptionId(0)
+			  : scopedStream->subscriptions.rbegin()->first;
+	auto i = scopedStream->subscriptions.begin();
+	while ((i != scopedStream->subscriptions.end())
+		   && (i->first <= lastSubscriptionId)) {
+		const auto id = i->first;
+		const auto stream = i->second;
+		stream->fire_copy(update);
+		// A callback can unsubscribe itself or another subscriber. Re-find the
+		// next active id after delivery instead of retaining an invalid
+		// iterator.
+		i = scopedStream->subscriptions.upper_bound(id);
 	}
 }
 
@@ -77,24 +98,28 @@ Changes::Manager<DataType, UpdateType>::updates(not_null<DataType *> data,
 			if (i == strong->end()) {
 				strong->emplace(key, scopedStream);
 			}
-			++scopedStream->subscriptions;
+			const auto id = ++scopedStream->nextSubscriptionId;
+			auto stream = std::make_shared<rpl::event_stream<UpdateType>>();
+			scopedStream->subscriptions.emplace(id, stream);
 			auto result = rpl::lifetime(
-				[streams, key, weakStream = std::weak_ptr(scopedStream)] {
+				[streams, key, weakStream = std::weak_ptr(scopedStream), id] {
 					const auto strong = streams.lock();
 					const auto scoped = weakStream.lock();
 					if (!strong || !scoped) {
 						return;
 					}
 					const auto i = strong->find(key);
-					if ((i != strong->end()) && (i->second == scoped)
-						&& (--scoped->subscriptions == 0)) {
-						strong->erase(i);
+					if ((i != strong->end()) && (i->second == scoped)) {
+						scoped->subscriptions.erase(id);
+						if (scoped->subscriptions.empty()) {
+							strong->erase(i);
+						}
 					}
 				});
-			auto events = scopedStream->stream.events()
-						  | rpl::filter([=](const UpdateType &update) {
-								return (update.flags & flags);
-							});
+			auto events
+				= stream->events() | rpl::filter([=](const UpdateType &update) {
+					  return (update.flags & flags);
+				  });
 			result.add(std::move(events).start_existing(consumer));
 			return result;
 		});
@@ -130,7 +155,7 @@ void Changes::Manager<DataType, UpdateType>::sendNotifications() {
 			= (scoped != _scopedStreams->end()) ? scoped->second : nullptr;
 		_stream.fire_copy(update);
 		if (scopedStream) {
-			scopedStream->stream.fire_copy(update);
+			sendScopedNotifications(scopedStream, update);
 		}
 	}
 }
@@ -175,8 +200,9 @@ rpl::producer<PeerUpdate> Changes::peerUpdates(
 	return _peerChanges.updates(peer, flags);
 }
 
-bool Changes::peerUpdateScopedStreamsEmptyForRegressionTest() const {
-	return _peerChanges.scopedStreamsEmptyForRegressionTest();
+int Changes::peerUpdateScopedSubscriptionCountForRegressionTest(
+	not_null<PeerData *> peer) const {
+	return _peerChanges.scopedSubscriptionCountForRegressionTest(peer);
 }
 
 rpl::producer<PeerUpdate> Changes::peerFlagsValue(
