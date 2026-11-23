@@ -2468,24 +2468,35 @@ awk '
   END { exit !(qt_activate && appkit_activate > qt_activate) }
 ' "$native_harness" \
   || contract_fail 'AppKit must receive a final key-window activation request after each Qt window activation.'
-grep -Fq 'WindowActivationForRegressionResult::AppInactive' "$native_harness" \
-  || contract_fail "$native_harness must classify focus checks as unavailable when AppKit has no active application."
+if grep -Fq 'WindowActivationForRegressionResult::AppInactive' "$native_harness"; then
+  contract_fail "$native_harness must fail instead of classifying AppKit inactivity as an unavailable focus check."
+fi
+if grep -Fq 'focusCheckAvailable = false;' "$native_harness"; then
+  contract_fail "$native_harness must not skip settings deep-link focus assertions when the app becomes inactive."
+fi
 awk '
   /const auto applicationActive/ { in_active_failure = 1; app_active = NR }
-  in_active_failure && /if \(!applicationActive\)/ { inactive_check = NR }
-  in_active_failure && /return WindowActivationForRegressionResult::AppInactive/ {
-    inactive_result = NR
+  in_active_failure && /if \(!applicationActive\)/ { inactive_check = NR; in_inactive = 1 }
+  in_inactive && /AppKit app remained inactive during focus verification/ {
+    inactive_diagnostic = NR
   }
+  in_inactive && /return WindowActivationForRegressionResult::Failed/ {
+    inactive_failure = NR
+  }
+  in_inactive && /^[[:space:]]*}/ { inactive_branch_end = NR; in_inactive = 0 }
   in_active_failure && /return WindowActivationForRegressionResult::Failed/ {
-    active_failure = NR
+    if (NR > inactive_branch_end) active_failure = NR
   }
   in_active_failure && /^}/ { exit }
   END {
     exit !(app_active && inactive_check > app_active &&
-      inactive_result > inactive_check && active_failure > inactive_result)
+      inactive_diagnostic > inactive_check &&
+      inactive_failure > inactive_diagnostic &&
+      inactive_branch_end > inactive_failure &&
+      active_failure > inactive_branch_end)
   }
 ' "$native_harness" \
-  || contract_fail 'A visible target that fails activation while AppKit is active must fail the regression instead of skipping focus assertions.'
+  || contract_fail 'AppKit inactivity and app-active focus failures must both fail activation instead of skipping assertions.'
 grep -Fq 'AppKit app remained inactive during focus verification.' "$native_harness" \
   || contract_fail "$native_harness must report AppKit inactivity after the focus wait."
 awk '
@@ -2501,18 +2512,14 @@ awk '
       pre_attempt_appkit_check = NR
     }
   }
-  in_activation && /return WindowActivationForRegressionResult::AppInactive/ {
-    if (!activation_timeout || NR < activation_timeout) inactive_return_before_timeout = 1
-  }
   in_activation && /^}/ { exit }
   END {
     exit !(activation_call && activation_timeout > activation_call &&
       bounded_wait > activation_call && bounded_wait < activation_timeout &&
-      !pre_attempt_appkit_check && timeout_appkit_check > activation_timeout &&
-      !inactive_return_before_timeout)
+      !pre_attempt_appkit_check && timeout_appkit_check > activation_timeout)
   }
 ' "$native_harness" \
-  || contract_fail "$native_harness must issue activation before classifying AppKit inactivity at timeout."
+  || contract_fail "$native_harness must issue activation before failing on AppKit inactivity at timeout."
 awk '
   /IsWindowActiveForRegression\(/ { in_check = 1 }
   in_check && /Platform::IsApplicationActiveForRegression\(\)/ { requires_foreground = 1 }

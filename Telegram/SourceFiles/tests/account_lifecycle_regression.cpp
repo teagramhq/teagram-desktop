@@ -5126,7 +5126,6 @@ void LogWindowActivationForRegression(Core::Application &app,
 
 enum class WindowActivationForRegressionResult {
 	Activated,
-	AppInactive,
 	Failed,
 };
 
@@ -5181,13 +5180,13 @@ ActivateWindowForRegression(Core::Application &app,
 		if (!applicationActive) {
 			std::fprintf(
 				stderr,
-				"Window activation unavailable: "
+				"Window activation failed: "
 				"AppKit app remained inactive during focus verification. "
 				"Qt and AppKit focus checks could not "
 				"run. "
 				"Waited %d ms.\n",
 				timeoutMs);
-			return WindowActivationForRegressionResult::AppInactive;
+			return WindowActivationForRegressionResult::Failed;
 		}
 		std::fprintf(
 			stderr,
@@ -6130,9 +6129,7 @@ template <typename Condition>
 					return stableSince.elapsed() >= 100;
 				},
 				1500);
-			if (!stable && !Platform::IsApplicationActiveForRegression()) {
-				focusCheckAvailable = false;
-			} else if (!stable) {
+			if (!stable) {
 				std::fprintf(stderr,
 							 "Settings deep link regression failed: "
 							 "stock window activation did not settle.\n");
