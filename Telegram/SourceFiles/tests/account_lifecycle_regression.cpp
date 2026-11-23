@@ -14143,6 +14143,9 @@ PeerScopedUpdateRoutingRegressionPasses(not_null<Main::Session *> session,
 		}
 		return deliveriesMatch();
 	};
+	changes.sendNotifications();
+	QCoreApplication::processEvents();
+	changes.sendNotifications();
 	const auto firstBaseline
 		= changes.peerUpdateScopedSubscriptionCountForRegressionTest(first);
 	const auto secondBaseline
@@ -14151,6 +14154,8 @@ PeerScopedUpdateRoutingRegressionPasses(not_null<Main::Session *> session,
 	auto secondLifetime = rpl::lifetime();
 	auto globalLifetime = rpl::lifetime();
 	auto survivingFirstLifetime = rpl::lifetime();
+	auto midDispatchLifetime = rpl::lifetime();
+	auto installMidDispatchSubscriber = true;
 	subscribe(first, 1, firstLifetime);
 	subscribe(second, 2, secondLifetime);
 	changes.peerUpdates(Flag::Name)
@@ -14158,6 +14163,19 @@ PeerScopedUpdateRoutingRegressionPasses(not_null<Main::Session *> session,
 			[&](const Data::PeerUpdate &update) {
 				if ((update.peer == first) || (update.peer == second)) {
 					deliveries.push_back({3, update.peer.get(), update.flags});
+				}
+				if ((update.peer == first) && installMidDispatchSubscriber) {
+					installMidDispatchSubscriber = false;
+					changes.peerFlagsValue(first, Flag::Name)
+						| rpl::on_next(
+							[&](const Data::PeerUpdate &value) {
+								deliveries.push_back({
+									5,
+									value.peer.get(),
+									value.flags,
+								});
+							},
+							midDispatchLifetime);
 				}
 			},
 			globalLifetime);
@@ -14171,31 +14189,37 @@ PeerScopedUpdateRoutingRegressionPasses(not_null<Main::Session *> session,
 				   == secondBaseline + 1);
 	};
 	auto routingPassed = countsMatch();
-	routingPassed = send(first, Flag::Name, {3, 1, 4}) && routingPassed;
+	routingPassed = send(first, Flag::Name, {3, 5, 1, 4}) && routingPassed;
+	routingPassed
+		= (changes.peerUpdateScopedSubscriptionCountForRegressionTest(first)
+		   == firstBaseline + 3)
+		  && routingPassed;
+	routingPassed = send(first, Flag::Name, {3, 1, 4, 5}) && routingPassed;
 	routingPassed = send(second, Flag::Name, {3, 2}) && routingPassed;
 	routingPassed = send(first, Flag::About, {}) && routingPassed;
 	firstLifetime.destroy();
 	routingPassed
 		= (changes.peerUpdateScopedSubscriptionCountForRegressionTest(first)
-		   == firstBaseline + 1)
+		   == firstBaseline + 2)
 		  && routingPassed;
 	for (auto i = 0; i != 64; ++i) {
 		auto churnLifetime = rpl::lifetime();
 		subscribe(first, 100 + i, churnLifetime);
 		routingPassed
 			= (changes.peerUpdateScopedSubscriptionCountForRegressionTest(first)
-			   == firstBaseline + 2)
+			   == firstBaseline + 3)
 			  && routingPassed;
 		churnLifetime.destroy();
 		routingPassed
 			= (changes.peerUpdateScopedSubscriptionCountForRegressionTest(first)
-			   == firstBaseline + 1)
+			   == firstBaseline + 2)
 			  && routingPassed;
 	}
-	routingPassed = send(first, Flag::Name, {3, 4}) && routingPassed;
+	routingPassed = send(first, Flag::Name, {3, 4, 5}) && routingPassed;
 	routingPassed = send(second, Flag::Name, {3, 2}) && routingPassed;
 	routingPassed = send(first, Flag::About, {}) && routingPassed;
 	survivingFirstLifetime.destroy();
+	midDispatchLifetime.destroy();
 	secondLifetime.destroy();
 	routingPassed
 		= (changes.peerUpdateScopedSubscriptionCountForRegressionTest(first)
@@ -14204,12 +14228,12 @@ PeerScopedUpdateRoutingRegressionPasses(not_null<Main::Session *> session,
 			  == secondBaseline)
 		  && routingPassed;
 	auto reconnectedLifetime = rpl::lifetime();
-	subscribe(first, 5, reconnectedLifetime);
+	subscribe(first, 6, reconnectedLifetime);
 	routingPassed
 		= (changes.peerUpdateScopedSubscriptionCountForRegressionTest(first)
 		   == firstBaseline + 1)
 		  && routingPassed;
-	routingPassed = send(first, Flag::Name, {3, 5}) && routingPassed;
+	routingPassed = send(first, Flag::Name, {3, 6}) && routingPassed;
 	reconnectedLifetime.destroy();
 	globalLifetime.destroy();
 	QCoreApplication::processEvents();

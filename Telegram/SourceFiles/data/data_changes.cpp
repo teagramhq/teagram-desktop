@@ -16,6 +16,15 @@ void Changes::Manager<DataType, UpdateType>::updated(
 		not_null<DataType*> data,
 		Flags flags,
 		bool dropScheduled) {
+	auto scopedStream = std::shared_ptr<ScopedStream>();
+	auto lastSubscriptionId = uint64(0);
+	if (dropScheduled) {
+		const auto scoped = _scopedStreams->find(data.get());
+		if (scoped != _scopedStreams->end()) {
+			scopedStream = scoped->second;
+			lastSubscriptionId = scopedStream->nextSubscriptionId;
+		}
+	}
 	sendRealtimeNotifications(data, flags);
 	if (dropScheduled) {
 		const auto i = _updates.find(data);
@@ -24,12 +33,9 @@ void Changes::Manager<DataType, UpdateType>::updated(
 			_updates.erase(i);
 		}
 		const auto update = UpdateType{data, flags};
-		const auto scoped = _scopedStreams->find(data.get());
-		const auto scopedStream
-			= (scoped != _scopedStreams->end()) ? scoped->second : nullptr;
 		_stream.fire_copy(update);
 		if (scopedStream) {
-			sendScopedNotifications(scopedStream, update);
+			sendScopedNotifications(scopedStream, update, lastSubscriptionId);
 		}
 		drop(data);
 	} else {
@@ -51,9 +57,8 @@ void Changes::Manager<DataType, UpdateType>::sendRealtimeNotifications(
 
 template <typename DataType, typename UpdateType>
 void Changes::Manager<DataType, UpdateType>::sendScopedNotifications(
-	const std::shared_ptr<ScopedStream> &scopedStream,
-	const UpdateType &update) const {
-	const auto lastSubscriptionId = scopedStream->nextSubscriptionId;
+	const std::shared_ptr<ScopedStream> &scopedStream, const UpdateType &update,
+	uint64 lastSubscriptionId) const {
 	auto i = scopedStream->subscriptions.begin();
 	while ((i != scopedStream->subscriptions.end())
 		   && (i->first <= lastSubscriptionId)) {
@@ -150,9 +155,11 @@ void Changes::Manager<DataType, UpdateType>::sendNotifications() {
 		const auto scoped = _scopedStreams->find(data.get());
 		const auto scopedStream
 			= (scoped != _scopedStreams->end()) ? scoped->second : nullptr;
+		const auto lastSubscriptionId
+			= scopedStream ? scopedStream->nextSubscriptionId : uint64(0);
 		_stream.fire_copy(update);
 		if (scopedStream) {
-			sendScopedNotifications(scopedStream, update);
+			sendScopedNotifications(scopedStream, update, lastSubscriptionId);
 		}
 	}
 }

@@ -473,7 +473,7 @@ private:
 
 		void sendScopedNotifications(
 			const std::shared_ptr<ScopedStream> &scopedStream,
-			const UpdateType &update) const;
+			const UpdateType &update, uint64 lastSubscriptionId) const;
 
 		void sendRealtimeNotifications(
 			not_null<DataType*> data,
