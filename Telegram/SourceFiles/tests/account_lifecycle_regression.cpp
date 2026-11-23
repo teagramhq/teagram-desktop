@@ -5127,7 +5127,6 @@ void LogWindowActivationForRegression(Core::Application &app,
 enum class WindowActivationForRegressionResult {
 	Activated,
 	AppInactive,
-	FocusUnavailable,
 	Failed,
 };
 
@@ -5192,10 +5191,11 @@ ActivateWindowForRegression(Core::Application &app,
 		}
 		std::fprintf(
 			stderr,
-			"Window activation unavailable: Qt target-active and AppKit "
-			"target-is-key checks remained false after %d ms.\n",
+			"Window activation failed: the app remained active, but Qt "
+			"target-active and AppKit target-is-key checks remained false "
+			"after %d ms.\n",
 			timeoutMs);
-		return WindowActivationForRegressionResult::FocusUnavailable;
+		return WindowActivationForRegressionResult::Failed;
 	}
 	return WindowActivationForRegressionResult::Activated;
 }
