@@ -53,10 +53,7 @@ template <typename DataType, typename UpdateType>
 void Changes::Manager<DataType, UpdateType>::sendScopedNotifications(
 	const std::shared_ptr<ScopedStream> &scopedStream,
 	const UpdateType &update) const {
-	const auto lastSubscriptionId
-		= scopedStream->subscriptions.empty()
-			  ? ScopedStream::SubscriptionId(0)
-			  : scopedStream->subscriptions.rbegin()->first;
+	const auto lastSubscriptionId = scopedStream->nextSubscriptionId;
 	auto i = scopedStream->subscriptions.begin();
 	while ((i != scopedStream->subscriptions.end())
 		   && (i->first <= lastSubscriptionId)) {
