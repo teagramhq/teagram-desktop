@@ -111,6 +111,37 @@ main_thread_work_estimate_within_budget() {
 		local sample_count="${#trace}"
 		local -a scheduler_offsets=()
 		IFS=, read -r -a scheduler_offsets <<< "$offsets_csv"
+		local wall_fallback_required=false
+		local paired_sample_count="${#scheduler_offsets[@]}"
+		if (( paired_sample_count > sample_count )); then
+			paired_sample_count="$sample_count"
+		fi
+		for ((i = 0; i < paired_sample_count; ++i)); do
+			local observed_offset="${scheduler_offsets[i]}"
+			local observed_state="${trace:i:1}"
+			if [[ ! "$observed_offset" =~ ^-?[0-9]+$ ]]; then
+				[[ "$observed_state" == R ]] \
+					|| wall_fallback_required=true
+			elif (( observed_offset >= 0 && observed_offset <= wall_ns )) \
+				&& [[ "$observed_state" != R ]]; then
+				wall_fallback_required=true
+			fi
+		done
+		for ((i = paired_sample_count; i < ${#scheduler_offsets[@]}; ++i)); do
+			local unpaired_offset="${scheduler_offsets[i]}"
+			if [[ ! "$unpaired_offset" =~ ^-?[0-9]+$ ]] \
+				|| (( unpaired_offset >= 0 && unpaired_offset <= wall_ns )); then
+				wall_fallback_required=true
+			fi
+		done
+		for ((i = paired_sample_count; i < sample_count; ++i)); do
+			[[ "${trace:i:1}" == R ]] \
+				|| wall_fallback_required=true
+		done
+		local incomplete_estimate_ns="$main_thread_cpu_ns"
+		if [[ "$wall_fallback_required" == true ]]; then
+			incomplete_estimate_ns="$wall_ns"
+		fi
 		local samples_valid=true
 		if (( ${#scheduler_offsets[@]} != sample_count )); then
 			samples_valid=false
@@ -188,10 +219,10 @@ main_thread_work_estimate_within_budget() {
 			if [[ "$samples_valid" == true ]]; then
 				estimate_ns="$((main_thread_cpu_ns + blocked_ns))"
 			else
-				estimate_ns="$main_thread_cpu_ns"
+				estimate_ns="$incomplete_estimate_ns"
 			fi
 		else
-			estimate_ns="$main_thread_cpu_ns"
+			estimate_ns="$incomplete_estimate_ns"
 		fi
 	fi
 	(( estimate_ns >= 0 && estimate_ns < budget_ns ))

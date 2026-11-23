@@ -1315,18 +1315,18 @@ if ! main_thread_work_estimate_within_budget \
   "$six_millisecond_offsets"; then
   contract_fail 'A 6 ms sample gap must remain covered.'
 fi
-if ! main_thread_work_estimate_within_budget \
-  18000000 225000000 RRRW 100000000 0,75000000,150000000,225000000; then
-	contract_fail 'A four-sample 75 ms gap must use main-thread CPU work.'
+if main_thread_work_estimate_within_budget \
+	18000000 225000000 RRRW 100000000 0,75000000,150000000,225000000; then
+	contract_fail 'A four-sample 75 ms gap with a waiting sample must fail on wall time.'
 fi
 if ! main_thread_work_estimate_within_budget 0 101000000 none 100000000 ""; then
 	contract_fail 'A window without scheduler samples must use main-thread CPU work.'
 fi
 callback_runnable_trace="$(printf '%41s' '' | tr ' ' R)"
 callback_unknown_trace="${callback_runnable_trace:0:20}?${callback_runnable_trace:21}"
-if ! main_thread_work_estimate_within_budget \
+if main_thread_work_estimate_within_budget \
   12000000 200000000 "$callback_unknown_trace" 50000000 "$callback_offsets"; then
-	contract_fail 'An unknown scheduler state must use main-thread CPU work.'
+	contract_fail 'An unknown scheduler state must use wall time.'
 fi
 callback_negative_offsets="-1${callback_offsets#0}"
 if ! main_thread_work_estimate_within_budget \
@@ -1341,6 +1341,14 @@ fi
 if ! main_thread_work_estimate_within_budget \
   0 200000000 RRRRR 100000000 0,5000000,10000000,190000000,200000000; then
   contract_fail 'A long unobserved middle interval must use main-thread CPU work.'
+fi
+if main_thread_work_estimate_within_budget \
+	1000000 200000000 RW 100000000 0,30000000; then
+	contract_fail 'A 30 ms uncovered gap with a waiting sample must fail on wall time.'
+fi
+if ! main_thread_work_estimate_within_budget \
+	1000000 200000000 RR 100000000 0,30000000; then
+	contract_fail 'A 30 ms uncovered gap with only running samples must use CPU work.'
 fi
 if main_thread_work_estimate_within_budget \
   18000000 225000000 \
