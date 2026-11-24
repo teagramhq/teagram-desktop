@@ -1043,6 +1043,7 @@ jobs:
           from macos_process_activation import (
               activation_request_is_new,
               read_activation_request,
+              run_with_runtime_deadline,
           )
           from macos_timeout_capture import authorization_timeout_report
           command = ["arch", "-arm64", "lldb", "--batch"]
@@ -1133,15 +1134,16 @@ jobs:
                           "RUNNER_EXTERNAL_ACTIVATION_HOME"
                       ]
                       try:
-                          activation_result = subprocess.run(
+                          activation_result = run_with_runtime_deadline(
                               [
                                   sys.executable,
                                   activation_helper,
                                   str(requested_pid),
                               ],
+                              runtime_deadline=runtime_deadline,
+                              timeout=220,
                               capture_output=True,
                               text=True,
-                              timeout=220,
                               check=False,
                               env=activation_environment,
                           )
@@ -1163,6 +1165,12 @@ jobs:
                               "Runner-side macOS process activation timed out: "
                               f"request={request_number} {error}\n"
                           )
+                          if (
+                              runtime_deadline is not None
+                              and time.monotonic() >= runtime_deadline
+                          ):
+                              timeout_phase = "runtime"
+                              break
                       except OSError as error:
                           log.write(
                               "Runner-side macOS process activation could not "

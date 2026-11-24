@@ -1101,11 +1101,16 @@ require_step_python "$mac_workflow" build-macos "$regression_step" \
   "activation_helper = os.path.join(scripts_dir, 'macos_process_activation.py')" \
   'activation_environment = os.environ.copy()' \
   "activation_environment['HOME'] = os.environ['RUNNER_EXTERNAL_ACTIVATION_HOME']" \
-  'activation_result = subprocess.run([sys.executable, activation_helper, str(requested_pid)], capture_output=True, text=True, timeout=220, check=False, env=activation_environment)' \
+  'activation_result = run_with_runtime_deadline([sys.executable, activation_helper, str(requested_pid)], runtime_deadline=runtime_deadline, timeout=220, capture_output=True, text=True, check=False, env=activation_environment)' \
   'external_activation_passed = activation_result.returncode == 0'
 require_step_script "$mac_workflow" build-macos "$regression_step" \
   'while process.poll() is None:' \
   'if not activation_request_is_new('
+require_step_script "$mac_workflow" build-macos "$regression_step" \
+  'except subprocess.TimeoutExpired as error:' \
+  'runtime_deadline is not None and time.monotonic() >= runtime_deadline' \
+  'timeout_phase = "runtime"' \
+  'break'
 require_step_script "$mac_workflow" build-macos "$regression_step" \
   'process handle SIGUSR2 -p true -s false -n false'
 require_step_script "$mac_workflow" build-macos "$regression_step" \
@@ -1129,6 +1134,20 @@ awk '
   END { exit !(external_activation && first_focus_activation > external_activation) }
 ' Telegram/SourceFiles/tests/account_lifecycle_regression.cpp \
   || contract_fail 'Settings deep-link focus checks must request fresh runner activation.'
+awk '
+  /stockBeforeMessageMatrix/ { checking_stock = 1 }
+  checking_stock && /activateSettingsWindow\(&stockController->window\(\)\)/ {
+    stock = 1
+    checking_stock = 0
+  }
+  /pinnedBeforeMessageMatrix/ { checking_pinned = 1 }
+  checking_pinned && /activateSettingsWindow\(&pinnedController->window\(\)\)/ {
+    pinned = 1
+    checking_pinned = 0
+  }
+  END { exit !(stock && pinned) }
+' Telegram/SourceFiles/tests/account_lifecycle_regression.cpp \
+  || contract_fail 'Both message-link matrices must refresh runner activation.'
 require_step_python "$mac_workflow" build-macos "$regression_step" \
   "activation_marker = Path(os.path.dirname(stderr_path)) / 'runner-external-activation.status'" \
   "activation_marker_result = 'PASS' if external_activation_passed else 'FAIL'" \
@@ -2760,7 +2779,7 @@ awk '
   in_settings && !unsupported_route_checks && /const auto minimumLayerWidth/ {
     unsupported_route_checks = NR
   }
-  in_settings && /^\[\[nodiscard\]\] HistoryItem/ { exit }
+  in_settings && /const auto pinnedMessageState/ { exit }
   END {
     exit !(custom_window_activations == 2 && custom_window_matrices == 1 &&
       custom_window_activation < custom_window_matrix &&

@@ -12,6 +12,7 @@ from macos_process_activation import (
     activate_process,
     activation_request_is_new,
     read_activation_request,
+    run_with_runtime_deadline,
 )
 
 
@@ -44,6 +45,31 @@ class ProcessActivationTests(unittest.TestCase):
         self.assertTrue(activation_request_is_new((4321, 1), 0))
         self.assertFalse(activation_request_is_new((4321, 1), 1))
         self.assertTrue(activation_request_is_new((4321, 2), 1))
+
+    def test_stalled_activation_refresh_cannot_outlive_runtime_deadline(self) -> None:
+        deadline = 180.0
+        now = 179.75
+        observed_timeouts: list[float] = []
+
+        def stalled_runner(
+            command: list[str], **kwargs: object
+        ) -> subprocess.CompletedProcess[str]:
+            timeout = float(kwargs["timeout"])
+            observed_timeouts.append(timeout)
+            raise subprocess.TimeoutExpired(command, timeout)
+
+        with self.assertRaises(subprocess.TimeoutExpired):
+            run_with_runtime_deadline(
+                ["activation-helper"],
+                runtime_deadline=deadline,
+                timeout=220,
+                runner=stalled_runner,
+                clock=lambda: now,
+                capture_output=True,
+                text=True,
+            )
+
+        self.assertEqual(observed_timeouts, [deadline - now])
 
     def test_retries_until_the_target_process_is_frontmost(self) -> None:
         commands: list[list[str]] = []

@@ -46,6 +46,21 @@ def activation_request_is_new(
     return request is not None and request[1] > last_request_number
 
 
+def run_with_runtime_deadline(
+    command: list[str],
+    *,
+    runtime_deadline: float | None,
+    timeout: float,
+    runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+    clock: Callable[[], float] = time.monotonic,
+    **kwargs: object,
+) -> subprocess.CompletedProcess[str]:
+    remaining = timeout
+    if runtime_deadline is not None:
+        remaining = min(remaining, max(0.0, runtime_deadline - clock()))
+    return runner(command, timeout=remaining, **kwargs)
+
+
 def _output_text(value: str | bytes | None) -> str:
     if isinstance(value, bytes):
         return value.decode("utf-8", errors="replace")

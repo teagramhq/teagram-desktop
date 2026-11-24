@@ -6541,7 +6541,7 @@ template <typename Condition>
 		return false;
 	}
 	const auto stockBeforeMessageMatrix
-		= ActivateWindowForRegression(app, &stockController->window());
+		= activateSettingsWindow(&stockController->window());
 	if (activationFailed(stockBeforeMessageMatrix)) {
 		std::fprintf(
 			stderr,
@@ -6562,7 +6562,7 @@ template <typename Condition>
 		}
 	}
 	const auto pinnedBeforeMessageMatrix
-		= ActivateWindowForRegression(app, &pinnedController->window());
+		= activateSettingsWindow(&pinnedController->window());
 	if (activationFailed(pinnedBeforeMessageMatrix)) {
 		std::fprintf(
 			stderr,
