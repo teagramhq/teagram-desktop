@@ -8,7 +8,11 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from macos_process_activation import activate_process, read_activation_request
+from macos_process_activation import (
+    activate_process,
+    activation_request_is_new,
+    read_activation_request,
+)
 
 
 class ProcessActivationTests(unittest.TestCase):
@@ -16,10 +20,12 @@ class ProcessActivationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             request_path = Path(directory) / "runner-external-activation.request"
             stderr_path = Path(directory) / "stderr.log"
-            request_path.write_text("pid=4321\n", encoding="utf-8")
+            request_path.write_text("pid=4321\nrequest=1\n", encoding="utf-8")
 
             self.assertFalse(stderr_path.exists())
-            self.assertEqual(read_activation_request(request_path), 4321)
+            self.assertEqual(read_activation_request(request_path), (4321, 1))
+            request_path.write_text("pid=4321\nrequest=2\n", encoding="utf-8")
+            self.assertEqual(read_activation_request(request_path), (4321, 2))
 
     def test_missing_or_incomplete_activation_request_is_not_a_pid(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -28,8 +34,16 @@ class ProcessActivationTests(unittest.TestCase):
             self.assertIsNone(read_activation_request(request_path))
             request_path.write_text("pid=", encoding="utf-8")
             self.assertIsNone(read_activation_request(request_path))
-            request_path.write_text("pid=0\n", encoding="utf-8")
+            request_path.write_text("pid=0\nrequest=1\n", encoding="utf-8")
             self.assertIsNone(read_activation_request(request_path))
+            request_path.write_text("pid=4321\nrequest=0\n", encoding="utf-8")
+            self.assertIsNone(read_activation_request(request_path))
+
+    def test_new_activation_request_advances_the_handshake(self) -> None:
+        self.assertFalse(activation_request_is_new(None, 0))
+        self.assertTrue(activation_request_is_new((4321, 1), 0))
+        self.assertFalse(activation_request_is_new((4321, 1), 1))
+        self.assertTrue(activation_request_is_new((4321, 2), 1))
 
     def test_retries_until_the_target_process_is_frontmost(self) -> None:
         commands: list[list[str]] = []

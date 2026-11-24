@@ -20,19 +20,30 @@ class ActivationResult:
     error: str = ""
 
 
-def read_activation_request(request_path: str | Path) -> int | None:
-    """Read the app-published PID without relying on OS diagnostics on stderr."""
+def read_activation_request(request_path: str | Path) -> tuple[int, int] | None:
+    """Read the app-published PID and request number, independent of stderr."""
     try:
         lines = Path(request_path).read_text(encoding="utf-8").splitlines()
     except (OSError, UnicodeError):
         return None
-    if len(lines) != 1 or not lines[0].startswith("pid="):
+    if (
+        len(lines) != 2
+        or not lines[0].startswith("pid=")
+        or not lines[1].startswith("request=")
+    ):
         return None
     try:
         pid = int(lines[0][len("pid=") :])
+        request_number = int(lines[1][len("request=") :])
     except ValueError:
         return None
-    return pid if pid > 0 else None
+    return (pid, request_number) if pid > 0 and request_number > 0 else None
+
+
+def activation_request_is_new(
+    request: tuple[int, int] | None, last_request_number: int
+) -> bool:
+    return request is not None and request[1] > last_request_number
 
 
 def _output_text(value: str | bytes | None) -> str:

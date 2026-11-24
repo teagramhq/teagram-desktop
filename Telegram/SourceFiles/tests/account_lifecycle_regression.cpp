@@ -149,6 +149,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "storage/storage_account.h"
 #include "storage/storage_domain.h"
 #include "storage/storage_encryption.h"
+#include "storage/storage_shared_media.h"
 #include "storage/streamed_file_downloader.h"
 #include "styles/style_chat_helpers.h"
 #include "test/test_widgets.h"
@@ -1001,6 +1002,8 @@ WaitForMainQueueBarrierForRegressionTest(int timeoutMilliseconds,
 #endif
 
 namespace {
+
+[[nodiscard]] bool WaitForRunnerExternalActivationForRegression();
 
 const char kRegressionServerKey[] = R"(-----BEGIN RSA PUBLIC KEY-----
 MIIBCgKCAQEA6LszBcC1LGzyr992NzE0ieY+BSaOW622Aa9Bd4ZHLl+TuFQ4lo4g
@@ -5605,6 +5608,9 @@ template <typename Condition>
 			  return true;
 		  };
 	const auto activateSettingsWindow = [&](Window::Controller *window) {
+		if (!WaitForRunnerExternalActivationForRegression()) {
+			return WindowActivationForRegressionResult::Failed;
+		}
 		Platform::ActivateThisProcess(window->widget());
 		return ActivateWindowForRegression(app, window);
 	};
@@ -6131,6 +6137,12 @@ template <typename Condition>
 		}
 	}
 
+	if (!WaitForRunnerExternalActivationForRegression()) {
+		std::fprintf(
+			stderr, "Settings deep link regression failed: "
+					"runner activation failed before missing-target checks.\n");
+		return false;
+	}
 	const auto stockWindowActivated
 		= ActivateWindowForRegression(app, &stockController->window(), true);
 	const auto stockFocusRestoreCheckAvailable
@@ -6161,6 +6173,13 @@ template <typename Condition>
 	for (const auto &url : routes) {
 		auto focusCheckAvailable = stockFocusRestoreCheckAvailable;
 		if (focusCheckAvailable) {
+			if (!WaitForRunnerExternalActivationForRegression()) {
+				std::fprintf(stderr,
+							 "Settings deep link regression failed: "
+							 "runner activation failed before missing-target "
+							 "check.\n");
+				return false;
+			}
 			const auto activation = ActivateWindowForRegression(
 				app, &stockController->window(), true);
 			if (activationFailed(activation)) {
@@ -14176,6 +14195,102 @@ SchedulerEvidenceDiagnosticsRegressionPasses() {
 	return (workNanoseconds >= 0) && (workNanoseconds < budgetNanoseconds);
 }
 
+[[nodiscard]] bool SharedMediaInvalidationRoutingRegressionPasses() {
+	auto sharedMedia = Storage::SharedMedia();
+	const auto firstPeer = PeerId(1'050'053);
+	const auto secondPeer = PeerId(1'050'054);
+	auto firstLifetime = rpl::lifetime();
+	auto survivingLifetime = rpl::lifetime();
+	auto secondLifetime = rpl::lifetime();
+	auto midDispatchLifetime = rpl::lifetime();
+	auto firstDeliveries = 0;
+	auto survivingDeliveries = 0;
+	auto secondDeliveries = 0;
+	auto midDispatchDeliveries = 0;
+	auto churnDeliveries = 0;
+	auto installMidDispatchSubscriber = true;
+	sharedMedia.bottomInvalidated(firstPeer)
+		| rpl::on_next(
+			[&](const Storage::SharedMediaInvalidateBottom &update) {
+				if (update.peerId != firstPeer) {
+					return;
+				}
+				++firstDeliveries;
+				if (installMidDispatchSubscriber) {
+					installMidDispatchSubscriber = false;
+					sharedMedia.bottomInvalidated(firstPeer)
+						| rpl::on_next(
+							[&](const Storage::SharedMediaInvalidateBottom
+									&value) {
+								midDispatchDeliveries
+									+= (value.peerId == firstPeer);
+							},
+							midDispatchLifetime);
+				}
+			},
+			firstLifetime);
+	sharedMedia.bottomInvalidated(firstPeer)
+		| rpl::on_next(
+			[&](const Storage::SharedMediaInvalidateBottom &update) {
+				survivingDeliveries += (update.peerId == firstPeer);
+			},
+			survivingLifetime);
+	sharedMedia.bottomInvalidated(secondPeer)
+		| rpl::on_next(
+			[&](const Storage::SharedMediaInvalidateBottom &update) {
+				secondDeliveries += (update.peerId == secondPeer);
+			},
+			secondLifetime);
+	const auto firstBaseline
+		= sharedMedia.bottomInvalidatedSubscriptionCountForRegressionTest(
+			firstPeer);
+	for (auto i = 0; i != 64; ++i) {
+		auto churnLifetime = rpl::lifetime();
+		sharedMedia.bottomInvalidated(firstPeer)
+			| rpl::on_next(
+				[&](const Storage::SharedMediaInvalidateBottom &update) {
+					churnDeliveries += (update.peerId == firstPeer);
+				},
+				churnLifetime);
+		churnLifetime.destroy();
+	}
+	const auto churnReclaimed
+		= (sharedMedia.bottomInvalidatedSubscriptionCountForRegressionTest(
+			   firstPeer)
+		   == firstBaseline);
+	sharedMedia.invalidate(Storage::SharedMediaInvalidateBottom(firstPeer));
+	const auto firstDispatchMatches
+		= (firstDeliveries == 1) && (survivingDeliveries == 1)
+		  && (secondDeliveries == 0) && (midDispatchDeliveries == 0)
+		  && (churnDeliveries == 0);
+	sharedMedia.invalidate(Storage::SharedMediaInvalidateBottom(firstPeer));
+	const auto secondDispatchMatches
+		= (firstDeliveries == 2) && (survivingDeliveries == 2)
+		  && (secondDeliveries == 0) && (midDispatchDeliveries == 1)
+		  && (churnDeliveries == 0);
+	firstLifetime.destroy();
+	const auto firstReclaimed
+		= (sharedMedia.bottomInvalidatedSubscriptionCountForRegressionTest(
+			   firstPeer)
+		   == firstBaseline);
+	sharedMedia.invalidate(Storage::SharedMediaInvalidateBottom(firstPeer));
+	const auto survivingSubscriberMatches
+		= (firstDeliveries == 2) && (survivingDeliveries == 3)
+		  && (secondDeliveries == 0) && (midDispatchDeliveries == 2)
+		  && (churnDeliveries == 0);
+	survivingLifetime.destroy();
+	midDispatchLifetime.destroy();
+	secondLifetime.destroy();
+	return churnReclaimed && firstDispatchMatches && secondDispatchMatches
+		   && firstReclaimed && survivingSubscriberMatches
+		   && (sharedMedia.bottomInvalidatedSubscriptionCountForRegressionTest(
+				   firstPeer)
+			   == 0)
+		   && (sharedMedia.bottomInvalidatedSubscriptionCountForRegressionTest(
+				   secondPeer)
+			   == 0);
+}
+
 [[nodiscard]] bool
 PeerScopedUpdateRoutingRegressionPasses(not_null<Main::Session *> session,
 										not_null<PeerData *> first,
@@ -14842,8 +14957,10 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		= emptyFirstHistory->isEmpty() && emptySecondHistory->isEmpty()
 		  && emptyFirstHistory->isReadyFor(ShowAtUnreadMsgId)
 		  && emptySecondHistory->isReadyFor(ShowAtUnreadMsgId);
-	result.peerScopedUpdateRouting = PeerScopedUpdateRoutingRegressionPasses(
-		&session, firstHistory->peer, secondHistory->peer);
+	result.peerScopedUpdateRouting
+		= PeerScopedUpdateRoutingRegressionPasses(&session, firstHistory->peer,
+												  secondHistory->peer)
+		  && SharedMediaInvalidationRoutingRegressionPasses();
 	const auto historyWidget
 		= controller->content()->historyWidgetForRegressionTest();
 	if (!historyWidget) {
@@ -21023,17 +21140,21 @@ enum class RunnerExternalActivationMarkerState {
 
 [[nodiscard]] RunnerExternalActivationMarkerState
 RunnerExternalActivationMarkerStateForRegression(const QByteArray &contents,
-												 qint64 expectedPid) {
+												 qint64 expectedPid,
+												 int expectedRequestNumber) {
 	const auto lines = contents.split('\n');
 	const auto expectedPidLine
 		= QByteArray("pid=") + QByteArray::number(expectedPid);
-	if (lines.size() < 2 || lines[0] != expectedPidLine) {
+	const auto expectedRequestLine
+		= QByteArray("request=") + QByteArray::number(expectedRequestNumber);
+	if (lines.size() < 3 || lines[0] != expectedPidLine
+		|| lines[1] != expectedRequestLine) {
 		return RunnerExternalActivationMarkerState::Waiting;
 	}
-	if (lines[1] == "result=PASS") {
+	if (lines[2] == "result=PASS") {
 		return RunnerExternalActivationMarkerState::Activated;
 	}
-	if (lines[1] == "result=FAIL") {
+	if (lines[2] == "result=FAIL") {
 		return RunnerExternalActivationMarkerState::Failed;
 	}
 	return RunnerExternalActivationMarkerState::Waiting;
@@ -21041,17 +21162,21 @@ RunnerExternalActivationMarkerStateForRegression(const QByteArray &contents,
 
 [[nodiscard]] bool RunnerExternalActivationMarkerRegressionPasses() {
 	constexpr auto kPid = qint64(4321);
+	constexpr auto kRequestNumber = 2;
 	return (RunnerExternalActivationMarkerStateForRegression(
-				"pid=4321\nresult=PASS\n", kPid)
+				"pid=4321\nrequest=2\nresult=PASS\n", kPid, kRequestNumber)
 			== RunnerExternalActivationMarkerState::Activated)
 		   && (RunnerExternalActivationMarkerStateForRegression(
-				   "pid=4321\nresult=FAIL\n", kPid)
+				   "pid=4321\nrequest=2\nresult=FAIL\n", kPid, kRequestNumber)
 			   == RunnerExternalActivationMarkerState::Failed)
 		   && (RunnerExternalActivationMarkerStateForRegression(
-				   "pid=9876\nresult=PASS\n", kPid)
+				   "pid=9876\nrequest=2\nresult=PASS\n", kPid, kRequestNumber)
 			   == RunnerExternalActivationMarkerState::Waiting)
-		   && (RunnerExternalActivationMarkerStateForRegression("pid=4321\n",
-																kPid)
+		   && (RunnerExternalActivationMarkerStateForRegression(
+				   "pid=4321\nrequest=1\nresult=PASS\n", kPid, kRequestNumber)
+			   == RunnerExternalActivationMarkerState::Waiting)
+		   && (RunnerExternalActivationMarkerStateForRegression(
+				   "pid=4321\nrequest=2\n", kPid, kRequestNumber)
 			   == RunnerExternalActivationMarkerState::Waiting);
 }
 
@@ -21070,6 +21195,8 @@ RunnerExternalActivationMarkerStateForRegression(const QByteArray &contents,
 			"Runner external activation request path is not configured.\n");
 		return false;
 	}
+	static auto requestNumber = 0;
+	++requestNumber;
 	auto request = QFile(requestPath);
 	if (!request.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
 		std::fprintf(
@@ -21078,6 +21205,8 @@ RunnerExternalActivationMarkerStateForRegression(const QByteArray &contents,
 		return false;
 	}
 	auto requestContents = QByteArray("pid=") + QByteArray::number(processId);
+	requestContents.append("\nrequest=");
+	requestContents.append(QByteArray::number(requestNumber));
 	requestContents.append('\n');
 	if (request.write(requestContents) != requestContents.size()
 		|| !request.flush()) {
@@ -21093,7 +21222,7 @@ RunnerExternalActivationMarkerStateForRegression(const QByteArray &contents,
 				return false;
 			}
 			markerState = RunnerExternalActivationMarkerStateForRegression(
-				marker.readAll(), processId);
+				marker.readAll(), processId, requestNumber);
 			return markerState != RunnerExternalActivationMarkerState::Waiting;
 		},
 		240'000, 50);
@@ -21101,17 +21230,17 @@ RunnerExternalActivationMarkerStateForRegression(const QByteArray &contents,
 		|| markerState != RunnerExternalActivationMarkerState::Activated) {
 		std::fprintf(
 			stderr,
-			"Runner external activation gate failed before lifecycle tests: "
-			"pid=%lld state=%s.\n",
-			static_cast<long long>(processId),
+			"Runner external activation gate failed before focus checks: "
+			"pid=%lld request=%d state=%s.\n",
+			static_cast<long long>(processId), requestNumber,
 			!ready ? "marker-not-published-or-mismatched"
 				   : "external-activation-failed");
 		return false;
 	}
 	std::fprintf(stderr,
-				 "Runner external activation verified before lifecycle tests: "
-				 "pid=%lld.\n",
-				 static_cast<long long>(processId));
+				 "Runner external activation verified before focus checks: "
+				 "pid=%lld request=%d.\n",
+				 static_cast<long long>(processId), requestNumber);
 	return true;
 }
 

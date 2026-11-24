@@ -1090,7 +1090,10 @@ reject_step_script "$mac_workflow" build-macos "$regression_step" \
 require_step_python "$mac_workflow" build-macos "$regression_step" \
   "command.extend(['-o', 'process handle SIGUSR2 -s false -n false -p true'])" \
   "activation_request_path = Path(os.path.dirname(stderr_path)) / 'runner-external-activation.request'" \
-  'app_pid = read_activation_request(activation_request_path)' \
+	'activation_request = read_activation_request(activation_request_path)' \
+  'last_activation_request_number = 0' \
+  'requested_pid, request_number = activation_request' \
+  'activation_request_is_new(activation_request, last_activation_request_number)' \
   'app_startup_timeout = 300' \
   'app_runtime_timeout = 180' \
   "signal_pid(app_pid, 'Teagram', cleanup_signal)"
@@ -1098,8 +1101,11 @@ require_step_python "$mac_workflow" build-macos "$regression_step" \
   "activation_helper = os.path.join(scripts_dir, 'macos_process_activation.py')" \
   'activation_environment = os.environ.copy()' \
   "activation_environment['HOME'] = os.environ['RUNNER_EXTERNAL_ACTIVATION_HOME']" \
-  'activation_result = subprocess.run([sys.executable, activation_helper, str(app_pid)], capture_output=True, text=True, timeout=220, check=False, env=activation_environment)' \
+  'activation_result = subprocess.run([sys.executable, activation_helper, str(requested_pid)], capture_output=True, text=True, timeout=220, check=False, env=activation_environment)' \
   'external_activation_passed = activation_result.returncode == 0'
+require_step_script "$mac_workflow" build-macos "$regression_step" \
+  'while process.poll() is None:' \
+  'if not activation_request_is_new('
 require_step_script "$mac_workflow" build-macos "$regression_step" \
   'process handle SIGUSR2 -p true -s false -n false'
 require_step_script "$mac_workflow" build-macos "$regression_step" \
@@ -1116,10 +1122,17 @@ awk '
   END { exit !(request_env && request_write && marker_wait > request_write) }
 ' Telegram/SourceFiles/tests/account_lifecycle_regression.cpp \
   || contract_fail 'The lifecycle app must publish its PID before waiting for runner activation.'
+awk '
+  /RunSettingsDeepLinkRefusalRegression\(/ { in_settings = 1 }
+  in_settings && /WaitForRunnerExternalActivationForRegression\(\)/ { external_activation = NR }
+  in_settings && /stockWindowActivation/ { first_focus_activation = NR; exit }
+  END { exit !(external_activation && first_focus_activation > external_activation) }
+' Telegram/SourceFiles/tests/account_lifecycle_regression.cpp \
+  || contract_fail 'Settings deep-link focus checks must request fresh runner activation.'
 require_step_python "$mac_workflow" build-macos "$regression_step" \
   "activation_marker = Path(os.path.dirname(stderr_path)) / 'runner-external-activation.status'" \
   "activation_marker_result = 'PASS' if external_activation_passed else 'FAIL'" \
-  "activation_marker_text = f'pid={app_pid}\\nresult={activation_marker_result}\\n'" \
+  "activation_marker_text = f'pid={app_pid}\\nrequest={request_number}\\nresult={activation_marker_result}\\n'" \
   'os.replace(activation_marker_temp, activation_marker)'
 awk '
   /StartAccountLifecycleRegression\(Fn<void\(int\)> done\)/ { in_start = 1 }

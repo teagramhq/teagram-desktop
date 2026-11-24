@@ -135,7 +135,7 @@ void SharedMedia::invalidate(SharedMediaInvalidateBottom &&query) {
 		}
 		++peerIt;
 	}
-	_bottomInvalidated.fire(std::move(query));
+	sendBottomInvalidated(query);
 }
 
 void SharedMedia::unload(SharedMediaUnloadThread &&query) {
@@ -208,8 +208,73 @@ rpl::producer<SharedMediaRemoveAll> SharedMedia::allRemoved() const {
 	return _allRemoved.events();
 }
 
-rpl::producer<SharedMediaInvalidateBottom> SharedMedia::bottomInvalidated() const {
-	return _bottomInvalidated.events();
+rpl::producer<SharedMediaInvalidateBottom>
+SharedMedia::bottomInvalidated(PeerId peerId) const {
+	const auto streams
+		= std::weak_ptr<BottomInvalidatedStreams>(_bottomInvalidatedStreams);
+	return rpl::make_producer<SharedMediaInvalidateBottom>(
+		[streams, peerId](const auto &consumer) {
+			const auto strong = streams.lock();
+			if (!strong) {
+				return rpl::lifetime();
+			}
+			const auto i = strong->find(peerId);
+			auto scoped = (i != strong->end())
+							  ? i->second
+							  : std::make_shared<BottomInvalidatedStream>();
+			if (i == strong->end()) {
+				strong->emplace(peerId, scoped);
+			}
+			const auto id = ++scoped->nextSubscriptionId;
+			auto stream = std::make_shared<
+				rpl::event_stream<SharedMediaInvalidateBottom>>();
+			scoped->subscriptions.emplace(id, stream);
+			auto result = rpl::lifetime(
+				[streams, peerId, weakStream = std::weak_ptr(scoped), id] {
+					const auto strong = streams.lock();
+					const auto scoped = weakStream.lock();
+					if (!strong || !scoped) {
+						return;
+					}
+					const auto i = strong->find(peerId);
+					if ((i != strong->end()) && (i->second == scoped)) {
+						scoped->subscriptions.erase(id);
+						if (scoped->subscriptions.empty()) {
+							strong->erase(i);
+						}
+					}
+				});
+			auto events = stream->events();
+			result.add(std::move(events).start_existing(consumer));
+			return result;
+		});
+}
+
+int SharedMedia::bottomInvalidatedSubscriptionCountForRegressionTest(
+	PeerId peerId) const {
+	const auto i = _bottomInvalidatedStreams->find(peerId);
+	return (i == _bottomInvalidatedStreams->end())
+			   ? 0
+			   : int(i->second->subscriptions.size());
+}
+
+void SharedMedia::sendBottomInvalidated(
+	const SharedMediaInvalidateBottom &update) const {
+	const auto i = _bottomInvalidatedStreams->find(update.peerId);
+	if (i == _bottomInvalidatedStreams->end()) {
+		return;
+	}
+	const auto scoped = i->second;
+	const auto lastSubscriptionId = scoped->nextSubscriptionId;
+	auto subscription = scoped->subscriptions.begin();
+	while ((subscription != scoped->subscriptions.end())
+		   && (subscription->first <= lastSubscriptionId)) {
+		const auto id = subscription->first;
+		const auto stream = subscription->second;
+		stream->fire_copy(update);
+		// A callback may unsubscribe itself or another observer while sending.
+		subscription = scoped->subscriptions.upper_bound(id);
+	}
 }
 
 } // namespace Storage

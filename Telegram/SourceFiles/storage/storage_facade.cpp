@@ -27,7 +27,8 @@ public:
 	rpl::producer<SharedMediaSliceUpdate> sharedMediaSliceUpdated() const;
 	rpl::producer<SharedMediaRemoveOne> sharedMediaOneRemoved() const;
 	rpl::producer<SharedMediaRemoveAll> sharedMediaAllRemoved() const;
-	rpl::producer<SharedMediaInvalidateBottom> sharedMediaBottomInvalidated() const;
+	rpl::producer<SharedMediaInvalidateBottom>
+	sharedMediaBottomInvalidated(PeerId peerId) const;
 
 	void add(UserPhotosSetBack &&query);
 	void add(UserPhotosAddNew &&query);
@@ -96,8 +97,9 @@ rpl::producer<SharedMediaRemoveAll> Facade::Impl::sharedMediaAllRemoved() const 
 	return _sharedMedia.allRemoved();
 }
 
-rpl::producer<SharedMediaInvalidateBottom> Facade::Impl::sharedMediaBottomInvalidated() const {
-	return _sharedMedia.bottomInvalidated();
+rpl::producer<SharedMediaInvalidateBottom>
+Facade::Impl::sharedMediaBottomInvalidated(PeerId peerId) const {
+	return _sharedMedia.bottomInvalidated(peerId);
 }
 
 void Facade::Impl::add(UserPhotosSetBack &&query) {
@@ -187,8 +189,9 @@ rpl::producer<SharedMediaRemoveAll> Facade::sharedMediaAllRemoved() const {
 	return _impl->sharedMediaAllRemoved();
 }
 
-rpl::producer<SharedMediaInvalidateBottom> Facade::sharedMediaBottomInvalidated() const {
-	return _impl->sharedMediaBottomInvalidated();
+rpl::producer<SharedMediaInvalidateBottom>
+Facade::sharedMediaBottomInvalidated(PeerId peerId) const {
+	return _impl->sharedMediaBottomInvalidated(peerId);
 }
 
 void Facade::add(UserPhotosSetBack &&query) {

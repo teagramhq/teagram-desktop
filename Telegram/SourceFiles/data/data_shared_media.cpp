@@ -163,13 +163,9 @@ rpl::producer<SparseIdsSlice> SharedMediaViewer(
 			return builder->removeAll();
 		}) | rpl::on_next(pushNextSnapshot, lifetime);
 
-		using InvalidateBottom = Storage::SharedMediaInvalidateBottom;
-		session->storage().sharedMediaBottomInvalidated(
-		) | rpl::filter([=](const InvalidateBottom &update) {
-			return (update.peerId == key.peerId);
-		}) | rpl::filter([=] {
-			return builder->invalidateBottom();
-		}) | rpl::on_next(pushNextSnapshot, lifetime);
+		session->storage().sharedMediaBottomInvalidated(key.peerId)
+			| rpl::filter([=] { return builder->invalidateBottom(); })
+			| rpl::on_next(pushNextSnapshot, lifetime);
 
 		using Result = Storage::SharedMediaResult;
 		session->storage().query(Storage::SharedMediaQuery(
