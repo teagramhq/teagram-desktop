@@ -21015,7 +21015,92 @@ RunAiComposeApplyHandlerRegression(not_null<Window::Controller *> window,
 	return true;
 }
 
+enum class RunnerExternalActivationMarkerState {
+	Waiting,
+	Activated,
+	Failed,
+};
+
+[[nodiscard]] RunnerExternalActivationMarkerState
+RunnerExternalActivationMarkerStateForRegression(const QByteArray &contents,
+												 qint64 expectedPid) {
+	const auto lines = contents.split('\n');
+	const auto expectedPidLine
+		= QByteArray("pid=") + QByteArray::number(expectedPid);
+	if (lines.size() < 2 || lines[0] != expectedPidLine) {
+		return RunnerExternalActivationMarkerState::Waiting;
+	}
+	if (lines[1] == "result=PASS") {
+		return RunnerExternalActivationMarkerState::Activated;
+	}
+	if (lines[1] == "result=FAIL") {
+		return RunnerExternalActivationMarkerState::Failed;
+	}
+	return RunnerExternalActivationMarkerState::Waiting;
+}
+
+[[nodiscard]] bool RunnerExternalActivationMarkerRegressionPasses() {
+	constexpr auto kPid = qint64(4321);
+	return (RunnerExternalActivationMarkerStateForRegression(
+				"pid=4321\nresult=PASS\n", kPid)
+			== RunnerExternalActivationMarkerState::Activated)
+		   && (RunnerExternalActivationMarkerStateForRegression(
+				   "pid=4321\nresult=FAIL\n", kPid)
+			   == RunnerExternalActivationMarkerState::Failed)
+		   && (RunnerExternalActivationMarkerStateForRegression(
+				   "pid=9876\nresult=PASS\n", kPid)
+			   == RunnerExternalActivationMarkerState::Waiting)
+		   && (RunnerExternalActivationMarkerStateForRegression("pid=4321\n",
+																kPid)
+			   == RunnerExternalActivationMarkerState::Waiting);
+}
+
+[[nodiscard]] bool WaitForRunnerExternalActivationForRegression() {
+	const auto markerPath = qEnvironmentVariable(
+		"TDESKTOP_AUTH_LIFECYCLE_REGRESSION_RUNNER_ACTIVATION_MARKER");
+	if (markerPath.isEmpty()) {
+		return true;
+	}
+	const auto processId = QCoreApplication::applicationPid();
+	auto markerState = RunnerExternalActivationMarkerState::Waiting;
+	const auto ready = WaitForRegressionCondition(
+		[&] {
+			auto marker = QFile(markerPath);
+			if (!marker.open(QIODevice::ReadOnly)) {
+				return false;
+			}
+			markerState = RunnerExternalActivationMarkerStateForRegression(
+				marker.readAll(), processId);
+			return markerState != RunnerExternalActivationMarkerState::Waiting;
+		},
+		240'000, 50);
+	if (!ready
+		|| markerState != RunnerExternalActivationMarkerState::Activated) {
+		std::fprintf(
+			stderr,
+			"Runner external activation gate failed before lifecycle tests: "
+			"pid=%lld state=%s.\n",
+			static_cast<long long>(processId),
+			!ready ? "marker-not-published-or-mismatched"
+				   : "external-activation-failed");
+		return false;
+	}
+	std::fprintf(stderr,
+				 "Runner external activation verified before lifecycle tests: "
+				 "pid=%lld.\n",
+				 static_cast<long long>(processId));
+	return true;
+}
+
 [[nodiscard]] int StartAccountLifecycleRegression(Fn<void(int)> done) {
+	if (!RunnerExternalActivationMarkerRegressionPasses()) {
+		std::fprintf(stderr,
+					 "Runner external activation marker self-test failed.\n");
+		return 1;
+	}
+	if (!WaitForRunnerExternalActivationForRegression()) {
+		return 1;
+	}
 	auto nativeLifecycleResults = std::make_shared<NativeLifecycleResults>();
 	const auto injectedFailCases
 		= qEnvironmentVariable("TDESKTOP_AUTH_LIFECYCLE_REGRESSION_FAIL_CASE")

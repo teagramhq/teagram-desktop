@@ -18,6 +18,7 @@ temp_dir="$(mktemp -d)"
 trap 'rm -rf "$temp_dir"' EXIT
 
 PYTHONDONTWRITEBYTECODE=1 python3 "$scripts_dir/test_macos_timeout_capture.py"
+PYTHONDONTWRITEBYTECODE=1 python3 "$scripts_dir/test_macos_process_activation.py"
 
 require_contract_tests_in_lint
 for trigger in push pull_request; do
@@ -26,6 +27,8 @@ for trigger in push pull_request; do
     .github/scripts/test_macos_launch_smoke.py \
     .github/scripts/macos_timeout_capture.py \
     .github/scripts/test_macos_timeout_capture.py \
+    .github/scripts/macos_process_activation.py \
+    .github/scripts/test_macos_process_activation.py \
     .github/scripts/extract_dwarf_subprogram_address.py \
     .github/scripts/symbolicate_macos_minidump.py; do
     grep -Fxq -- "$script_path" <<< "$paths" \
@@ -1061,6 +1064,7 @@ regression_timeout_minutes="$(step_field "$mac_workflow" build-macos \
   || contract_fail 'Full chat info session regression must retain its existing 20-minute timeout.'
 require_step_script "$mac_workflow" build-macos "$regression_step" \
   'exec > >(tee "$diagnostics/harness.log") 2>&1' \
+  'RUNNER_EXTERNAL_ACTIVATION_HOME="$HOME"' \
   'build_dir="$repo/out"' \
   'cache_file="$build_dir/CMakeCache.txt"' \
   'compile_commands="$build_dir/compile_commands.json"' \
@@ -1087,8 +1091,36 @@ require_step_python "$mac_workflow" build-macos "$regression_step" \
   'app_startup_timeout = 300' \
   'app_runtime_timeout = 180' \
   "signal_pid(app_pid, 'Teagram', cleanup_signal)"
+require_step_python "$mac_workflow" build-macos "$regression_step" \
+  "activation_helper = os.path.join(scripts_dir, 'macos_process_activation.py')" \
+  'activation_environment = os.environ.copy()' \
+  "activation_environment['HOME'] = os.environ['RUNNER_EXTERNAL_ACTIVATION_HOME']" \
+  'activation_result = subprocess.run([sys.executable, activation_helper, str(app_pid)], capture_output=True, text=True, timeout=220, check=False, env=activation_environment)' \
+  'external_activation_passed = activation_result.returncode == 0'
 require_step_script "$mac_workflow" build-macos "$regression_step" \
   'process handle SIGUSR2 -p true -s false -n false'
+require_step_script "$mac_workflow" build-macos "$regression_step" \
+  'if not external_activation_passed:' \
+  'HARNESS ERROR: runner did not activate and verify ' \
+  'Teagram as frontmost before the lifecycle regression.'
+require_step_script "$mac_workflow" build-macos "$regression_step" \
+  'TDESKTOP_AUTH_LIFECYCLE_REGRESSION_RUNNER_ACTIVATION_MARKER="$diagnostics/runner-external-activation.status"'
+require_step_python "$mac_workflow" build-macos "$regression_step" \
+  "activation_marker = Path(os.path.dirname(stderr_path)) / 'runner-external-activation.status'" \
+  "activation_marker_result = 'PASS' if external_activation_passed else 'FAIL'" \
+  "activation_marker_text = f'pid={app_pid}\\nresult={activation_marker_result}\\n'" \
+  'os.replace(activation_marker_temp, activation_marker)'
+awk '
+  /StartAccountLifecycleRegression\(Fn<void\(int\)> done\)/ { in_start = 1 }
+  in_start && /RunnerExternalActivationMarkerRegressionPasses\(\)/ { self_test = NR }
+  in_start && /WaitForRunnerExternalActivationForRegression\(\)/ { activation_wait = NR }
+  in_start && /nativeLifecycleResults->StartCase\("username-input"\)/ {
+    first_case = NR
+    exit
+  }
+  END { exit !(self_test && activation_wait > self_test && first_case > activation_wait) }
+' Telegram/SourceFiles/tests/account_lifecycle_regression.cpp \
+  || contract_fail 'The lifecycle regression must self-test and await runner activation before its first case.'
 regression_step_index="$(job_field "$mac_workflow" build-macos \
   '.steps | to_entries[] | select(.value.name == "Full chat info session regression.") | .key')"
 summary_step_index="$(job_field "$mac_workflow" build-macos \

@@ -1019,6 +1019,8 @@ jobs:
           set +e
           env \
             HOME="$regression_home" \
+            RUNNER_EXTERNAL_ACTIVATION_HOME="$HOME" \
+            TDESKTOP_AUTH_LIFECYCLE_REGRESSION_RUNNER_ACTIVATION_MARKER="$diagnostics/runner-external-activation.status" \
             TDESKTOP_MAC_PROFILE_TEST_HOME="$regression_home" \
             ALSOFT_DRIVERS=null \
             TDESKTOP_AUTH_LIFECYCLE_REGRESSION=1 \
@@ -1081,6 +1083,7 @@ jobs:
               app_startup_timeout = 300
               app_runtime_timeout = 180
               app_pid = None
+              external_activation_passed = False
               startup_deadline = time.monotonic() + app_startup_timeout
               while process.poll() is None and time.monotonic() < startup_deadline:
                   try:
@@ -1090,6 +1093,59 @@ jobs:
                       app_pids = []
                   if app_pids:
                       app_pid = int(app_pids[-1])
+                      activation_helper = os.path.join(scripts_dir, "macos_process_activation.py")
+                      activation_environment = os.environ.copy()
+                      activation_environment["HOME"] = os.environ[
+                          "RUNNER_EXTERNAL_ACTIVATION_HOME"
+                      ]
+                      try:
+                          activation_result = subprocess.run(
+                              [sys.executable, activation_helper, str(app_pid)],
+                              capture_output=True,
+                              text=True,
+                              timeout=220,
+                              check=False,
+                              env=activation_environment,
+                          )
+                          log.write("Runner-side macOS process activation:\n")
+                          log.write(activation_result.stdout)
+                          log.write(activation_result.stderr)
+                          log.write(
+                              "Runner-side macOS process activation exit: "
+                              f"{activation_result.returncode}\n"
+                          )
+                          external_activation_passed = activation_result.returncode == 0
+                      except subprocess.TimeoutExpired as error:
+                          log.write(
+                              "Runner-side macOS process activation timed out: "
+                              f"{error}\n"
+                          )
+                      except OSError as error:
+                          log.write(
+                              "Runner-side macOS process activation could not run: "
+                              f"{error}\n"
+                          )
+                      activation_marker = Path(os.path.dirname(stderr_path)) / "runner-external-activation.status"
+                      activation_marker_temp = activation_marker.with_suffix(".tmp")
+                      activation_marker_result = "PASS" if external_activation_passed else "FAIL"
+                      activation_marker_text = (
+                          f"pid={app_pid}\nresult={activation_marker_result}\n"
+                      )
+                      try:
+                          activation_marker_temp.write_text(
+                              activation_marker_text,
+                              encoding="utf-8",
+                          )
+                          os.replace(activation_marker_temp, activation_marker)
+                      except OSError as error:
+                          external_activation_passed = False
+                          log.write(
+                              "Runner-side macOS activation marker could not be written: "
+                              f"{error}\n"
+                          )
+                          signal_pid(app_pid, "Teagram", signal.SIGTERM)
+                          signal_pid(process.pid, "LLDB", signal.SIGTERM)
+                      log.flush()
                       break
                   time.sleep(0.5)
 
@@ -1137,6 +1193,14 @@ jobs:
                           f"{app_runtime_timeout}-second runtime bound.\n"
                       )
                   status = 124
+
+              if not external_activation_passed:
+                  log.write(
+                      "HARNESS ERROR: runner did not activate and verify "
+                      "Teagram as frontmost before the lifecycle regression.\n"
+                  )
+                  if status == 0:
+                      status = 1
 
           sys.exit(status)
           PY
