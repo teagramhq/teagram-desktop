@@ -7,6 +7,7 @@ import subprocess
 import sys
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Callable
 
 
@@ -17,6 +18,21 @@ class ActivationResult:
     frontmost_pid: int | None
     diagnostics: str
     error: str = ""
+
+
+def read_activation_request(request_path: str | Path) -> int | None:
+    """Read the app-published PID without relying on OS diagnostics on stderr."""
+    try:
+        lines = Path(request_path).read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeError):
+        return None
+    if len(lines) != 1 or not lines[0].startswith("pid="):
+        return None
+    try:
+        pid = int(lines[0][len("pid=") :])
+    except ValueError:
+        return None
+    return pid if pid > 0 else None
 
 
 def _output_text(value: str | bytes | None) -> str:

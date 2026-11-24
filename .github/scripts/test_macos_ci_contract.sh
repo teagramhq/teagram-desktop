@@ -1065,6 +1065,7 @@ regression_timeout_minutes="$(step_field "$mac_workflow" build-macos \
 require_step_script "$mac_workflow" build-macos "$regression_step" \
   'exec > >(tee "$diagnostics/harness.log") 2>&1' \
   'RUNNER_EXTERNAL_ACTIVATION_HOME="$HOME"' \
+  'TDESKTOP_AUTH_LIFECYCLE_REGRESSION_RUNNER_ACTIVATION_REQUEST="$diagnostics/runner-external-activation.request"' \
   'build_dir="$repo/out"' \
   'cache_file="$build_dir/CMakeCache.txt"' \
   'compile_commands="$build_dir/compile_commands.json"' \
@@ -1088,6 +1089,8 @@ reject_step_script "$mac_workflow" build-macos "$regression_step" \
 # read from its syntax tree: a commented-out call does not count.
 require_step_python "$mac_workflow" build-macos "$regression_step" \
   "command.extend(['-o', 'process handle SIGUSR2 -s false -n false -p true'])" \
+  "activation_request_path = Path(os.path.dirname(stderr_path)) / 'runner-external-activation.request'" \
+  'app_pid = read_activation_request(activation_request_path)' \
   'app_startup_timeout = 300' \
   'app_runtime_timeout = 180' \
   "signal_pid(app_pid, 'Teagram', cleanup_signal)"
@@ -1105,6 +1108,14 @@ require_step_script "$mac_workflow" build-macos "$regression_step" \
   'Teagram as frontmost before the lifecycle regression.'
 require_step_script "$mac_workflow" build-macos "$regression_step" \
   'TDESKTOP_AUTH_LIFECYCLE_REGRESSION_RUNNER_ACTIVATION_MARKER="$diagnostics/runner-external-activation.status"'
+awk '
+  /WaitForRunnerExternalActivationForRegression\(\) \{/ { in_wait = 1 }
+  in_wait && /TDESKTOP_AUTH_LIFECYCLE_REGRESSION_RUNNER_ACTIVATION_REQUEST/ { request_env = NR }
+  in_wait && /request.write\(requestContents\)/ { request_write = NR }
+  in_wait && /WaitForRegressionCondition\(/ { marker_wait = NR; exit }
+  END { exit !(request_env && request_write && marker_wait > request_write) }
+' Telegram/SourceFiles/tests/account_lifecycle_regression.cpp \
+  || contract_fail 'The lifecycle app must publish its PID before waiting for runner activation.'
 require_step_python "$mac_workflow" build-macos "$regression_step" \
   "activation_marker = Path(os.path.dirname(stderr_path)) / 'runner-external-activation.status'" \
   "activation_marker_result = 'PASS' if external_activation_passed else 'FAIL'" \

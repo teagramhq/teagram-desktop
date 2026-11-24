@@ -4,12 +4,33 @@
 from __future__ import annotations
 
 import subprocess
+import tempfile
 import unittest
+from pathlib import Path
 
-from macos_process_activation import activate_process
+from macos_process_activation import activate_process, read_activation_request
 
 
 class ProcessActivationTests(unittest.TestCase):
+    def test_app_published_pid_is_available_without_stderr_diagnostics(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            request_path = Path(directory) / "runner-external-activation.request"
+            stderr_path = Path(directory) / "stderr.log"
+            request_path.write_text("pid=4321\n", encoding="utf-8")
+
+            self.assertFalse(stderr_path.exists())
+            self.assertEqual(read_activation_request(request_path), 4321)
+
+    def test_missing_or_incomplete_activation_request_is_not_a_pid(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            request_path = Path(directory) / "runner-external-activation.request"
+
+            self.assertIsNone(read_activation_request(request_path))
+            request_path.write_text("pid=", encoding="utf-8")
+            self.assertIsNone(read_activation_request(request_path))
+            request_path.write_text("pid=0\n", encoding="utf-8")
+            self.assertIsNone(read_activation_request(request_path))
+
     def test_retries_until_the_target_process_is_frontmost(self) -> None:
         commands: list[list[str]] = []
         responses = iter(

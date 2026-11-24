@@ -21062,6 +21062,29 @@ RunnerExternalActivationMarkerStateForRegression(const QByteArray &contents,
 		return true;
 	}
 	const auto processId = QCoreApplication::applicationPid();
+	const auto requestPath = qEnvironmentVariable(
+		"TDESKTOP_AUTH_LIFECYCLE_REGRESSION_RUNNER_ACTIVATION_REQUEST");
+	if (requestPath.isEmpty()) {
+		std::fprintf(
+			stderr,
+			"Runner external activation request path is not configured.\n");
+		return false;
+	}
+	auto request = QFile(requestPath);
+	if (!request.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+		std::fprintf(
+			stderr,
+			"Runner external activation request could not be published.\n");
+		return false;
+	}
+	auto requestContents = QByteArray("pid=") + QByteArray::number(processId);
+	requestContents.append('\n');
+	if (request.write(requestContents) != requestContents.size()
+		|| !request.flush()) {
+		std::fprintf(stderr,
+					 "Runner external activation request write failed.\n");
+		return false;
+	}
 	auto markerState = RunnerExternalActivationMarkerState::Waiting;
 	const auto ready = WaitForRegressionCondition(
 		[&] {

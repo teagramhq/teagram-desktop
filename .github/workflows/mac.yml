@@ -1021,6 +1021,7 @@ jobs:
             HOME="$regression_home" \
             RUNNER_EXTERNAL_ACTIVATION_HOME="$HOME" \
             TDESKTOP_AUTH_LIFECYCLE_REGRESSION_RUNNER_ACTIVATION_MARKER="$diagnostics/runner-external-activation.status" \
+            TDESKTOP_AUTH_LIFECYCLE_REGRESSION_RUNNER_ACTIVATION_REQUEST="$diagnostics/runner-external-activation.request" \
             TDESKTOP_MAC_PROFILE_TEST_HOME="$regression_home" \
             ALSOFT_DRIVERS=null \
             TDESKTOP_AUTH_LIFECYCLE_REGRESSION=1 \
@@ -1028,7 +1029,6 @@ jobs:
               "$diagnostics/stdout.log" "$diagnostics/stderr.log" \
               "$diagnostics/lldb.log" "$symbol_file" <<'PY'
           import os
-          import re
           import shlex
           import signal
           import subprocess
@@ -1040,6 +1040,7 @@ jobs:
           executable, workdir, stdout_path, stderr_path, log_path, symbol_file = sys.argv[2:]
           sys.path.insert(0, scripts_dir)
           sys.dont_write_bytecode = True
+          from macos_process_activation import read_activation_request
           from macos_timeout_capture import authorization_timeout_report
           command = ["arch", "-arm64", "lldb", "--batch"]
           if symbol_file:
@@ -1085,14 +1086,13 @@ jobs:
               app_pid = None
               external_activation_passed = False
               startup_deadline = time.monotonic() + app_startup_timeout
+              activation_request_path = (
+                  Path(os.path.dirname(stderr_path))
+                  / "runner-external-activation.request"
+              )
               while process.poll() is None and time.monotonic() < startup_deadline:
-                  try:
-                      with open(stderr_path, encoding="utf-8", errors="replace") as stderr:
-                          app_pids = re.findall(r"Teagram\[(\d+):", stderr.read())
-                  except FileNotFoundError:
-                      app_pids = []
-                  if app_pids:
-                      app_pid = int(app_pids[-1])
+                  app_pid = read_activation_request(activation_request_path)
+                  if app_pid is not None:
                       activation_helper = os.path.join(scripts_dir, "macos_process_activation.py")
                       activation_environment = os.environ.copy()
                       activation_environment["HOME"] = os.environ[
