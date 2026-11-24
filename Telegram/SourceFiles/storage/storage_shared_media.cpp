@@ -250,7 +250,7 @@ SharedMedia::bottomInvalidated(PeerId peerId) const {
 		});
 }
 
-int SharedMedia::bottomInvalidatedSubscriptionCountForRegressionTest(
+int SharedMedia::bottomInvalidatedSubscriberCountForRegressionTest(
 	PeerId peerId) const {
 	const auto i = _bottomInvalidatedStreams->find(peerId);
 	return (i == _bottomInvalidatedStreams->end())

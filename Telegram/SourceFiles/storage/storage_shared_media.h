@@ -272,9 +272,9 @@ public:
 	rpl::producer<SharedMediaInvalidateBottom>
 	bottomInvalidated(PeerId peerId) const;
 	[[nodiscard]] int
-	bottomInvalidatedSubscriptionCountForRegressionTest(PeerId peerId) const;
+	bottomInvalidatedSubscriberCountForRegressionTest(PeerId peerId) const;
 
-private:
+  private:
 	struct Key {
 		PeerId peerId = 0;
 		MsgId topicRootId = 0;

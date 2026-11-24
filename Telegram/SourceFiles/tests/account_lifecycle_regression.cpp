@@ -14242,7 +14242,7 @@ SchedulerEvidenceDiagnosticsRegressionPasses() {
 			},
 			secondLifetime);
 	const auto firstBaseline
-		= sharedMedia.bottomInvalidatedSubscriptionCountForRegressionTest(
+		= sharedMedia.bottomInvalidatedSubscriberCountForRegressionTest(
 			firstPeer);
 	for (auto i = 0; i != 64; ++i) {
 		auto churnLifetime = rpl::lifetime();
@@ -14255,7 +14255,7 @@ SchedulerEvidenceDiagnosticsRegressionPasses() {
 		churnLifetime.destroy();
 	}
 	const auto churnReclaimed
-		= (sharedMedia.bottomInvalidatedSubscriptionCountForRegressionTest(
+		= (sharedMedia.bottomInvalidatedSubscriberCountForRegressionTest(
 			   firstPeer)
 		   == firstBaseline);
 	sharedMedia.invalidate(Storage::SharedMediaInvalidateBottom(firstPeer));
@@ -14270,7 +14270,7 @@ SchedulerEvidenceDiagnosticsRegressionPasses() {
 		  && (churnDeliveries == 0);
 	firstLifetime.destroy();
 	const auto firstReclaimed
-		= (sharedMedia.bottomInvalidatedSubscriptionCountForRegressionTest(
+		= (sharedMedia.bottomInvalidatedSubscriberCountForRegressionTest(
 			   firstPeer)
 		   == firstBaseline);
 	sharedMedia.invalidate(Storage::SharedMediaInvalidateBottom(firstPeer));
@@ -14283,10 +14283,10 @@ SchedulerEvidenceDiagnosticsRegressionPasses() {
 	secondLifetime.destroy();
 	return churnReclaimed && firstDispatchMatches && secondDispatchMatches
 		   && firstReclaimed && survivingSubscriberMatches
-		   && (sharedMedia.bottomInvalidatedSubscriptionCountForRegressionTest(
+		   && (sharedMedia.bottomInvalidatedSubscriberCountForRegressionTest(
 				   firstPeer)
 			   == 0)
-		   && (sharedMedia.bottomInvalidatedSubscriptionCountForRegressionTest(
+		   && (sharedMedia.bottomInvalidatedSubscriberCountForRegressionTest(
 				   secondPeer)
 			   == 0);
 }
