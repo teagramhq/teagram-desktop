@@ -3103,7 +3103,9 @@ void HistoryWidget::showHistory(
 		destroyUnreadBarOnClose();
 		_sponsoredMessageBar = nullptr;
 		_pinnedBar = nullptr;
-		_translateBar = nullptr;
+		if (!peerId) {
+			_translateBar = nullptr;
+		}
 		_pinnedTracker = nullptr;
 		_groupCallBar = nullptr;
 		_requestsBar = nullptr;
@@ -9800,30 +9802,38 @@ void HistoryWidget::checkLastPinnedClickedIdReset(
 void HistoryWidget::setupTranslateBar() {
 	Expects(_history != nullptr);
 
-	_translateBar = std::make_unique<HistoryView::TranslateBar>(
-		_topBars.get(),
-		controller(),
-		_history);
+	if (_translateBar) {
+		_translateBar->setHistory(_history);
+	} else {
+		_translateBar = std::make_unique<HistoryView::TranslateBar>(
+			_topBars.get(), controller(), _history);
 
-	controller()->adaptive().oneColumnValue(
-	) | rpl::on_next([=, raw = _translateBar.get()](bool one) {
-		raw->setShadowGeometryPostprocess([=](QRect geometry) {
-			if (!one) {
-				geometry.setLeft(geometry.left() + st::lineWidth);
-			}
-			return geometry;
-		});
-	}, _translateBar->lifetime());
+		controller()->adaptive().oneColumnValue()
+			| rpl::on_next(
+				[=, raw = _translateBar.get()](bool one) {
+					raw->setShadowGeometryPostprocess([=](QRect geometry) {
+						if (!one) {
+							geometry.setLeft(geometry.left() + st::lineWidth);
+						}
+						return geometry;
+					});
+				},
+				_translateBar->lifetime());
 
-	_translateBarHeight = 0;
-	_translateBar->heightValue(
-	) | rpl::on_next([=](int height) {
-		_topDelta = _preserveScrollTop ? 0 : (height - _translateBarHeight);
-		_translateBarHeight = height;
-		updateHistoryGeometry();
-		updateControlsGeometry();
-		_topDelta = 0;
-	}, _translateBar->lifetime());
+		_translateBarHeight = 0;
+		_translateBar->heightValue()
+			| rpl::on_next(
+				[=](int height) {
+					_topDelta = _preserveScrollTop
+									? 0
+									: (height - _translateBarHeight);
+					_translateBarHeight = height;
+					updateHistoryGeometry();
+					updateControlsGeometry();
+					_topDelta = 0;
+				},
+				_translateBar->lifetime());
+	}
 
 	orderWidgets();
 }

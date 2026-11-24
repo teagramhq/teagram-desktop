@@ -11878,9 +11878,30 @@ constexpr auto kMaxChatSwitchNanoseconds = qint64(50'000'000);
 constexpr auto kStartupHeartbeatGapThresholdNanoseconds = qint64(100'000'000);
 constexpr auto kMaxStartupHeartbeatThreadWorkNanoseconds = qint64(100'000'000);
 constexpr auto kMaxStartupHeartbeatProcessWorkNanoseconds = qint64(100'000'000);
+constexpr auto kMaxStartupWatchdogPingSilenceMilliseconds = qint64(100);
 constexpr auto kMaxSchedulerProofOtherThreadWorkNanoseconds
 	= qint64(20'000'000);
-constexpr auto kMaxStartupWatchdogPingSilenceMilliseconds = qint64(100);
+
+[[nodiscard]] bool HasRecentStartupWatchdogAcknowledgement(
+	const std::vector<Core::UiStallWatchdog::PingAcknowledgementEvidence>
+		&acknowledgements,
+	qint64 nowNanoseconds) {
+	return std::any_of(
+		begin(acknowledgements), end(acknowledgements),
+		[=](const auto &acknowledgement) {
+			return (acknowledgement.acknowledgedAtNanoseconds > 0)
+				   && (acknowledgement.acknowledgedAtNanoseconds
+					   <= nowNanoseconds)
+				   && (nowNanoseconds
+						   - acknowledgement.acknowledgedAtNanoseconds
+					   <= kMaxStartupWatchdogPingSilenceMilliseconds
+							  * 1'000'000)
+				   && (acknowledgement.responseNanoseconds >= 0)
+				   && (acknowledgement.responseNanoseconds
+					   <= kMaxStartupWatchdogPingSilenceMilliseconds
+							  * 1'000'000);
+		});
+}
 
 struct CacheHistoryWorkBudgets final {
 	qint64 chatSwitchNanoseconds = kMaxChatSwitchNanoseconds;
@@ -12643,6 +12664,16 @@ StartupWatchdogStallEvidenceRegressionPasses() {
 				.responseNanoseconds = 1'000'000,
 			},
 	};
+	const auto freshStartupAcknowledgement
+		= Core::UiStallWatchdog::PingAcknowledgementEvidence{
+			.acknowledgedAtNanoseconds = 900'000'000,
+			.responseNanoseconds = 1'000'000,
+	};
+	const auto staleStartupAcknowledgement
+		= Core::UiStallWatchdog::PingAcknowledgementEvidence{
+			.acknowledgedAtNanoseconds = 899'000'000,
+			.responseNanoseconds = 1'000'000,
+	};
 	const auto highProcessCpuGap = std::vector<MainThreadWorkInterval>{
 		{firstStart, 230'000'000, 25'000'000, 120'000'000},
 	};
@@ -12668,6 +12699,10 @@ StartupWatchdogStallEvidenceRegressionPasses() {
 				   delayedButObservedGap, {},
 				   delayedButObservedAcknowledgements)
 			   == 0)
+		   && HasRecentStartupWatchdogAcknowledgement(
+			   {freshStartupAcknowledgement}, 1'000'000'000)
+		   && !HasRecentStartupWatchdogAcknowledgement(
+			   {staleStartupAcknowledgement}, 1'000'000'000)
 		   && (highProcessCpuStall.size() == 1)
 		   && !AllCorroboratedStartupStallsHaveSchedulerProof(
 			   highProcessCpuStall, true);
@@ -14497,6 +14532,8 @@ struct CacheChatSwitchRegressionResult final {
 	bool historyScaleInvalidationRebuilt = false;
 	bool historyChatModeInvalidationRebuilt = false;
 	bool chatSwitchComposeUiReused = false;
+	bool translateBarReused = false;
+	bool translateBarTracksCurrentHistory = false;
 	bool historyChatModeInitiallyWide = false;
 	bool historyChatModeChangedWhileHidden = false;
 	bool historyChatModeLayoutWideAfter = false;
@@ -14966,6 +15003,25 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 	if (!historyWidget) {
 		return result;
 	}
+	auto translateBar = historyWidget->translateBarForRegressionTest();
+	result.translateBarReused = true;
+	result.translateBarTracksCurrentHistory = true;
+	const auto checkTranslateBar = [&](not_null<History *> history) {
+		const auto current = historyWidget->translateBarForRegressionTest();
+		if (!current) {
+			result.translateBarReused = false;
+			result.translateBarTracksCurrentHistory = false;
+		} else {
+			if (!translateBar) {
+				translateBar = current;
+			}
+			result.translateBarReused
+				= result.translateBarReused && (current == translateBar);
+			result.translateBarTracksCurrentHistory
+				= result.translateBarTracksCurrentHistory
+				  && (current->historyForRegressionTest() == history.get());
+		}
+	};
 	auto &regressionSettings = Core::App().settings();
 	const auto originalTabbedSelectorSectionEnabled
 		= regressionSettings.tabbedSelectorSectionEnabled();
@@ -15005,6 +15061,7 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		const auto index = chatSwitchIndex++;
 		if ((index == 0) && !result.initialHistoryWindowActivated) {
 			controller->showPeerHistory(history);
+			checkTranslateBar(history);
 			return qint64(-1);
 		}
 		if ((index > 0) && result.chatSwitchWindowsActivated
@@ -15015,6 +15072,7 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 				|| !IsWindowActiveForRegression(Core::App(), window, false)) {
 				result.chatSwitchWindowsActivated = false;
 				controller->showPeerHistory(history);
+				checkTranslateBar(history);
 				return qint64(-1);
 			}
 		}
@@ -15033,6 +15091,7 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 				  std::chrono::steady_clock::now().time_since_epoch())
 				  .count();
 		controller->showPeerHistory(history);
+		checkTranslateBar(history);
 		const auto wallDurationNanoseconds = timer.nsecsElapsed();
 		const auto mainThreadAfter = MainThreadCpuTimeNanoseconds();
 		const auto processAfter = ProcessCpuTimeNanoseconds();
@@ -16526,6 +16585,8 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 			  result.attachMenuUncachedPeerEstimatedWorkNanoseconds,
 			  kMaxChatSwitchNanoseconds)
 		  && result.attachMenuCacheBounded && result.chatSwitchComposeUiReused
+		  && result.translateBarReused
+		  && result.translateBarTracksCurrentHistory
 		  && result.fieldAutocompleteSuggestionsReady
 		  && result.botCommandsShownWhileFieldUnfocused
 		  && result.pendingRevealStartedAfterControlsGeometry
@@ -16547,7 +16608,8 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		  && (result.maxRecurringChatSwitchEstimatedWorkNanoseconds >= 0)
 		  && (result.maxRecurringChatSwitchEstimatedWorkNanoseconds
 			  < kMaxChatSwitchNanoseconds)
-		  && MainThreadBlockedWorkBudgetRegressionPasses();
+		  && MainThreadBlockedWorkBudgetRegressionPasses()
+		  && StartupWatchdogStallEvidenceRegressionPasses();
 	regressionSettings.setTabbedSelectorSectionEnabled(
 		originalTabbedSelectorSectionEnabled);
 	regressionSettings.setThirdSectionInfoEnabled(
@@ -17018,6 +17080,27 @@ void RunAuthenticatedCacheSymlinkCases(
 				continue;
 			}
 			Core::MacProtectedPath::ResetCachePathWalkCountForTesting();
+			const auto startupWatchdogBaselineReady
+				= WaitForRegressionCondition(
+					[&] {
+						const auto nowNanoseconds
+							= std::chrono::duration_cast<
+								  std::chrono::nanoseconds>(
+								  std::chrono::steady_clock::now()
+									  .time_since_epoch())
+								  .count();
+						return HasRecentStartupWatchdogAcknowledgement(
+							Core::UiStallWatchdog::
+								RecentPingAcknowledgementsForTesting(),
+							nowNanoseconds);
+					},
+					1000);
+			if (!startupWatchdogBaselineReady) {
+				std::fprintf(
+					stderr,
+					"Startup watchdog did not acknowledge a recent ping "
+					"before cache initialization.\n");
+			}
 			auto cacheInitializationTimer = QElapsedTimer();
 			cacheInitializationTimer.start();
 			auto mainThreadHeartbeatClock = QElapsedTimer();
@@ -17675,6 +17758,8 @@ void RunAuthenticatedCacheSymlinkCases(
 					"attach_menu_cache_bound=%d "
 					"pending_reveal_after_controls_geometry=%d "
 					"chat_switch_compose_ui_reused=%d "
+					"translate_bar_reused=%d "
+					"translate_bar_tracks_history=%d "
 					"field_autocomplete_suggestions_ready=%d "
 					"menu_commands_unfocused=%d "
 					"bot_commands_unfocused=%d "
@@ -17744,6 +17829,8 @@ void RunAuthenticatedCacheSymlinkCases(
 					chatSwitch.attachMenuCacheBounded,
 					chatSwitch.pendingRevealStartedAfterControlsGeometry,
 					chatSwitch.chatSwitchComposeUiReused,
+					chatSwitch.translateBarReused,
+					chatSwitch.translateBarTracksCurrentHistory,
 					chatSwitch.fieldAutocompleteSuggestionsReady,
 					chatSwitch.menuCommandsShownWhileFieldUnfocused,
 					chatSwitch.botCommandsShownWhileFieldUnfocused,
@@ -17949,6 +18036,7 @@ void RunAuthenticatedCacheSymlinkCases(
 				startupWalks, mainThreadWalks);
 			const auto passed
 				= startupScansCompleted && first && second
+				  && startupWatchdogBaselineReady
 				  && missingActiveVersionBeforeOpen
 				  && initializationPendingAtFirstAccess
 				  && queuedOperationsPassed && cacheInitializationAllowed

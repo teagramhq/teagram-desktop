@@ -10,6 +10,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/wrap/slide_wrap.h"
 #include "spellcheck/spellcheck_types.h"
 
+#include <vector>
+
 class History;
 struct LanguageId;
 
@@ -33,6 +35,7 @@ public:
 		not_null<Window::SessionController*> controller,
 		not_null<History*> history);
 	~TranslateBar();
+	void setHistory(not_null<History *> history);
 
 	void show();
 	void hide();
@@ -45,6 +48,7 @@ public:
 	[[nodiscard]] bool shouldBeShownForRegressionTest() const;
 	[[nodiscard]] bool controlsCreatedForRegressionTest() const;
 	[[nodiscard]] int contentWidthForRegressionTest() const;
+	[[nodiscard]] History *historyForRegressionTest() const { return _history; }
 	void clickForRegressionTest();
 #endif
 
@@ -58,34 +62,36 @@ public:
 	}
 
 private:
-	void setup(not_null<History*> history);
-	void setupControls();
-	void translateTo(LanguageId id);
-	void updateShadowGeometry(QRect wrapGeometry);
-	[[nodiscard]] base::unique_qptr<Ui::PopupMenu> createMenu(
-		not_null<Ui::IconButton*> button);
-	void showMenu(base::unique_qptr<Ui::PopupMenu> menu);
+  void setup();
+  void refreshTo();
+  void refreshPhrase();
+  void setupControls();
+  void translateTo(LanguageId id);
+  void updateShadowGeometry(QRect wrapGeometry);
+  [[nodiscard]] base::unique_qptr<Ui::PopupMenu>
+  createMenu(not_null<Ui::IconButton *> button);
+  void showMenu(base::unique_qptr<Ui::PopupMenu> menu);
 
-	void showHiddenToast(not_null<PeerData*> peer);
-	void showSettingsToast(not_null<PeerData*> peer, LanguageId ignored);
-	void showToast(
-		TextWithEntities text,
-		const QString &buttonText,
-		Fn<void()> buttonCallback);
+  void showHiddenToast(not_null<PeerData *> peer);
+  void showSettingsToast(not_null<PeerData *> peer, LanguageId ignored);
+  void showToast(TextWithEntities text, const QString &buttonText,
+				 Fn<void()> buttonCallback);
 
-	const not_null<Window::SessionController*> _controller;
-	const not_null<History*> _history;
-	Ui::SlideWrap<> _wrap;
-	std::unique_ptr<Ui::PlainShadow> _shadow;
-	Fn<QRect(QRect)> _shadowGeometryPostprocess;
-	base::unique_qptr<Ui::PopupMenu> _menu;
-	rpl::variable<LanguageId> _overridenTo;
-	rpl::variable<LanguageId> _to;
-	Ui::FlatLabel *_label = nullptr;
-	Fn<void()> _updateLabelGeometry;
-	bool _shouldBeShown = false;
-	bool _forceHidden = false;
-
+  const not_null<Window::SessionController *> _controller;
+  not_null<History *> _history;
+  Ui::SlideWrap<> _wrap;
+  std::unique_ptr<Ui::PlainShadow> _shadow;
+  Fn<QRect(QRect)> _shadowGeometryPostprocess;
+  base::unique_qptr<Ui::PopupMenu> _menu;
+  rpl::variable<LanguageId> _overridenTo;
+  rpl::variable<LanguageId> _to;
+  rpl::variable<QString> _phrase;
+  LanguageId _preferredTo;
+  std::vector<LanguageId> _skipTranslationLanguages;
+  Ui::FlatLabel *_label = nullptr;
+  Fn<void()> _updateLabelGeometry;
+  bool _shouldBeShown = false;
+  bool _forceHidden = false;
 };
 
 } // namespace HistoryView

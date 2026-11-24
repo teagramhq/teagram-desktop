@@ -317,6 +317,10 @@ public:
 	[[nodiscard]] bool botMenuButtonVisibleForRegressionTest() const;
 	[[nodiscard]] bool botCommandStartVisibleForRegressionTest() const;
 	[[nodiscard]] bool historyTransitionFinishedForRegressionTest() const;
+	[[nodiscard]] HistoryView::TranslateBar *
+	translateBarForRegressionTest() const {
+		return _translateBar.get();
+	}
 	void hideFieldAutocompleteForRegressionTest();
 	void sendForRegressionTest(Api::SendOptions options);
 	void chooseReactionForRegressionTest(FullMsgId context,
