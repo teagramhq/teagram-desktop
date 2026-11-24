@@ -5129,16 +5129,79 @@ enum class WindowActivationForRegressionResult {
 	Failed,
 };
 
+struct WindowActivationEvidenceForRegression final {
+	bool applicationActive = false;
+	bool activeWindow = false;
+	bool activePrimaryWindow = false;
+	bool widgetActive = false;
+	bool visible = false;
+	bool minimized = false;
+	bool qtFocusWindow = false;
+	bool appKitKeyWindow = false;
+};
+
+[[nodiscard]] bool WindowActivationEvidenceMatchesForRegression(
+	const WindowActivationEvidenceForRegression &evidence,
+	bool requirePrimary) {
+	return evidence.applicationActive && evidence.activeWindow
+		   && (!requirePrimary || evidence.activePrimaryWindow)
+		   && evidence.widgetActive && evidence.visible && !evidence.minimized
+		   && evidence.qtFocusWindow && evidence.appKitKeyWindow;
+}
+
+[[nodiscard]] bool WindowActivationFocusLossRegressionPasses() {
+	auto evidence = WindowActivationEvidenceForRegression{
+		.applicationActive = true,
+		.activeWindow = true,
+		.activePrimaryWindow = true,
+		.widgetActive = true,
+		.visible = true,
+		.minimized = false,
+		.qtFocusWindow = true,
+		.appKitKeyWindow = true,
+	};
+	const auto controllerPointersStay
+		= evidence.activeWindow && evidence.activePrimaryWindow;
+	const auto initiallyActive
+		= WindowActivationEvidenceMatchesForRegression(evidence, true);
+	evidence.qtFocusWindow = false;
+	const auto qtFocusLossDetected
+		= controllerPointersStay
+		  && !WindowActivationEvidenceMatchesForRegression(evidence, true);
+	evidence.qtFocusWindow = true;
+	evidence.appKitKeyWindow = false;
+	const auto appKitFocusLossDetected
+		= controllerPointersStay
+		  && !WindowActivationEvidenceMatchesForRegression(evidence, true);
+	return initiallyActive && qtFocusLossDetected && appKitFocusLossDetected;
+}
+
 [[nodiscard]] bool
 IsWindowActiveForRegression(Core::Application &app,
 							not_null<Window::Controller *> window,
 							bool requirePrimary = false) {
 	const auto widget = window->widget();
-	return Platform::IsApplicationActiveForRegression()
-		   && widget->isActiveWindow() && widget->isVisible()
-		   && !(widget->windowState() & Qt::WindowMinimized)
-		   && (app.activeWindow() == window.get())
-		   && (!requirePrimary || (app.activePrimaryWindow() == window.get()));
+	const auto nativeHandle = widget->windowHandle();
+	return WindowActivationEvidenceMatchesForRegression(
+		{
+			.applicationActive = Platform::IsApplicationActiveForRegression(),
+			.activeWindow = (app.activeWindow() == window.get()),
+			.activePrimaryWindow = (app.activePrimaryWindow() == window.get()),
+			.widgetActive = widget->isActiveWindow(),
+			.visible = widget->isVisible(),
+			.minimized
+			= static_cast<bool>(widget->windowState() & Qt::WindowMinimized),
+			.qtFocusWindow
+			= nativeHandle && (QGuiApplication::focusWindow() == nativeHandle),
+			.appKitKeyWindow = Platform::IsWindowKeyForRegression(widget),
+		},
+		requirePrimary);
+}
+
+void RequestWindowActivationForRegression(
+	not_null<Window::Controller *> window) {
+	window->activate();
+	Platform::ActivateThisProcess(window->widget());
 }
 
 [[nodiscard]] WindowActivationForRegressionResult
@@ -5148,10 +5211,7 @@ ActivateWindowForRegression(Core::Application &app,
 	const auto isActive = [&] {
 		return IsWindowActiveForRegression(app, window, requirePrimary);
 	};
-	const auto activate = [&] {
-		window->activate();
-		Platform::ActivateThisProcess(window->widget());
-	};
+	const auto activate = [&] { RequestWindowActivationForRegression(window); };
 	auto retry = QTimer();
 	retry.setInterval(100);
 	QObject::connect(&retry, &QTimer::timeout, &retry, [&] {
@@ -5297,6 +5357,12 @@ template <typename Condition>
 	not_null<Window::SessionController *> stockController,
 	not_null<Window::SessionController *> pinnedController,
 	not_null<Window::SessionController *> blockedController) {
+	if (!WindowActivationFocusLossRegressionPasses()) {
+		std::fprintf(stderr,
+					 "Settings deep link regression failed: focus loss with "
+					 "unchanged active-window pointers was not detected.\n");
+		return false;
+	}
 	const auto routes = std::vector<QString>{
 		u"tg://settings/premium"_q,
 		u"tg://settings/PREMIUM"_q,
@@ -6112,13 +6178,13 @@ template <typename Condition>
 			auto lastActivation = QElapsedTimer();
 			const auto stable = WaitForRegressionCondition(
 				[&] {
-					if ((app.activeWindow() != &stockController->window())
-						|| (app.activePrimaryWindow()
-							!= &stockController->window())) {
+					if (!IsWindowActiveForRegression(
+							app, &stockController->window(), true)) {
 						stableSince.invalidate();
 						if (!lastActivation.isValid()
 							|| (lastActivation.elapsed() >= 100)) {
-							stockController->window().activate();
+							RequestWindowActivationForRegression(
+								&stockController->window());
 							lastActivation.start();
 						}
 						return false;
@@ -6130,6 +6196,8 @@ template <typename Condition>
 				},
 				1500);
 			if (!stable) {
+				LogWindowActivationForRegression(app,
+												 &stockController->window());
 				std::fprintf(stderr,
 							 "Settings deep link regression failed: "
 							 "stock window activation did not settle.\n");

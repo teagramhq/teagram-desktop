@@ -2450,6 +2450,8 @@ for platform_header in \
   Telegram/SourceFiles/platform/win/specific_win.h; do
   grep -Fq 'IsApplicationActiveForRegression' "$platform_header" \
     || contract_fail "$platform_header must expose application activation state to the regression fixture."
+  grep -Fq 'IsWindowKeyForRegression' "$platform_header" \
+    || contract_fail "$platform_header must expose actual native key-window focus to the regression fixture."
 done
 awk '
   /^bool IsApplicationActiveForRegression\(\)/ { in_check = 1 }
@@ -2459,15 +2461,30 @@ awk '
 ' "$mac_platform" \
   || contract_fail "$mac_platform must expose the current AppKit application activation state."
 awk '
-  /^ActivateWindowForRegression\(/ { in_activation = 1 }
-  in_activation && /window->activate\(\)/ { qt_activate = NR }
-  in_activation && /Platform::ActivateThisProcess\(window->widget\(\)\)/ {
+  /^bool IsWindowKeyForRegression\(/ { in_check = 1 }
+  in_check && /window->winId\(\)/ { uses_native_handle = 1 }
+  in_check && /\[targetWindow isKeyWindow\]/ { reads_key_window = 1 }
+  in_check && /^}/ { exit }
+  END { exit !(uses_native_handle && reads_key_window) }
+' "$mac_platform" \
+  || contract_fail "$mac_platform must report whether the target NSWindow is the actual AppKit key window."
+awk '
+  /^void RequestWindowActivationForRegression\(/ { in_request = 1 }
+  in_request && /window->activate\(\)/ { qt_activate = NR }
+  in_request && /Platform::ActivateThisProcess\(window->widget\(\)\)/ {
     appkit_activate = NR
   }
-  in_activation && /^}/ { exit }
+  in_request && /^}/ { exit }
   END { exit !(qt_activate && appkit_activate > qt_activate) }
 ' "$native_harness" \
-  || contract_fail 'AppKit must receive a final key-window activation request after each Qt window activation.'
+  || contract_fail 'The shared activation request must retry both Qt and AppKit activation.'
+awk '
+  /^ActivateWindowForRegression\(/ { in_activation = 1 }
+  in_activation && /RequestWindowActivationForRegression\(window\)/ { uses_shared_request = 1 }
+  in_activation && /^}/ { exit }
+  END { exit !uses_shared_request }
+' "$native_harness" \
+  || contract_fail 'The bounded activation retry must use the shared Qt and AppKit activation request.'
 if grep -Fq 'WindowActivationForRegressionResult::AppInactive' "$native_harness"; then
   contract_fail "$native_harness must fail instead of classifying AppKit inactivity as an unavailable focus check."
 fi
@@ -2503,7 +2520,9 @@ awk '
   /ActivateWindowForRegression\(/ { activation_signature = 1 }
   activation_signature && /Core::Application &app/ { in_activation = 1 }
   in_activation && /if \(!activated\)/ { activation_timeout = NR }
-  in_activation && /window->activate\(\)/ && !activation_call { activation_call = NR }
+  in_activation && /RequestWindowActivationForRegression\(window\)/ && !activation_call {
+    activation_call = NR
+  }
   in_activation && /WaitForRegressionCondition\(isActive, timeoutMs\)/ { bounded_wait = NR }
   in_activation && /if \(!applicationActive\)/ {
     if (activation_timeout) {
@@ -2535,9 +2554,30 @@ awk '
 ' "$native_harness" \
   || contract_fail "$native_harness must require foreground, active, visible, unminimized window state for every caller."
 awk '
+  /WindowActivationEvidenceMatchesForRegression\(/ { in_evidence = 1 }
+  in_evidence && /evidence.qtFocusWindow/ { checks_qt_focus = 1 }
+  in_evidence && /evidence.appKitKeyWindow/ { checks_appkit_key = 1 }
+  in_evidence && /^}/ { exit }
+  END { exit !(checks_qt_focus && checks_appkit_key) }
+' "$native_harness" \
+  || contract_fail "$native_harness must require both Qt focusWindow and AppKit key-window evidence."
+awk '
+  /WindowActivationFocusLossRegressionPasses\(/ { self_test++ }
+  /const auto stable = WaitForRegressionCondition/ { in_stability = 1 }
+  in_stability && /IsWindowActiveForRegression\(/ { checks_actual_focus = 1 }
+  in_stability && /RequestWindowActivationForRegression\(/ { retries_both_activators = 1 }
+  in_stability && /return stableSince.elapsed\(\) >= 100/ { keeps_full_stability_window = 1 }
+  in_stability && /const auto stockToastBeforeMissingController/ { in_stability = 0 }
+  END {
+    exit !(self_test >= 2 && checks_actual_focus && retries_both_activators &&
+      keeps_full_stability_window)
+  }
+' "$native_harness" \
+  || contract_fail "$native_harness must test focus loss with unchanged controller pointers and recheck Qt plus AppKit focus throughout the stability window."
+awk '
   /ActivateWindowForRegression\(/ { activation_signature = 1 }
   activation_signature && /Core::Application &app/ { in_activation = 1 }
-  in_activation && /window->activate\(\)/ { activation_call = NR }
+  in_activation && /RequestWindowActivationForRegression\(window\)/ { activation_call = NR }
   in_activation && /const auto timeoutMs/ { timeout_choice = NR }
   in_activation && /Platform::IsApplicationActiveForRegression\(\)/ && !appkit_state {
     appkit_state = NR

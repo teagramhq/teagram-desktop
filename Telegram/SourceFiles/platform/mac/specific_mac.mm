@@ -290,6 +290,15 @@ void ActivateThisProcess(not_null<QWidget *> window) {
 
 bool IsApplicationActiveForRegression() { return [NSApp isActive]; }
 
+bool IsWindowKeyForRegression(not_null<QWidget *> window) {
+	if (!window->windowHandle()) {
+		return false;
+	}
+	const auto targetWindow =
+		[reinterpret_cast<NSView *>(window->winId()) window];
+	return [targetWindow isKeyWindow];
+}
+
 void LogWindowActivationStateForRegression(not_null<QWidget *> widget) {
 	const auto targetWindow =
 		[reinterpret_cast<NSView *>(widget->winId()) window];
