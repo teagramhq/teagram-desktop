@@ -405,6 +405,9 @@ void TranslateBar::refreshPhrase() {
 }
 
 void TranslateBar::translateTo(LanguageId id) {
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+	++_translateToCallsForRegression;
+#endif
 	_history->translateTo(id);
 	if (const auto migrated = _history->migrateFrom()) {
 		migrated->translateTo(id);

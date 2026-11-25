@@ -274,7 +274,7 @@ public:
 	[[nodiscard]] int
 	bottomInvalidatedSubscriberCountForRegressionTest(PeerId peerId) const;
 
-  private:
+private:
 	struct Key {
 		PeerId peerId = 0;
 		MsgId topicRootId = 0;

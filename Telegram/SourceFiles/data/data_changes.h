@@ -301,6 +301,9 @@ struct ChatMemberRankChange {
 class Changes final {
 public:
 	explicit Changes(not_null<Main::Session*> session);
+#ifdef TDESKTOP_UNIT_TESTS
+	Changes();
+#endif
 
 	[[nodiscard]] Main::Session &session() const;
 
@@ -489,7 +492,11 @@ private:
 
 	void scheduleNotifications();
 
+#ifdef TDESKTOP_UNIT_TESTS
+	Main::Session *_session = nullptr;
+#else
 	const not_null<Main::Session*> _session;
+#endif
 
 	rpl::event_stream<NameUpdate> _nameStream;
 	Manager<PeerData, PeerUpdate> _peerChanges;

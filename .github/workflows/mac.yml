@@ -1041,7 +1041,7 @@ jobs:
           sys.path.insert(0, scripts_dir)
           sys.dont_write_bytecode = True
           from macos_process_activation import (
-              activation_request_is_new,
+              ActivationHandshake,
               read_activation_request,
               run_with_runtime_deadline,
           )
@@ -1088,43 +1088,52 @@ jobs:
               app_startup_timeout = 300
               app_runtime_timeout = 180
               app_pid = None
-              last_activation_request_number = 0
-              external_activation_passed = False
               startup_deadline = time.monotonic() + app_startup_timeout
-              runtime_deadline = None
               timeout_phase = ""
+              activation_handshake = ActivationHandshake(
+                  Path(os.path.dirname(stderr_path))
+                  / "runner-external-activation.status",
+                  runtime_seconds=app_runtime_timeout,
+              )
               activation_request_path = (
                   Path(os.path.dirname(stderr_path))
                   / "runner-external-activation.request"
               )
               while process.poll() is None:
                   now = time.monotonic()
-                  if app_pid is None and now >= startup_deadline:
+                  if (
+                      activation_handshake.app_pid is None
+                      and now >= startup_deadline
+                  ):
                       timeout_phase = "startup"
                       break
-                  if runtime_deadline is not None and now >= runtime_deadline:
+                  if (
+                      activation_handshake.runtime_deadline is not None
+                      and now >= activation_handshake.runtime_deadline
+                  ):
                       timeout_phase = "runtime"
                       break
 
                   activation_request = read_activation_request(
                       activation_request_path
                   )
-                  if not activation_request_is_new(
-                      activation_request, last_activation_request_number
-                  ):
+                  activation_attempt = activation_handshake.begin(
+                      activation_request
+                  )
+                  if activation_attempt is None:
                       time.sleep(0.5)
                       continue
 
-                  requested_pid, request_number = activation_request
-                  if app_pid is None:
-                      app_pid = requested_pid
-                  request_matches_pid = requested_pid == app_pid
+                  app_pid = activation_handshake.app_pid
+                  requested_pid = activation_attempt.requested_pid
+                  request_number = activation_attempt.request_number
+                  request_matches_pid = activation_attempt.pid_matches
                   if not request_matches_pid:
                       log.write(
                           "Runner activation request PID changed: "
                           f"expected={app_pid} received={requested_pid}\n"
                       )
-                  external_activation_passed = False
+                  activation_succeeded = False
                   if request_matches_pid:
                       activation_helper = os.path.join(
                           scripts_dir, "macos_process_activation.py"
@@ -1140,7 +1149,7 @@ jobs:
                                   activation_helper,
                                   str(requested_pid),
                               ],
-                              runtime_deadline=runtime_deadline,
+                              runtime_deadline=activation_handshake.runtime_deadline,
                               timeout=220,
                               capture_output=True,
                               text=True,
@@ -1157,7 +1166,7 @@ jobs:
                               "Runner-side macOS process activation exit: "
                               f"{activation_result.returncode}\n"
                           )
-                          external_activation_passed = (
+                          activation_succeeded = (
                               activation_result.returncode == 0
                           )
                       except subprocess.TimeoutExpired as error:
@@ -1165,48 +1174,31 @@ jobs:
                               "Runner-side macOS process activation timed out: "
                               f"request={request_number} {error}\n"
                           )
-                          if (
-                              runtime_deadline is not None
-                              and time.monotonic() >= runtime_deadline
-                          ):
-                              timeout_phase = "runtime"
-                              break
                       except OSError as error:
                           log.write(
                               "Runner-side macOS process activation could not "
                               f"run: request={request_number} {error}\n"
                           )
 
-                  activation_marker = (
-                      Path(os.path.dirname(stderr_path))
-                      / "runner-external-activation.status"
+                  marker_error = activation_handshake.complete(
+                      activation_attempt,
+                      activation_succeeded,
                   )
-                  activation_marker_temp = activation_marker.with_suffix(".tmp")
-                  activation_marker_result = (
-                      "PASS" if external_activation_passed else "FAIL"
-                  )
-                  activation_marker_text = (
-                      f"pid={app_pid}\nrequest={request_number}\n"
-                      f"result={activation_marker_result}\n"
-                  )
-                  try:
-                      activation_marker_temp.write_text(
-                          activation_marker_text,
-                          encoding="utf-8",
-                      )
-                      os.replace(activation_marker_temp, activation_marker)
-                  except OSError as error:
-                      external_activation_passed = False
+                  if marker_error:
                       log.write(
                           "Runner-side macOS activation marker could not be "
-                          f"written: request={request_number} {error}\n"
+                          f"written: request={request_number} {marker_error}\n"
                       )
                       signal_pid(app_pid, "Teagram", signal.SIGTERM)
                       signal_pid(process.pid, "LLDB", signal.SIGTERM)
-                  last_activation_request_number = request_number
-                  if runtime_deadline is None:
-                      runtime_deadline = time.monotonic() + app_runtime_timeout
                   log.flush()
+                  if (
+                      activation_handshake.runtime_deadline is not None
+                      and time.monotonic()
+                      >= activation_handshake.runtime_deadline
+                  ):
+                      timeout_phase = "runtime"
+                      break
 
               if not timeout_phase:
                   status = process.wait()
@@ -1245,7 +1237,7 @@ jobs:
                       )
                   status = 124
 
-              if not external_activation_passed:
+              if not activation_handshake.all_requests_passed:
                   log.write(
                       "HARNESS ERROR: runner did not activate and verify "
                       "Teagram as frontmost before the lifecycle regression.\n"

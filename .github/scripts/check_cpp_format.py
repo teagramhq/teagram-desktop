@@ -21,7 +21,7 @@ from typing import Iterable
 SOURCE_SUFFIXES = (".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".hxx", ".m", ".mm")
 SOURCE_PATHS = tuple(f"*{suffix}" for suffix in SOURCE_SUFFIXES)
 FORMAT_STYLE = (
-    "{BasedOnStyle: LLVM, UseTab: Always, IndentWidth: 4, TabWidth: 4, "
+    "{BasedOnStyle: LLVM, AccessModifierOffset: -4, UseTab: Always, IndentWidth: 4, TabWidth: 4, "
     "ContinuationIndentWidth: 4, ColumnLimit: 80, SortIncludes: false, "
     "BreakBeforeBinaryOperators: All, NamespaceIndentation: None}"
 )

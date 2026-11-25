@@ -7,6 +7,7 @@ import subprocess
 import sys
 import time
 from dataclasses import dataclass
+from os import replace
 from pathlib import Path
 from typing import Callable
 
@@ -18,6 +19,84 @@ class ActivationResult:
     frontmost_pid: int | None
     diagnostics: str
     error: str = ""
+
+
+@dataclass(frozen=True)
+class ActivationAttempt:
+    requested_pid: int
+    request_number: int
+    app_pid: int
+    pid_matches: bool
+
+
+class ActivationHandshake:
+    """Track runner activation requests and publish per-request results."""
+
+    def __init__(
+        self,
+        marker_path: str | Path,
+        *,
+        runtime_seconds: float,
+        clock: Callable[[], float] = time.monotonic,
+        marker_replace: Callable[[str | Path, str | Path], None] = replace,
+    ) -> None:
+        self.marker_path = Path(marker_path)
+        self.runtime_seconds = runtime_seconds
+        self._clock = clock
+        self._marker_replace = marker_replace
+        self.app_pid: int | None = None
+        self.last_request_number = 0
+        self.runtime_deadline: float | None = None
+        self._saw_request = False
+        self.external_activation_passed = True
+
+    @property
+    def all_requests_passed(self) -> bool:
+        return self._saw_request and self.external_activation_passed
+
+    def begin(
+        self, request: tuple[int, int] | None
+    ) -> ActivationAttempt | None:
+        if not activation_request_is_new(request, self.last_request_number):
+            return None
+        assert request is not None
+        requested_pid, request_number = request
+        if self.app_pid is None:
+            self.app_pid = requested_pid
+        self.last_request_number = request_number
+        self._saw_request = True
+        if self.runtime_deadline is None:
+            self.runtime_deadline = self._clock() + self.runtime_seconds
+        return ActivationAttempt(
+            requested_pid=requested_pid,
+            request_number=request_number,
+            app_pid=self.app_pid,
+            pid_matches=(requested_pid == self.app_pid),
+        )
+
+    def complete(self, attempt: ActivationAttempt, activated: bool) -> str:
+        """Record a sticky result and atomically publish this request's marker.
+
+        Returns an empty string on success, or the marker write error. The
+        current marker reflects this request so the app can continue its own
+        focus checks; `all_requests_passed` remains false after any failure.
+        """
+        request_passed = attempt.pid_matches and activated
+        self.external_activation_passed &= request_passed
+        result = "PASS" if request_passed else "FAIL"
+        contents = (
+            f"pid={attempt.app_pid}\n"
+            f"request={attempt.request_number}\n"
+            f"result={result}\n"
+        )
+        temporary = self.marker_path.with_suffix(".tmp")
+        try:
+            temporary.write_text(contents, encoding="utf-8")
+            self._marker_replace(temporary, self.marker_path)
+        except OSError as error:
+            self.external_activation_passed = False
+            return str(error)
+        return ""
 
 
 def read_activation_request(request_path: str | Path) -> tuple[int, int] | None:

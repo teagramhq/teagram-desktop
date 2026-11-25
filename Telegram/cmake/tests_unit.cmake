@@ -118,6 +118,8 @@ PRIVATE
     core/file_location.cpp
     media/clip/media_clip_check_streaming.cpp
     data/data_peer_id.cpp
+    data/data_changes.cpp
+    storage/storage_shared_media.cpp
     data/data_pts_waiter.cpp
     intro/intro_server_discovery.cpp
     intro/intro_signup_error.cpp
@@ -140,6 +142,8 @@ PRIVATE
     tests/unit/data_download_manager_tests.cpp
     tests/unit/data_document_download_policy_tests.cpp
     tests/unit/data_message_reactions_tests.cpp
+    tests/unit/data_update_routing_tests.cpp
+    tests/data_update_routing_test_helpers.h
     tests/unit/dialogs_list_order_tests.cpp
     tests/unit/debug_mode_tests.cpp
     tests/unit/edit_admin_rights_save_tests.cpp

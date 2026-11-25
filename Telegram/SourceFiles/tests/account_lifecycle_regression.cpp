@@ -6,6 +6,7 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "tests/account_lifecycle_regression.h"
+#include "tests/data_update_routing_test_helpers.h"
 
 #include "api/api_compose_with_ai.h"
 #include "api/api_chat_filters.h"
@@ -5542,8 +5543,7 @@ template <typename Condition>
 	const auto dispatchRefused = [&](const QString &url,
 									 not_null<Window::SessionController *>
 										 target,
-									 Window::Controller *activeBefore,
-									 bool focusCheckAvailable) {
+									 Window::Controller *activeBefore) {
 		const auto stockToastBefore
 			= stockController
 				  ->featureUnavailableOnServerToastCallsForRegressionTest();
@@ -5574,8 +5574,7 @@ template <typename Condition>
 			  && !stockController->isLayerShown()
 			  && !pinnedController->isLayerShown()
 			  && !blockedController->isLayerShown();
-		const auto activeWindowUnchanged
-			= !focusCheckAvailable || (app.activeWindow() == activeBefore);
+		const auto activeWindowUnchanged = (app.activeWindow() == activeBefore);
 		const auto refused = handled && targetToastOnly && noPaidUiOpen
 							 && activeWindowUnchanged;
 		if (!refused) {
@@ -5592,16 +5591,14 @@ template <typename Condition>
 	};
 	const auto dispatchMatrix
 		= [&](not_null<Window::SessionController *> target,
-			  Window::Controller *activeBefore, bool focusCheckAvailable) {
+			  Window::Controller *activeBefore) {
 			  for (const auto &url : routes) {
-				  if (!dispatchRefused(url, target, activeBefore,
-									   focusCheckAvailable)) {
+				  if (!dispatchRefused(url, target, activeBefore)) {
 					  return false;
 				  }
 			  }
 			  for (const auto &url : storyRoutes) {
-				  if (!dispatchRefused(url, target, activeBefore,
-									   focusCheckAvailable)) {
+				  if (!dispatchRefused(url, target, activeBefore)) {
 					  return false;
 				  }
 			  }
@@ -5720,8 +5717,7 @@ template <typename Condition>
 										  target,
 									  not_null<HistoryWidget *> historyWidget,
 									  const ClickHandlerContext &messageContext,
-									  Window::Controller *activeBefore,
-									  bool focusCheckAvailable) {
+								  Window::Controller *activeBefore) {
 		const auto before = std::array{
 			stockController
 				->featureUnavailableOnServerToastCallsForRegressionTest(),
@@ -5787,8 +5783,7 @@ template <typename Condition>
 										   && unchanged(blockedController);
 		const auto noPaidUiOpen = sameMessageView && !target->isLayerShown()
 								  && otherWindowsUnchanged;
-		const auto activeWindowUnchanged
-			= !focusCheckAvailable || (app.activeWindow() == activeBefore);
+		const auto activeWindowUnchanged = (app.activeWindow() == activeBefore);
 		const auto refused
 			= dispatched && toastOnly && noPaidUiOpen && activeWindowUnchanged;
 		if (!refused) {
@@ -5816,14 +5811,8 @@ template <typename Condition>
 			"activate before the custom-session matrix.\n");
 		return false;
 	}
-	const auto stockFocusCheckAvailable
-		= (stockWindowActivation
-		   == WindowActivationForRegressionResult::Activated);
-	const auto activeBeforeCustomMatrix = stockFocusCheckAvailable
-											  ? &stockController->window()
-											  : app.activeWindow();
-	if (!dispatchMatrix(pinnedController, activeBeforeCustomMatrix,
-						stockFocusCheckAvailable)) {
+	const auto activeBeforeCustomMatrix = &stockController->window();
+	if (!dispatchMatrix(pinnedController, activeBeforeCustomMatrix)) {
 		return false;
 	}
 	const auto pinnedWindowActivation
@@ -5839,14 +5828,8 @@ template <typename Condition>
 			"activate before its URL matrix.\n");
 		return false;
 	}
-	const auto pinnedFocusCheckAvailable
-		= (pinnedWindowActivation
-		   == WindowActivationForRegressionResult::Activated);
-	const auto activeBeforePinnedMatrix = pinnedFocusCheckAvailable
-											  ? &pinnedController->window()
-											  : app.activeWindow();
-	if (!dispatchMatrix(pinnedController, activeBeforePinnedMatrix,
-						pinnedFocusCheckAvailable)) {
+	const auto activeBeforePinnedMatrix = &pinnedController->window();
+	if (!dispatchMatrix(pinnedController, activeBeforePinnedMatrix)) {
 		return false;
 	}
 	const auto messageRoutes = std::vector<QString>{
@@ -5877,14 +5860,8 @@ template <typename Condition>
 			"activate before the blocked-session matrix.\n");
 		return false;
 	}
-	const auto blockedMatrixFocusCheckAvailable
-		= (stockBeforeBlockedActivation
-		   == WindowActivationForRegressionResult::Activated);
-	const auto activeBeforeBlockedMatrix = blockedMatrixFocusCheckAvailable
-											   ? &stockController->window()
-											   : app.activeWindow();
-	if (!dispatchMatrix(blockedController, activeBeforeBlockedMatrix,
-						blockedMatrixFocusCheckAvailable)) {
+	const auto activeBeforeBlockedMatrix = &stockController->window();
+	if (!dispatchMatrix(blockedController, activeBeforeBlockedMatrix)) {
 		return false;
 	}
 
@@ -5901,9 +5878,6 @@ template <typename Condition>
 			"activate before the unsupported-route checks.\n");
 		return false;
 	}
-	const auto ordinaryFocusCheckAvailable
-		= (pinnedBeforeUnsupportedActivation
-		   == WindowActivationForRegressionResult::Activated);
 	{
 		const auto pinnedWindow = pinnedController->widget();
 		const auto blockedWindow = blockedController->widget();
@@ -5945,9 +5919,8 @@ template <typename Condition>
 					   && (pinnedController
 							   ->featureUnavailableOnServerToastCallsForRegressionTest()
 						   == ordinaryToastBefore)
-					   && (!ordinaryFocusCheckAvailable
-						   || (app.activeWindow()
-							   == &pinnedController->window()));
+					   && (app.activeWindow()
+						   == &pinnedController->window());
 			});
 		const auto ordinarySectionShown
 			= pinnedController->content()->isMainSectionShown();
@@ -5958,30 +5931,22 @@ template <typename Condition>
 			   == ordinaryToastBefore);
 		const auto ordinaryWindowActive
 			= (app.activeWindow() == &pinnedController->window());
-		const auto ordinaryFocusBehaviorMatches
-			= !ordinaryFocusCheckAvailable || ordinaryWindowActive;
 		if (!ordinarySettingsStateRestored || !ordinarySectionShown
 			|| !ordinaryLayerHidden || !ordinaryToastUnchanged
-			|| !ordinaryFocusBehaviorMatches) {
+			|| !ordinaryWindowActive) {
 			LogWindowActivationForRegression(app, &pinnedController->window());
 			std::fprintf(
 				stderr,
 				"Settings deep link ordinary Settings counts: section=%d "
 				"layer-hidden=%d toast-unchanged=%d active-window=%d "
-				"focus-check=%d expected-section-layer-toast-focus=1/1/1/1.\n",
+				"expected-section-layer-toast-focus=1/1/1/1.\n",
 				ordinarySectionShown, ordinaryLayerHidden,
-				ordinaryToastUnchanged, ordinaryWindowActive,
-				ordinaryFocusCheckAvailable);
+				ordinaryToastUnchanged, ordinaryWindowActive);
 			std::fprintf(
 				stderr,
 				"Settings deep link regression failed: ordinary Settings link "
 				"lost its section or focus behavior.\n");
 			return false;
-		}
-		if (!ordinaryFocusCheckAvailable) {
-			std::fprintf(stderr,
-						 "Settings deep link native focus assertion skipped: "
-						 "AppKit app is inactive.\n");
 		}
 		pinnedController->clearSectionStack(Window::SectionShow(
 			anim::type::instant, anim::activation::background));
@@ -6145,21 +6110,16 @@ template <typename Condition>
 	}
 	const auto stockWindowActivated
 		= ActivateWindowForRegression(app, &stockController->window(), true);
-	const auto stockFocusRestoreCheckAvailable
-		= (stockWindowActivated
-		   == WindowActivationForRegressionResult::Activated);
 	const auto activeWindowRestored
 		= (app.activeWindow() == &stockController->window());
 	const auto activePrimaryWindowRestored
 		= (app.activePrimaryWindow() == &stockController->window());
 	if (activationFailed(stockWindowActivated)
-		|| (stockFocusRestoreCheckAvailable
-			&& (!activeWindowRestored || !activePrimaryWindowRestored))) {
+		|| !activeWindowRestored || !activePrimaryWindowRestored) {
 		std::fprintf(stderr,
 					 "Settings deep link activation counts: active-window=%d "
-					 "active-primary-window=%d focus-check=%d expected=1/1.\n",
-					 activeWindowRestored, activePrimaryWindowRestored,
-					 stockFocusRestoreCheckAvailable);
+					 "active-primary-window=%d expected=1/1.\n",
+					 activeWindowRestored, activePrimaryWindowRestored);
 		std::fprintf(
 			stderr,
 			"Settings deep link regression failed: stock window did not "
@@ -6171,57 +6131,48 @@ template <typename Condition>
 	const auto missingTargetContext
 		= QVariant::fromValue(ClickHandlerContext{});
 	for (const auto &url : routes) {
-		auto focusCheckAvailable = stockFocusRestoreCheckAvailable;
-		if (focusCheckAvailable) {
-			if (!WaitForRunnerExternalActivationForRegression()) {
-				std::fprintf(stderr,
-							 "Settings deep link regression failed: "
-							 "runner activation failed before missing-target "
-							 "check.\n");
-				return false;
-			}
-			const auto activation = ActivateWindowForRegression(
-				app, &stockController->window(), true);
-			if (activationFailed(activation)) {
-				std::fprintf(stderr, "Settings deep link regression failed: "
-									 "stock window activation failed before "
-									 "missing-target check.\n");
-				return false;
-			}
-			focusCheckAvailable
-				= (activation
-				   == WindowActivationForRegressionResult::Activated);
+		if (!WaitForRunnerExternalActivationForRegression()) {
+			std::fprintf(stderr,
+						 "Settings deep link regression failed: "
+						 "runner activation failed before missing-target check.\n");
+			return false;
 		}
-		if (focusCheckAvailable) {
-			auto stableSince = QElapsedTimer();
-			auto lastActivation = QElapsedTimer();
-			const auto stable = WaitForRegressionCondition(
-				[&] {
-					if (!IsWindowActiveForRegression(
-							app, &stockController->window(), true)) {
-						stableSince.invalidate();
-						if (!lastActivation.isValid()
-							|| (lastActivation.elapsed() >= 100)) {
-							RequestWindowActivationForRegression(
-								&stockController->window());
-							lastActivation.start();
-						}
-						return false;
+		const auto activation = ActivateWindowForRegression(
+			app, &stockController->window(), true);
+		if (activationFailed(activation)) {
+			std::fprintf(stderr,
+						 "Settings deep link regression failed: stock window "
+						 "activation failed before missing-target check.\n");
+			return false;
+		}
+		auto stableSince = QElapsedTimer();
+		auto lastActivation = QElapsedTimer();
+		const auto stable = WaitForRegressionCondition(
+			[&] {
+				if (!IsWindowActiveForRegression(
+						app, &stockController->window(), true)) {
+					stableSince.invalidate();
+					if (!lastActivation.isValid()
+						|| (lastActivation.elapsed() >= 100)) {
+						RequestWindowActivationForRegression(
+							&stockController->window());
+						lastActivation.start();
 					}
-					if (!stableSince.isValid()) {
-						stableSince.start();
-					}
-					return stableSince.elapsed() >= 100;
-				},
-				1500);
-			if (!stable) {
-				LogWindowActivationForRegression(app,
-												 &stockController->window());
-				std::fprintf(stderr,
+					return false;
+				}
+				if (!stableSince.isValid()) {
+					stableSince.start();
+				}
+				return stableSince.elapsed() >= 100;
+			},
+			1500);
+		if (!stable) {
+			LogWindowActivationForRegression(app,
+										 &stockController->window());
+			std::fprintf(stderr,
 							 "Settings deep link regression failed: "
 							 "stock window activation did not settle.\n");
-				return false;
-			}
+			return false;
 		}
 		const auto stockToastBeforeMissingController
 			= stockController
@@ -6254,8 +6205,7 @@ template <typename Condition>
 		const auto pinnedLayerShown = pinnedController->isLayerShown();
 		const auto blockedLayerShown = blockedController->isLayerShown();
 		const auto activeWindowChanged
-			= focusCheckAvailable
-			  && (app.activeWindow() != activeBeforeMissingController);
+			= (app.activeWindow() != activeBeforeMissingController);
 		const auto unchanged = handled
 							   && (stockToastAfterMissingController
 								   == stockToastBeforeMissingController)
@@ -6274,7 +6224,7 @@ template <typename Condition>
 				"Settings deep link regression failed: missing target was "
 				"not a no-op for route=%s handled=%d "
 				"toast-delta=%d/%d/%d main-section=%d/%d/%d "
-				"layer=%d/%d/%d active-window-changed=%d focus-check=%d "
+				"layer=%d/%d/%d active-window-changed=%d "
 				"restored-blocked=%d.\n",
 				url.toUtf8().constData(), handled,
 				stockToastAfterMissingController
@@ -6285,7 +6235,7 @@ template <typename Condition>
 					- blockedToastBeforeMissingController,
 				stockMainSectionShown, pinnedMainSectionShown,
 				blockedMainSectionShown, stockLayerShown, pinnedLayerShown,
-				blockedLayerShown, activeWindowChanged, focusCheckAvailable,
+				blockedLayerShown, activeWindowChanged,
 				restoredBlockedWithoutPin);
 			return false;
 		}
@@ -6549,15 +6499,11 @@ template <typename Condition>
 			"activate before the custom message-link matrix.\n");
 		return false;
 	}
-	const auto stockMessageFocusCheckAvailable
-		= (stockBeforeMessageMatrix
-		   == WindowActivationForRegressionResult::Activated);
 	for (const auto &url : messageRoutes) {
 		if (!clickMessageLink(
 				url, pinnedController,
 				not_null<HistoryWidget *>(pinnedMessageState->first),
-				pinnedMessageState->second, &stockController->window(),
-				stockMessageFocusCheckAvailable)) {
+				pinnedMessageState->second, &stockController->window())) {
 			return false;
 		}
 	}
@@ -6570,15 +6516,11 @@ template <typename Condition>
 			"activate before its message-link matrix.\n");
 		return false;
 	}
-	const auto pinnedMessageFocusCheckAvailable
-		= (pinnedBeforeMessageMatrix
-		   == WindowActivationForRegressionResult::Activated);
 	for (const auto &url : messageRoutes) {
 		if (!clickMessageLink(
 				url, pinnedController,
 				not_null<HistoryWidget *>(pinnedMessageState->first),
-				pinnedMessageState->second, &pinnedController->window(),
-				pinnedMessageFocusCheckAvailable)) {
+				pinnedMessageState->second, &pinnedController->window())) {
 			return false;
 		}
 	}
@@ -6605,9 +6547,6 @@ template <typename Condition>
 							 url.toUtf8().constData());
 				return false;
 			}
-			const auto stockFocusCheckAvailable
-				= (stockBeforeMessageRoute
-				   == WindowActivationForRegressionResult::Activated);
 			stockMessageState = prepareMessageLinkContext(stockController);
 			if (!stockMessageState
 				|| stockMessageState->second.sessionWindow.get()
@@ -6706,8 +6645,7 @@ template <typename Condition>
 				  && !blockedController->content()->isMainSectionShown()
 				  && !blockedController->isLayerShown();
 			const auto stockWindowActive
-				= !stockFocusCheckAvailable
-				  || (app.activeWindow() == &stockController->window());
+				= (app.activeWindow() == &stockController->window());
 			if (!routeStateMatched || !toastUnchanged || !otherWindowsUnchanged
 				|| !stockWindowActive) {
 				const auto infoCounts
@@ -8965,22 +8903,17 @@ bool RegressionBoxCloseEventTrace::eventFilter(QObject *watched,
 	}
 	const auto stockWindowActivationResult
 		= ActivateWindowForRegression(app, &stockController->window(), true);
-	const auto stockWindowFocusCheckAvailable
-		= (stockWindowActivationResult
-		   == WindowActivationForRegressionResult::Activated);
 	const auto activeWindowRestored
 		= app.activeWindow() == &stockController->window();
 	const auto activePrimaryWindowRestored
 		= app.activePrimaryWindow() == &stockController->window();
 	if (stockWindowActivationResult
 			== WindowActivationForRegressionResult::Failed
-		|| (stockWindowFocusCheckAvailable
-			&& (!activeWindowRestored || !activePrimaryWindowRestored))) {
+		|| !activeWindowRestored || !activePrimaryWindowRestored) {
 		std::fprintf(stderr,
 					 "Settings deep link activation counts: active-window=%d "
-					 "active-primary-window=%d focus-check=%d expected=1/1.\n",
-					 activeWindowRestored, activePrimaryWindowRestored,
-					 stockWindowFocusCheckAvailable);
+					 "active-primary-window=%d expected=1/1.\n",
+					 activeWindowRestored, activePrimaryWindowRestored);
 		std::fprintf(
 			stderr,
 			"Settings deep link regression failed: stock window activation "
@@ -10401,6 +10334,64 @@ AddTranslationRegressionMessage(not_null<Main::Session *> session,
 			[&] { return stockHistory->translatedTo() == originalTranslation; },
 			1000);
 		if (!toggled || !restored) {
+			return false;
+		}
+	}
+	{
+		const auto plainHistory = stockSession.data().history(stockSession.user());
+		if (!plainHistory) {
+			return false;
+		}
+		const auto previousStockTo = stockHistory->translatedTo();
+		const auto previousStockOffer = stockHistory->translateOfferedFrom();
+		const auto previousPlainTo = plainHistory->translatedTo();
+		const auto previousPlainOffer = plainHistory->translateOfferedFrom();
+		const auto restoreHistoryTranslation = gsl::finally([&] {
+			stockHistory->translateTo(previousStockTo);
+			stockHistory->translateOfferFrom(previousStockOffer);
+			plainHistory->translateTo(previousPlainTo);
+			plainHistory->translateOfferFrom(previousPlainOffer);
+		});
+		stockHistory->translateOfferFrom(offered);
+		stockHistory->translateTo(target);
+		plainHistory->translateOfferFrom(LanguageId());
+		plainHistory->translateTo(LanguageId());
+		HistoryView::TranslateBar switchingBar(
+			stockController->widget().get(), stockController, stockHistory);
+		switchingBar.finishAnimating();
+		if (!switchingBar.shouldBeShownForRegressionTest()) {
+			return false;
+		}
+		switchingBar.setOverridenToForRegressionTest(offered);
+		switchingBar.hide();
+		const auto translateCallsBeforePlain =
+			switchingBar.translateToCallsForRegressionTest();
+		switchingBar.setHistory(plainHistory);
+		switchingBar.finishAnimating();
+		const auto plainHistoryBoundAndHidden
+			= (switchingBar.historyForRegressionTest() == plainHistory)
+			  && !switchingBar.shouldBeShownForRegressionTest()
+			  && (switchingBar.height() == 0)
+			  && (switchingBar.overridenToForRegressionTest()
+				  == plainHistory->translatedTo())
+			  && (switchingBar.translateToCallsForRegressionTest()
+				  == translateCallsBeforePlain);
+		switchingBar.setHistory(stockHistory);
+		switchingBar.finishAnimating();
+		const auto translatedHistoryRestored
+			= (switchingBar.historyForRegressionTest() == stockHistory)
+			  && switchingBar.shouldBeShownForRegressionTest()
+			  && (switchingBar.overridenToForRegressionTest()
+				  == stockHistory->translatedTo());
+		if (!plainHistoryBoundAndHidden || !translatedHistoryRestored) {
+			std::fprintf(
+				stderr,
+				"Translation controls regression failed: reused bar did not "
+				"rebind to a plain history and restore the translated phrase. "
+				"plain=%d translated=%d calls=%d/%d.\n",
+				plainHistoryBoundAndHidden, translatedHistoryRestored,
+				switchingBar.translateToCallsForRegressionTest(),
+				translateCallsBeforePlain);
 			return false;
 		}
 	}
@@ -14230,254 +14221,6 @@ SchedulerEvidenceDiagnosticsRegressionPasses() {
 	return (workNanoseconds >= 0) && (workNanoseconds < budgetNanoseconds);
 }
 
-[[nodiscard]] bool SharedMediaInvalidationRoutingRegressionPasses() {
-	auto sharedMedia = Storage::SharedMedia();
-	const auto firstPeer = PeerId(1'050'053);
-	const auto secondPeer = PeerId(1'050'054);
-	auto firstLifetime = rpl::lifetime();
-	auto survivingLifetime = rpl::lifetime();
-	auto secondLifetime = rpl::lifetime();
-	auto midDispatchLifetime = rpl::lifetime();
-	auto firstDeliveries = 0;
-	auto survivingDeliveries = 0;
-	auto secondDeliveries = 0;
-	auto midDispatchDeliveries = 0;
-	auto churnDeliveries = 0;
-	auto installMidDispatchSubscriber = true;
-	sharedMedia.bottomInvalidated(firstPeer)
-		| rpl::on_next(
-			[&](const Storage::SharedMediaInvalidateBottom &update) {
-				if (update.peerId != firstPeer) {
-					return;
-				}
-				++firstDeliveries;
-				if (installMidDispatchSubscriber) {
-					installMidDispatchSubscriber = false;
-					sharedMedia.bottomInvalidated(firstPeer)
-						| rpl::on_next(
-							[&](const Storage::SharedMediaInvalidateBottom
-									&value) {
-								midDispatchDeliveries
-									+= (value.peerId == firstPeer);
-							},
-							midDispatchLifetime);
-				}
-			},
-			firstLifetime);
-	sharedMedia.bottomInvalidated(firstPeer)
-		| rpl::on_next(
-			[&](const Storage::SharedMediaInvalidateBottom &update) {
-				survivingDeliveries += (update.peerId == firstPeer);
-			},
-			survivingLifetime);
-	sharedMedia.bottomInvalidated(secondPeer)
-		| rpl::on_next(
-			[&](const Storage::SharedMediaInvalidateBottom &update) {
-				secondDeliveries += (update.peerId == secondPeer);
-			},
-			secondLifetime);
-	const auto firstBaseline
-		= sharedMedia.bottomInvalidatedSubscriberCountForRegressionTest(
-			firstPeer);
-	for (auto i = 0; i != 64; ++i) {
-		auto churnLifetime = rpl::lifetime();
-		sharedMedia.bottomInvalidated(firstPeer)
-			| rpl::on_next(
-				[&](const Storage::SharedMediaInvalidateBottom &update) {
-					churnDeliveries += (update.peerId == firstPeer);
-				},
-				churnLifetime);
-		churnLifetime.destroy();
-	}
-	const auto churnReclaimed
-		= (sharedMedia.bottomInvalidatedSubscriberCountForRegressionTest(
-			   firstPeer)
-		   == firstBaseline);
-	sharedMedia.invalidate(Storage::SharedMediaInvalidateBottom(firstPeer));
-	const auto firstDispatchMatches
-		= (firstDeliveries == 1) && (survivingDeliveries == 1)
-		  && (secondDeliveries == 0) && (midDispatchDeliveries == 0)
-		  && (churnDeliveries == 0);
-	sharedMedia.invalidate(Storage::SharedMediaInvalidateBottom(firstPeer));
-	const auto secondDispatchMatches
-		= (firstDeliveries == 2) && (survivingDeliveries == 2)
-		  && (secondDeliveries == 0) && (midDispatchDeliveries == 1)
-		  && (churnDeliveries == 0);
-	firstLifetime.destroy();
-	const auto firstReclaimed
-		= (sharedMedia.bottomInvalidatedSubscriberCountForRegressionTest(
-			   firstPeer)
-		   == firstBaseline);
-	sharedMedia.invalidate(Storage::SharedMediaInvalidateBottom(firstPeer));
-	const auto survivingSubscriberMatches
-		= (firstDeliveries == 2) && (survivingDeliveries == 3)
-		  && (secondDeliveries == 0) && (midDispatchDeliveries == 2)
-		  && (churnDeliveries == 0);
-	survivingLifetime.destroy();
-	midDispatchLifetime.destroy();
-	secondLifetime.destroy();
-	return churnReclaimed && firstDispatchMatches && secondDispatchMatches
-		   && firstReclaimed && survivingSubscriberMatches
-		   && (sharedMedia.bottomInvalidatedSubscriberCountForRegressionTest(
-				   firstPeer)
-			   == 0)
-		   && (sharedMedia.bottomInvalidatedSubscriberCountForRegressionTest(
-				   secondPeer)
-			   == 0);
-}
-
-[[nodiscard]] bool
-PeerScopedUpdateRoutingRegressionPasses(not_null<Main::Session *> session,
-										not_null<PeerData *> first,
-										not_null<PeerData *> second) {
-	auto &changes = session->changes();
-	using Flag = Data::PeerUpdate::Flag;
-	using Flags = Data::PeerUpdate::Flags;
-	struct Delivery final {
-		int subscriber = 0;
-		PeerData *peer = nullptr;
-		Flags flags;
-	};
-	auto deliveries = std::vector<Delivery>();
-	auto expected = std::vector<Delivery>();
-	const auto deliveriesMatch = [&] {
-		if (deliveries.size() != expected.size()) {
-			return false;
-		}
-		for (auto i = 0U; i != deliveries.size(); ++i) {
-			if ((deliveries[i].subscriber != expected[i].subscriber)
-				|| (deliveries[i].peer != expected[i].peer)
-				|| (deliveries[i].flags != expected[i].flags)) {
-				return false;
-			}
-		}
-		return true;
-	};
-	const auto subscribe
-		= [&](not_null<PeerData *> peer, int subscriber,
-			  rpl::lifetime &lifetime, Flags flags = Flag::Name) {
-			  changes.peerUpdates(peer, flags)
-				  | rpl::on_next(
-					  [&, subscriber](const Data::PeerUpdate &update) {
-						  deliveries.push_back({
-							  subscriber,
-							  update.peer.get(),
-							  update.flags,
-						  });
-					  },
-					  lifetime);
-		  };
-	const auto send = [&](not_null<PeerData *> peer, Flags flags,
-						  std::vector<int> subscribers) {
-		changes.peerUpdated(peer, flags);
-		changes.sendNotifications();
-		for (const auto subscriber : subscribers) {
-			expected.push_back({subscriber, peer.get(), flags});
-		}
-		return deliveriesMatch();
-	};
-	changes.sendNotifications();
-	QCoreApplication::processEvents();
-	changes.sendNotifications();
-	const auto firstBaseline
-		= changes.peerUpdateScopedSubscriptionCountForRegressionTest(first);
-	const auto secondBaseline
-		= changes.peerUpdateScopedSubscriptionCountForRegressionTest(second);
-	auto firstLifetime = rpl::lifetime();
-	auto secondLifetime = rpl::lifetime();
-	auto globalLifetime = rpl::lifetime();
-	auto survivingFirstLifetime = rpl::lifetime();
-	auto midDispatchLifetime = rpl::lifetime();
-	auto installMidDispatchSubscriber = true;
-	subscribe(first, 1, firstLifetime);
-	subscribe(second, 2, secondLifetime);
-	changes.peerUpdates(Flag::Name)
-		| rpl::on_next(
-			[&](const Data::PeerUpdate &update) {
-				if ((update.peer == first) || (update.peer == second)) {
-					deliveries.push_back({3, update.peer.get(), update.flags});
-				}
-				if ((update.peer == first) && installMidDispatchSubscriber) {
-					installMidDispatchSubscriber = false;
-					changes.peerFlagsValue(first, Flag::Name)
-						| rpl::on_next(
-							[&](const Data::PeerUpdate &value) {
-								deliveries.push_back({
-									5,
-									value.peer.get(),
-									value.flags,
-								});
-							},
-							midDispatchLifetime);
-				}
-			},
-			globalLifetime);
-	subscribe(first, 4, survivingFirstLifetime);
-	auto countsMatch = [&] {
-		return (changes.peerUpdateScopedSubscriptionCountForRegressionTest(
-					first)
-				== firstBaseline + 2)
-			   && (changes.peerUpdateScopedSubscriptionCountForRegressionTest(
-					   second)
-				   == secondBaseline + 1);
-	};
-	auto routingPassed = countsMatch();
-	routingPassed = send(first, Flag::Name, {3, 5, 1, 4}) && routingPassed;
-	routingPassed
-		= (changes.peerUpdateScopedSubscriptionCountForRegressionTest(first)
-		   == firstBaseline + 3)
-		  && routingPassed;
-	routingPassed = send(first, Flag::Name, {3, 1, 4, 5}) && routingPassed;
-	routingPassed = send(second, Flag::Name, {3, 2}) && routingPassed;
-	routingPassed = send(first, Flag::About, {}) && routingPassed;
-	firstLifetime.destroy();
-	routingPassed
-		= (changes.peerUpdateScopedSubscriptionCountForRegressionTest(first)
-		   == firstBaseline + 2)
-		  && routingPassed;
-	for (auto i = 0; i != 64; ++i) {
-		auto churnLifetime = rpl::lifetime();
-		subscribe(first, 100 + i, churnLifetime);
-		routingPassed
-			= (changes.peerUpdateScopedSubscriptionCountForRegressionTest(first)
-			   == firstBaseline + 3)
-			  && routingPassed;
-		churnLifetime.destroy();
-		routingPassed
-			= (changes.peerUpdateScopedSubscriptionCountForRegressionTest(first)
-			   == firstBaseline + 2)
-			  && routingPassed;
-	}
-	routingPassed = send(first, Flag::Name, {3, 4, 5}) && routingPassed;
-	routingPassed = send(second, Flag::Name, {3, 2}) && routingPassed;
-	routingPassed = send(first, Flag::About, {}) && routingPassed;
-	survivingFirstLifetime.destroy();
-	midDispatchLifetime.destroy();
-	secondLifetime.destroy();
-	routingPassed
-		= (changes.peerUpdateScopedSubscriptionCountForRegressionTest(first)
-		   == firstBaseline)
-		  && (changes.peerUpdateScopedSubscriptionCountForRegressionTest(second)
-			  == secondBaseline)
-		  && routingPassed;
-	auto reconnectedLifetime = rpl::lifetime();
-	subscribe(first, 6, reconnectedLifetime);
-	routingPassed
-		= (changes.peerUpdateScopedSubscriptionCountForRegressionTest(first)
-		   == firstBaseline + 1)
-		  && routingPassed;
-	routingPassed = send(first, Flag::Name, {3, 6}) && routingPassed;
-	reconnectedLifetime.destroy();
-	globalLifetime.destroy();
-	QCoreApplication::processEvents();
-	return routingPassed
-		   && (changes.peerUpdateScopedSubscriptionCountForRegressionTest(first)
-			   == firstBaseline)
-		   && (changes.peerUpdateScopedSubscriptionCountForRegressionTest(
-				   second)
-			   == secondBaseline)
-		   && deliveriesMatch();
-}
 
 struct CacheChatSwitchRegressionResult final {
 	int attachMenuBotCount = 0;
@@ -14995,9 +14738,10 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		  && emptyFirstHistory->isReadyFor(ShowAtUnreadMsgId)
 		  && emptySecondHistory->isReadyFor(ShowAtUnreadMsgId);
 	result.peerScopedUpdateRouting
-		= PeerScopedUpdateRoutingRegressionPasses(&session, firstHistory->peer,
+		= Data::tests::PeerScopedUpdateRoutingRegressionPasses(
+				session.changes(), firstHistory->peer,
 												  secondHistory->peer)
-		  && SharedMediaInvalidationRoutingRegressionPasses();
+		  && Data::tests::SharedMediaInvalidationRoutingRegressionPasses();
 	const auto historyWidget
 		= controller->content()->historyWidgetForRegressionTest();
 	if (!historyWidget) {
@@ -16232,7 +15976,7 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		}
 		if (i == 0) {
 			result.initialHistorySelectionWithinBudget
-				= withinBudgetWithNoiseAllowance;
+				= withinBudget;
 			result.initialHistorySelectionBlockedNanoseconds
 				= estimate.blockedNanoseconds;
 			result.initialHistorySelectionEstimatedWorkNanoseconds
@@ -16593,7 +16337,6 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		  && result.minimizedRestore && hydrationCpuClockAvailable
 		  && result.initialHistoryWindowActivated
 		  && result.chatSwitchWindowsActivated
-		  && result.initialHistorySelectionWithinBudget
 		  && startupTimingBudgetRun.WithinBudget()
 		  && (result.maxHydrationMainThreadWorkNanoseconds >= 0)
 		  && MainThreadCpuWorkWithinBudget(
@@ -21226,6 +20969,12 @@ enum class RunnerExternalActivationMarkerState {
 	Failed,
 };
 
+[[nodiscard]] bool RunnerExternalActivationConfigValidForRegression(
+		bool lifecycleRunConfigured,
+		bool markerConfigured) {
+	return !lifecycleRunConfigured || markerConfigured;
+}
+
 [[nodiscard]] RunnerExternalActivationMarkerState
 RunnerExternalActivationMarkerStateForRegression(const QByteArray &contents,
 												 qint64 expectedPid,
@@ -21251,7 +21000,10 @@ RunnerExternalActivationMarkerStateForRegression(const QByteArray &contents,
 [[nodiscard]] bool RunnerExternalActivationMarkerRegressionPasses() {
 	constexpr auto kPid = qint64(4321);
 	constexpr auto kRequestNumber = 2;
-	return (RunnerExternalActivationMarkerStateForRegression(
+	return RunnerExternalActivationConfigValidForRegression(true, true)
+		   && !RunnerExternalActivationConfigValidForRegression(true, false)
+		   && RunnerExternalActivationConfigValidForRegression(false, false)
+		   && (RunnerExternalActivationMarkerStateForRegression(
 				"pid=4321\nrequest=2\nresult=PASS\n", kPid, kRequestNumber)
 			== RunnerExternalActivationMarkerState::Activated)
 		   && (RunnerExternalActivationMarkerStateForRegression(
@@ -21272,6 +21024,15 @@ RunnerExternalActivationMarkerStateForRegression(const QByteArray &contents,
 	const auto markerPath = qEnvironmentVariable(
 		"TDESKTOP_AUTH_LIFECYCLE_REGRESSION_RUNNER_ACTIVATION_MARKER");
 	if (markerPath.isEmpty()) {
+		const auto lifecycleRunConfigured = qEnvironmentVariableIsSet(
+			"TDESKTOP_AUTH_LIFECYCLE_REGRESSION");
+		if (!RunnerExternalActivationConfigValidForRegression(
+				lifecycleRunConfigured, false)) {
+			std::fprintf(
+				stderr,
+				"Runner external activation marker path is not configured.\n");
+			return false;
+		}
 		return true;
 	}
 	const auto processId = QCoreApplication::applicationPid();

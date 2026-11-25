@@ -9,6 +9,7 @@ import unittest
 from pathlib import Path
 
 from macos_process_activation import (
+    ActivationHandshake,
     activate_process,
     activation_request_is_new,
     read_activation_request,
@@ -40,11 +41,94 @@ class ProcessActivationTests(unittest.TestCase):
             request_path.write_text("pid=4321\nrequest=0\n", encoding="utf-8")
             self.assertIsNone(read_activation_request(request_path))
 
+    def test_quiet_launch_uses_the_published_request_without_stderr(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            request_path = Path(directory) / "runner-external-activation.request"
+            request_path.write_text("pid=4321\nrequest=1\n", encoding="utf-8")
+            stderr_path = Path(directory) / "stderr.log"
+            stderr_path.write_text("", encoding="utf-8")
+            self.assertEqual(stderr_path.read_text(encoding="utf-8"), "")
+            self.assertEqual(read_activation_request(request_path), (4321, 1))
+
     def test_new_activation_request_advances_the_handshake(self) -> None:
         self.assertFalse(activation_request_is_new(None, 0))
         self.assertTrue(activation_request_is_new((4321, 1), 0))
         self.assertFalse(activation_request_is_new((4321, 1), 1))
         self.assertTrue(activation_request_is_new((4321, 2), 1))
+
+    def test_handshake_sequences_requests_and_keeps_failure_sticky(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            marker = Path(directory) / "activation.status"
+            times = iter([10.0, 12.0])
+            handshake = ActivationHandshake(
+                marker,
+                runtime_seconds=180,
+                clock=lambda: next(times),
+            )
+
+            first = handshake.begin((4321, 1))
+            self.assertIsNotNone(first)
+            assert first is not None
+            self.assertTrue(first.pid_matches)
+            self.assertEqual(handshake.runtime_deadline, 190.0)
+            self.assertEqual(handshake.complete(first, True), "")
+            self.assertTrue(handshake.all_requests_passed)
+            self.assertEqual(marker.read_text(encoding="utf-8"),
+                             "pid=4321\nrequest=1\nresult=PASS\n")
+
+            self.assertIsNone(handshake.begin((4321, 1)))
+            second = handshake.begin((4321, 2))
+            self.assertIsNotNone(second)
+            assert second is not None
+            self.assertEqual(handshake.runtime_deadline, 190.0)
+            self.assertEqual(handshake.complete(second, False), "")
+            self.assertFalse(handshake.all_requests_passed)
+
+            third = handshake.begin((4321, 3))
+            self.assertIsNotNone(third)
+            assert third is not None
+            self.assertEqual(handshake.complete(third, True), "")
+            self.assertFalse(handshake.all_requests_passed)
+            self.assertEqual(marker.read_text(encoding="utf-8"),
+                             "pid=4321\nrequest=3\nresult=PASS\n")
+
+    def test_handshake_rejects_pid_mismatch_and_missing_requests(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            handshake = ActivationHandshake(
+                Path(directory) / "activation.status",
+                runtime_seconds=180,
+                clock=lambda: 0.0,
+            )
+            self.assertFalse(handshake.all_requests_passed)
+            first = handshake.begin((4321, 1))
+            self.assertIsNotNone(first)
+            assert first is not None
+            self.assertEqual(handshake.complete(first, True), "")
+            mismatch = handshake.begin((9876, 2))
+            self.assertIsNotNone(mismatch)
+            assert mismatch is not None
+            self.assertEqual(mismatch.app_pid, 4321)
+            self.assertFalse(mismatch.pid_matches)
+            self.assertEqual(handshake.complete(mismatch, True), "")
+            self.assertFalse(handshake.all_requests_passed)
+            self.assertEqual(
+                Path(directory, "activation.status").read_text(encoding="utf-8"),
+                "pid=4321\nrequest=2\nresult=FAIL\n",
+            )
+
+    def test_handshake_marker_write_failure_is_sticky(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            missing_parent = Path(directory) / "missing" / "activation.status"
+            handshake = ActivationHandshake(
+                missing_parent,
+                runtime_seconds=180,
+                clock=lambda: 0.0,
+            )
+            attempt = handshake.begin((4321, 1))
+            self.assertIsNotNone(attempt)
+            assert attempt is not None
+            self.assertTrue(handshake.complete(attempt, True))
+            self.assertFalse(handshake.all_requests_passed)
 
     def test_stalled_activation_refresh_cannot_outlive_runtime_deadline(self) -> None:
         deadline = 180.0

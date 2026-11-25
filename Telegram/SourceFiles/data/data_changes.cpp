@@ -164,10 +164,22 @@ void Changes::Manager<DataType, UpdateType>::sendNotifications() {
 	}
 }
 
-Changes::Changes(not_null<Main::Session*> session) : _session(session) {
+Changes::Changes(not_null<Main::Session*> session)
+#ifdef TDESKTOP_UNIT_TESTS
+: _session(session.get()) {
+#else
+: _session(session) {
+#endif
 }
 
+#ifdef TDESKTOP_UNIT_TESTS
+Changes::Changes() = default;
+#endif
+
 Main::Session &Changes::session() const {
+#ifdef TDESKTOP_UNIT_TESTS
+	Expects(_session != nullptr);
+#endif
 	return *_session;
 }
 
@@ -452,9 +464,17 @@ rpl::producer<ChatMemberRankChange> Changes::chatMemberRankChanges() const {
 void Changes::scheduleNotifications() {
 	if (!_notify) {
 		_notify = true;
+#ifdef TDESKTOP_UNIT_TESTS
+		if (_session) {
+			crl::on_main(_session, [=] {
+				sendNotifications();
+			});
+		}
+	#else
 		crl::on_main(&session(), [=] {
 			sendNotifications();
 		});
+#endif
 	}
 }
 
