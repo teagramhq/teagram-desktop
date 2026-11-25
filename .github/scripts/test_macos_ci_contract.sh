@@ -1066,6 +1066,7 @@ regression_timeout_minutes="$(step_field "$mac_workflow" build-macos \
 require_step_script "$mac_workflow" build-macos "$regression_step" \
   'exec > >(tee "$diagnostics/harness.log") 2>&1' \
   'RUNNER_EXTERNAL_ACTIVATION_HOME="$HOME"' \
+  'TDESKTOP_AUTH_LIFECYCLE_REGRESSION_RUNNER_ACTIVATION_REQUIRED=1' \
   'TDESKTOP_AUTH_LIFECYCLE_REGRESSION_RUNNER_ACTIVATION_REQUEST="$diagnostics/runner-external-activation.request"' \
   'build_dir="$repo/out"' \
   'cache_file="$build_dir/CMakeCache.txt"' \
@@ -1134,9 +1135,9 @@ grep -Fq 'activateSettingsWindow(&pinnedController->window())' \
 grep -Fq 'RunnerExternalActivationMarkerRegressionPasses()' \
   Telegram/SourceFiles/tests/account_lifecycle_regression.cpp \
   || contract_fail 'The lifecycle activation marker must keep its self-test.'
-grep -Fq 'RunnerExternalActivationConfigValidForRegression(true, false)' \
+grep -Fq '"TDESKTOP_AUTH_LIFECYCLE_REGRESSION_RUNNER_ACTIVATION_REQUIRED"' \
   Telegram/SourceFiles/tests/account_lifecycle_regression.cpp \
-  || contract_fail 'The lifecycle activation gate must fail when its marker is missing.'
+  || contract_fail 'The lifecycle activation self-test must read the opt-in from the environment.'
 regression_step_index="$(job_field "$mac_workflow" build-macos \
   '.steps | to_entries[] | select(.value.name == "Full chat info session regression.") | .key')"
 summary_step_index="$(job_field "$mac_workflow" build-macos \

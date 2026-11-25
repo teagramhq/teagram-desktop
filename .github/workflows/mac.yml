@@ -1020,6 +1020,7 @@ jobs:
           env \
             HOME="$regression_home" \
             RUNNER_EXTERNAL_ACTIVATION_HOME="$HOME" \
+            TDESKTOP_AUTH_LIFECYCLE_REGRESSION_RUNNER_ACTIVATION_REQUIRED=1 \
             TDESKTOP_AUTH_LIFECYCLE_REGRESSION_RUNNER_ACTIVATION_MARKER="$diagnostics/runner-external-activation.status" \
             TDESKTOP_AUTH_LIFECYCLE_REGRESSION_RUNNER_ACTIVATION_REQUEST="$diagnostics/runner-external-activation.request" \
             TDESKTOP_MAC_PROFILE_TEST_HOME="$regression_home" \

@@ -20965,10 +20965,12 @@ enum class RunnerExternalActivationMarkerState {
 	Failed,
 };
 
-[[nodiscard]] bool
-RunnerExternalActivationConfigValidForRegression(bool lifecycleRunConfigured,
-												 bool markerConfigured) {
-	return !lifecycleRunConfigured || markerConfigured;
+[[nodiscard]] bool RunnerExternalActivationConfigValidForRegression() {
+	const auto activationRequired = qEnvironmentVariable(
+		"TDESKTOP_AUTH_LIFECYCLE_REGRESSION_RUNNER_ACTIVATION_REQUIRED");
+	const auto markerPath = qEnvironmentVariable(
+		"TDESKTOP_AUTH_LIFECYCLE_REGRESSION_RUNNER_ACTIVATION_MARKER");
+	return (activationRequired != u"1"_q) || !markerPath.isEmpty();
 }
 
 [[nodiscard]] RunnerExternalActivationMarkerState
@@ -20996,9 +20998,40 @@ RunnerExternalActivationMarkerStateForRegression(const QByteArray &contents,
 [[nodiscard]] bool RunnerExternalActivationMarkerRegressionPasses() {
 	constexpr auto kPid = qint64(4321);
 	constexpr auto kRequestNumber = 2;
-	return RunnerExternalActivationConfigValidForRegression(true, true)
-		   && !RunnerExternalActivationConfigValidForRegression(true, false)
-		   && RunnerExternalActivationConfigValidForRegression(false, false)
+	constexpr auto kRequiredVariable
+		= "TDESKTOP_AUTH_LIFECYCLE_REGRESSION_RUNNER_ACTIVATION_REQUIRED";
+	constexpr auto kMarkerVariable
+		= "TDESKTOP_AUTH_LIFECYCLE_REGRESSION_RUNNER_ACTIVATION_MARKER";
+	const auto previousRequiredWasSet
+		= qEnvironmentVariableIsSet(kRequiredVariable);
+	const auto previousRequired = qgetenv(kRequiredVariable);
+	const auto previousMarkerWasSet = qEnvironmentVariableIsSet(kMarkerVariable);
+	const auto previousMarker = qgetenv(kMarkerVariable);
+	const auto restoreEnvironment = gsl::finally([&] {
+		if (previousRequiredWasSet) {
+			qputenv(kRequiredVariable, previousRequired);
+		} else {
+			qunsetenv(kRequiredVariable);
+		}
+		if (previousMarkerWasSet) {
+			qputenv(kMarkerVariable, previousMarker);
+		} else {
+			qunsetenv(kMarkerVariable);
+		}
+	});
+	qunsetenv(kMarkerVariable);
+	qputenv(kRequiredVariable, "1");
+	const auto missingRequiredMarkerFails
+		= !RunnerExternalActivationConfigValidForRegression();
+	qunsetenv(kRequiredVariable);
+	const auto missingOptionalMarkerPasses
+		= RunnerExternalActivationConfigValidForRegression();
+	qputenv(kRequiredVariable, "1");
+	qputenv(kMarkerVariable, "marker");
+	const auto configuredRequiredMarkerPasses
+		= RunnerExternalActivationConfigValidForRegression();
+	return missingRequiredMarkerFails && missingOptionalMarkerPasses
+		   && configuredRequiredMarkerPasses
 		   && (RunnerExternalActivationMarkerStateForRegression(
 				   "pid=4321\nrequest=2\nresult=PASS\n", kPid, kRequestNumber)
 			   == RunnerExternalActivationMarkerState::Activated)
@@ -21020,10 +21053,7 @@ RunnerExternalActivationMarkerStateForRegression(const QByteArray &contents,
 	const auto markerPath = qEnvironmentVariable(
 		"TDESKTOP_AUTH_LIFECYCLE_REGRESSION_RUNNER_ACTIVATION_MARKER");
 	if (markerPath.isEmpty()) {
-		const auto lifecycleRunConfigured
-			= qEnvironmentVariableIsSet("TDESKTOP_AUTH_LIFECYCLE_REGRESSION");
-		if (!RunnerExternalActivationConfigValidForRegression(
-				lifecycleRunConfigured, false)) {
+		if (!RunnerExternalActivationConfigValidForRegression()) {
 			std::fprintf(
 				stderr,
 				"Runner external activation marker path is not configured.\n");
