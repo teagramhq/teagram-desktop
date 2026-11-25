@@ -10,6 +10,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_changes.h"
 #include "storage/storage_shared_media.h"
 
+#include <QtCore/QCoreApplication>
+
 #include <vector>
 
 namespace Data::tests {
@@ -159,6 +161,8 @@ PeerScopedUpdateRoutingRegressionPasses(Data::Changes &changes,
 		}
 		return deliveriesMatch();
 	};
+	changes.sendNotifications();
+	QCoreApplication::processEvents();
 	changes.sendNotifications();
 	const auto firstBaseline
 		= changes.peerUpdateScopedSubscriptionCountForRegressionTest(first);
