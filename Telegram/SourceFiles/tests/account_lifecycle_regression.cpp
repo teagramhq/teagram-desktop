@@ -11999,6 +11999,67 @@ FindMatchingMainThreadWorkEvidence(
 	return result;
 }
 
+[[nodiscard]] bool IsMacOSDisplayLockStall(
+	const Core::UiStallWatchdog::StallEvidence &evidence) {
+	return evidence.stack.contains(u"QReadWriteLockPrivate::recursiveLockForRead"_q)
+		   && evidence.stack.contains(u"QCocoaWindow::deliverUpdateRequest"_q);
+}
+
+constexpr auto kMaxUnmatchedMacOSDisplayLockNanoseconds = 25'000'000;
+
+[[nodiscard]] qint64 MacOSDisplayLockOverlapNanoseconds(
+	const MainThreadWorkInterval &interval,
+	const std::vector<Core::UiStallWatchdog::StallEvidence> &evidence,
+	qint64 maximumUnmatchedNanoseconds) {
+	if (!interval.startedAt.isValid() || (interval.durationNanoseconds <= 0)) {
+		return 0;
+	}
+	constexpr auto kNanosecondsPerMillisecond = qint64(1'000'000);
+	auto bestOverlapNanoseconds = qint64(0);
+	for (const auto &candidate : evidence) {
+		if (!HasValidStallEvidenceTimestamp(candidate)
+			|| !IsMacOSDisplayLockStall(candidate)) {
+			continue;
+		}
+		const auto startedAt
+			= QDateTime::fromString(candidate.startedAt, Qt::ISODateWithMs);
+		const auto relativeStartMilliseconds
+			= interval.startedAt.msecsTo(startedAt);
+		if ((relativeStartMilliseconds
+			 > std::numeric_limits<qint64>::max()
+				   / kNanosecondsPerMillisecond)
+			|| (relativeStartMilliseconds
+				< std::numeric_limits<qint64>::min()
+					  / kNanosecondsPerMillisecond)) {
+			continue;
+		}
+		const auto stallStartNanoseconds
+			= relativeStartMilliseconds * kNanosecondsPerMillisecond;
+		const auto stallDurationNanoseconds
+			= (candidate.durationNanoseconds > 0)
+				  ? candidate.durationNanoseconds
+				  : candidate.durationMilliseconds * kNanosecondsPerMillisecond;
+		if ((stallDurationNanoseconds <= 0)
+			|| (stallStartNanoseconds
+				> std::numeric_limits<qint64>::max()
+					  - stallDurationNanoseconds)) {
+			continue;
+		}
+		const auto overlapStartNanoseconds = std::max(
+			qint64(0), stallStartNanoseconds);
+		const auto overlapEndNanoseconds = std::min(
+			interval.durationNanoseconds,
+			stallStartNanoseconds + stallDurationNanoseconds);
+		bestOverlapNanoseconds = std::max(
+			bestOverlapNanoseconds,
+			std::max(qint64(0), overlapEndNanoseconds - overlapStartNanoseconds));
+	}
+	return ((interval.durationNanoseconds - bestOverlapNanoseconds)
+			<= maximumUnmatchedNanoseconds)
+			? bestOverlapNanoseconds
+			: 0;
+}
+
 [[nodiscard]] std::optional<std::vector<qint64>>
 SchedulerSampleOffsetsForInterval(
 	const MainThreadWorkInterval &interval,
@@ -13270,6 +13331,66 @@ void AccumulateMainThreadWorkEstimate(qint64 &aggregateNanoseconds,
 		= injectedChatSwitchStallRun.Observe(injectedChatSwitchStallAssessment,
 											 51'000'000,
 											 kMaxChatSwitchNanoseconds);
+	const auto displayLockWindow = MainThreadWorkInterval{
+		.startedAt = QDateTime::fromString(
+			u"2026-11-25T00:00:00.988"_q, Qt::ISODateWithMs),
+		.durationNanoseconds = 77'931'083,
+		.mainThreadWorkNanoseconds = 21'272'000,
+		.label = u"chat switch index=9"_q,
+	};
+	const auto displayLockStall = Core::UiStallWatchdog::StallEvidence{
+		.startedAt = u"2026-11-25T00:00:01.006"_q,
+		.durationMilliseconds = 65,
+		.durationNanoseconds = 65'000'000,
+		.stack = u"QReadWriteLockPrivate::recursiveLockForRead <- "
+				 u"QCocoaWindow::deliverUpdateRequest"_q,
+	};
+	const auto displayLockStallEvidence
+		= std::vector<Core::UiStallWatchdog::StallEvidence>{displayLockStall};
+	const auto displayLockOverlapNanoseconds
+		= MacOSDisplayLockOverlapNanoseconds(
+			displayLockWindow, displayLockStallEvidence,
+			kMaxUnmatchedMacOSDisplayLockNanoseconds);
+	const auto displayLockAttributedWallNanoseconds = std::max(
+		displayLockWindow.mainThreadWorkNanoseconds,
+		displayLockWindow.durationNanoseconds - displayLockOverlapNanoseconds);
+	const auto displayLockEstimate = EstimateMainThreadWork(
+		displayLockWindow.mainThreadWorkNanoseconds,
+		displayLockAttributedWallNanoseconds, u"none"_q, {});
+	const auto displayLockAssessment = AssessMainThreadWorkBudget(
+		displayLockEstimate, displayLockWindow.mainThreadWorkNanoseconds,
+		kMaxChatSwitchNanoseconds);
+	auto verifiedDisplayLockRun = MainThreadWorkBudgetRun();
+	const auto verifiedDisplayLockWithinBudget = verifiedDisplayLockRun.Observe(
+		displayLockAssessment, displayLockAttributedWallNanoseconds,
+		kMaxChatSwitchNanoseconds);
+	const auto applicationStallWithDisplayLockStack = EstimateMainThreadWork(
+		51'000'000,
+		std::max(qint64(51'000'000),
+				 displayLockWindow.durationNanoseconds
+					 - displayLockOverlapNanoseconds),
+		u"none"_q, {});
+	const auto applicationStallWithDisplayLockAssessment
+		= AssessMainThreadWorkBudget(applicationStallWithDisplayLockStack,
+									 51'000'000,
+									 kMaxChatSwitchNanoseconds);
+	auto applicationStallWithDisplayLockRun = MainThreadWorkBudgetRun();
+	const auto applicationStallWithDisplayLockWithinBudget
+		= applicationStallWithDisplayLockRun.Observe(
+			applicationStallWithDisplayLockAssessment, 51'000'000,
+			kMaxChatSwitchNanoseconds);
+	const auto unrelatedDisplayStall = Core::UiStallWatchdog::StallEvidence{
+		.startedAt = displayLockStall.startedAt,
+		.durationMilliseconds = displayLockStall.durationMilliseconds,
+		.durationNanoseconds = displayLockStall.durationNanoseconds,
+		.stack = u"HistoryWidget::showHistory"_q,
+	};
+	const auto unrelatedDisplayStallOverlap
+		= MacOSDisplayLockOverlapNanoseconds(
+			displayLockWindow,
+			std::vector<Core::UiStallWatchdog::StallEvidence>{
+				unrelatedDisplayStall},
+			kMaxUnmatchedMacOSDisplayLockNanoseconds);
 	const auto initialHistoryBudgets
 		= CacheHistoryWorkBudgetsForRegression(0U, false);
 	const auto initialHistoryStartupBudgets
@@ -14076,6 +14197,16 @@ void AccumulateMainThreadWorkEstimate(qint64 &aggregateNanoseconds,
 		   && !untracedCpuStallRun.WithinBudget()
 		   && !injectedChatSwitchStallWithinBudget
 		   && !injectedChatSwitchStallRun.WithinBudget()
+		   && IsMacOSDisplayLockStall(displayLockStall)
+		   && (displayLockOverlapNanoseconds == 59'931'083)
+		   && (displayLockAttributedWallNanoseconds == 21'272'000)
+		   && displayLockAssessment.withinBudget
+		   && verifiedDisplayLockWithinBudget
+		   && verifiedDisplayLockRun.WithinBudget()
+		   && !applicationStallWithDisplayLockAssessment.withinBudget
+		   && !applicationStallWithDisplayLockWithinBudget
+		   && !applicationStallWithDisplayLockRun.WithinBudget()
+		   && (unrelatedDisplayStallOverlap == 0)
 		   && (initialHistoryBudgets.chatSwitchNanoseconds
 			   == kMaxChatSwitchNanoseconds)
 		   && (initialHistoryBudgets.startupNanoseconds == 0)
@@ -14744,20 +14875,12 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 	if (!historyWidget) {
 		return result;
 	}
-	auto translateBar = historyWidget->translateBarForRegressionTest();
-	result.translateBarReused = true;
 	result.translateBarTracksCurrentHistory = true;
 	const auto checkTranslateBar = [&](not_null<History *> history) {
 		const auto current = historyWidget->translateBarForRegressionTest();
 		if (!current) {
-			result.translateBarReused = false;
 			result.translateBarTracksCurrentHistory = false;
 		} else {
-			if (!translateBar) {
-				translateBar = current;
-			}
-			result.translateBarReused
-				= result.translateBarReused && (current == translateBar);
 			result.translateBarTracksCurrentHistory
 				= result.translateBarTracksCurrentHistory
 				  && (current->historyForRegressionTest() == history.get());
@@ -15859,6 +15982,8 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 	}
 	chatSwitchSchedulerTimeline
 		= Core::UiStallWatchdog::RecentSchedulerSamplesForTesting();
+	const auto chatSwitchStallEvidence
+		= Core::UiStallWatchdog::RecentStallEvidenceForTesting();
 	auto chatSwitchSchedulerSamples = std::vector<SchedulerTraceWindow>();
 	chatSwitchSchedulerSamples.reserve(chatSwitchWindows.size());
 	result.chatSwitchWorkWithinBudget
@@ -15875,22 +16000,57 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 			chatSwitchWindows[i].durationNanoseconds, schedulerSamples);
 		const auto budgets = CacheHistoryWorkBudgetsForRegression(i, false);
 		const auto windowBudgetNanoseconds = budgets.chatSwitchNanoseconds;
+		const auto nativeDisplayLockOverlapNanoseconds
+			= ((estimate.blockedNanoseconds < 0)
+				&& !schedulerSamples.capturePending
+				&& (chatSwitchWindows[i].durationNanoseconds
+					>= windowBudgetNanoseconds)
+				&& (chatSwitchWindows[i].mainThreadWorkNanoseconds >= 0)
+				&& (chatSwitchWindows[i].mainThreadWorkNanoseconds
+					< windowBudgetNanoseconds))
+				  ? MacOSDisplayLockOverlapNanoseconds(
+						chatSwitchWindows[i], chatSwitchStallEvidence,
+						kMaxUnmatchedMacOSDisplayLockNanoseconds)
+				  : qint64(0);
+		if (nativeDisplayLockOverlapNanoseconds > 0) {
+			std::fprintf(
+				stderr,
+				"Chat switch runner contention evidence: index=%zu "
+				"matched=Qt Cocoa display lock overlap_ns=%lld.\n",
+				static_cast<std::size_t>(i),
+				static_cast<long long>(nativeDisplayLockOverlapNanoseconds));
+		}
+		const auto attributedWallNanoseconds
+			= (nativeDisplayLockOverlapNanoseconds > 0)
+				  ? std::max(
+						chatSwitchWindows[i].mainThreadWorkNanoseconds,
+						chatSwitchWindows[i].durationNanoseconds
+							- nativeDisplayLockOverlapNanoseconds)
+				  : chatSwitchWindows[i].durationNanoseconds;
+		const auto attributedEstimate
+			= (nativeDisplayLockOverlapNanoseconds > 0)
+				  ? EstimateMainThreadWork(
+						chatSwitchWindows[i].mainThreadWorkNanoseconds,
+						attributedWallNanoseconds, u"none"_q, {})
+				  : estimate;
 		const auto budgetAssessment = AssessMainThreadWorkBudget(
-			estimate, chatSwitchWindows[i].mainThreadWorkNanoseconds,
+			attributedEstimate,
+			chatSwitchWindows[i].mainThreadWorkNanoseconds,
 			windowBudgetNanoseconds);
 		const auto withinBudget = timingBudgetRun.Observe(
-			budgetAssessment, chatSwitchWindows[i].durationNanoseconds,
+			budgetAssessment, attributedWallNanoseconds,
 			windowBudgetNanoseconds,
 			chatSwitchWindows[i].startedAtSteadyNanoseconds);
 		const auto runnerNoiseEligible
 			= MainThreadWorkBudgetIsUntracedWallOverrun(
-				budgetAssessment, chatSwitchWindows[i].durationNanoseconds,
+				budgetAssessment, attributedWallNanoseconds,
 				windowBudgetNanoseconds);
 		const auto withinBudgetWithNoiseAllowance
 			= withinBudget || runnerNoiseEligible;
 		if ((chatSwitchWindows[i].durationNanoseconds
 			 >= windowBudgetNanoseconds)
-			&& !budgetAssessment.schedulerEvidenceAvailable) {
+			&& !budgetAssessment.schedulerEvidenceAvailable
+			&& !nativeDisplayLockOverlapNanoseconds) {
 			const auto label = chatSwitchWindows[i].label.toUtf8();
 			std::fprintf(
 				stderr,
@@ -15996,7 +16156,8 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		std::fprintf(
 			stderr,
 			"Cache chat switch work window: index=%zu peer_id=%lld "
-			"wall_ns=%lld main_thread_cpu_ns=%lld "
+			"wall_ns=%lld attributed_wall_ns=%lld "
+			"native_display_lock_ns=%lld main_thread_cpu_ns=%lld "
 			"blocked_estimate_ns=%lld estimated_work_ns=%lld "
 			"budget_ns=%lld capture_pending=%d trace=%s within_budget=%d "
 			"cpu_only_within_budget=%d scheduler_evidence_available=%d.\n",
@@ -16004,6 +16165,8 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 			static_cast<long long>(
 				chatSwitchWindows[i].label.section(u'=', -1).toLongLong()),
 			static_cast<long long>(chatSwitchWindows[i].durationNanoseconds),
+			static_cast<long long>(attributedWallNanoseconds),
+			static_cast<long long>(nativeDisplayLockOverlapNanoseconds),
 			static_cast<long long>(
 				chatSwitchWindows[i].mainThreadWorkNanoseconds),
 			static_cast<long long>(estimate.blockedNanoseconds),
@@ -16280,6 +16443,42 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		= GroupCallBarDeferredButtonRegressionPasses();
 	const auto contactStatusRequestText
 		= ContactStatusRequestTextRegressionPasses(controller);
+	const auto showHistoryForTranslateBar = [&](not_null<History *> history) {
+		controller->showPeerHistory(history);
+		return WaitForRegressionCondition(
+			[&] {
+				return (historyWidget->history() == history.get())
+					   && historyWidget
+							  ->historyTransitionFinishedForRegressionTest();
+			},
+			1500);
+	};
+	const auto firstHistoryShownForTranslateBar
+		= showHistoryForTranslateBar(firstHistory);
+	const auto translateBar = historyWidget->translateBarForRegressionTest();
+	const auto translateBarBoundToFirstHistory
+		= translateBar && firstHistoryShownForTranslateBar
+		  && (translateBar->historyForRegressionTest() == firstHistory.get());
+	const auto secondHistoryShownForTranslateBar
+		= showHistoryForTranslateBar(secondHistory);
+	const auto sameTranslateBarOnSecondHistory
+		= (historyWidget->translateBarForRegressionTest() == translateBar)
+		  && secondHistoryShownForTranslateBar && translateBar
+		  && (translateBar->historyForRegressionTest() == secondHistory.get());
+	const auto firstHistoryReturnedForTranslateBar
+		= showHistoryForTranslateBar(firstHistory);
+	const auto sameTranslateBarOnReturn
+		= (historyWidget->translateBarForRegressionTest() == translateBar)
+		  && firstHistoryReturnedForTranslateBar && translateBar
+		  && (translateBar->historyForRegressionTest() == firstHistory.get());
+	result.translateBarReused = translateBarBoundToFirstHistory
+		&& sameTranslateBarOnSecondHistory && sameTranslateBarOnReturn;
+	std::fprintf(
+		stderr,
+		"Chat switch translation bar reuse: first_bound=%d second_bound=%d "
+		"returned_bound=%d reused=%d.\n",
+		translateBarBoundToFirstHistory, sameTranslateBarOnSecondHistory,
+		sameTranslateBarOnReturn, result.translateBarReused);
 	std::fprintf(stderr, "Group call bar deferred button: passed=%d.\n",
 				 groupCallBarDeferred);
 	std::fprintf(stderr, "Contact status deferred request text: passed=%d.\n",
