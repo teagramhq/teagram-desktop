@@ -52,9 +52,7 @@ public:
 	[[nodiscard]] LanguageId overridenToForRegressionTest() const {
 		return _overridenTo.current();
 	}
-	void setOverridenToForRegressionTest(LanguageId id) {
-		_overridenTo = id;
-	}
+	void setOverridenToForRegressionTest(LanguageId id) { _overridenTo = id; }
 	[[nodiscard]] int translateToCallsForRegressionTest() const {
 		return _translateToCallsForRegression;
 	}
@@ -89,7 +87,7 @@ private:
 		Fn<void()> buttonCallback);
 
 	const not_null<Window::SessionController*> _controller;
-	not_null<History*> _history;
+	not_null<History *> _history;
 	Ui::SlideWrap<> _wrap;
 	std::unique_ptr<Ui::PlainShadow> _shadow;
 	Fn<QRect(QRect)> _shadowGeometryPostprocess;

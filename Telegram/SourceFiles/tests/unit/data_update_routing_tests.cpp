@@ -15,8 +15,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 namespace {
 
-template <typename T>
-not_null<T *> OpaqueObject(std::uintptr_t value) {
+template <typename T> not_null<T *> OpaqueObject(std::uintptr_t value) {
 	return reinterpret_cast<T *>(value);
 }
 
@@ -25,9 +24,7 @@ not_null<T *> OpaqueObject(std::uintptr_t value) {
 TEST_CASE(PeerScopedUpdateRoutingReclaimsAndDeliversByPeer) {
 	auto changes = Data::Changes();
 	CHECK(Data::tests::PeerScopedUpdateRoutingRegressionPasses(
-		changes,
-		OpaqueObject<PeerData>(1),
-		OpaqueObject<PeerData>(2)));
+		changes, OpaqueObject<PeerData>(1), OpaqueObject<PeerData>(2)));
 }
 
 TEST_CASE(SharedMediaInvalidationRoutingReclaimsSubscriptions) {

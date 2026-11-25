@@ -164,11 +164,11 @@ void Changes::Manager<DataType, UpdateType>::sendNotifications() {
 	}
 }
 
-Changes::Changes(not_null<Main::Session*> session)
+Changes::Changes(not_null<Main::Session *> session)
 #ifdef TDESKTOP_UNIT_TESTS
-: _session(session.get()) {
+	: _session(session.get()) {
 #else
-: _session(session) {
+	: _session(session) {
 #endif
 }
 
@@ -466,11 +466,9 @@ void Changes::scheduleNotifications() {
 		_notify = true;
 #ifdef TDESKTOP_UNIT_TESTS
 		if (_session) {
-			crl::on_main(_session, [=] {
-				sendNotifications();
-			});
+			crl::on_main(_session, [=] { sendNotifications(); });
 		}
-	#else
+#else
 		crl::on_main(&session(), [=] {
 			sendNotifications();
 		});

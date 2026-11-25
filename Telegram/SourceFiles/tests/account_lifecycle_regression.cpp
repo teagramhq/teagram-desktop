@@ -5717,7 +5717,7 @@ template <typename Condition>
 										  target,
 									  not_null<HistoryWidget *> historyWidget,
 									  const ClickHandlerContext &messageContext,
-								  Window::Controller *activeBefore) {
+									  Window::Controller *activeBefore) {
 		const auto before = std::array{
 			stockController
 				->featureUnavailableOnServerToastCallsForRegressionTest(),
@@ -5919,8 +5919,7 @@ template <typename Condition>
 					   && (pinnedController
 							   ->featureUnavailableOnServerToastCallsForRegressionTest()
 						   == ordinaryToastBefore)
-					   && (app.activeWindow()
-						   == &pinnedController->window());
+					   && (app.activeWindow() == &pinnedController->window());
 			});
 		const auto ordinarySectionShown
 			= pinnedController->content()->isMainSectionShown();
@@ -6114,8 +6113,8 @@ template <typename Condition>
 		= (app.activeWindow() == &stockController->window());
 	const auto activePrimaryWindowRestored
 		= (app.activePrimaryWindow() == &stockController->window());
-	if (activationFailed(stockWindowActivated)
-		|| !activeWindowRestored || !activePrimaryWindowRestored) {
+	if (activationFailed(stockWindowActivated) || !activeWindowRestored
+		|| !activePrimaryWindowRestored) {
 		std::fprintf(stderr,
 					 "Settings deep link activation counts: active-window=%d "
 					 "active-primary-window=%d expected=1/1.\n",
@@ -6132,9 +6131,10 @@ template <typename Condition>
 		= QVariant::fromValue(ClickHandlerContext{});
 	for (const auto &url : routes) {
 		if (!WaitForRunnerExternalActivationForRegression()) {
-			std::fprintf(stderr,
-						 "Settings deep link regression failed: "
-						 "runner activation failed before missing-target check.\n");
+			std::fprintf(
+				stderr,
+				"Settings deep link regression failed: "
+				"runner activation failed before missing-target check.\n");
 			return false;
 		}
 		const auto activation = ActivateWindowForRegression(
@@ -6167,11 +6167,9 @@ template <typename Condition>
 			},
 			1500);
 		if (!stable) {
-			LogWindowActivationForRegression(app,
-										 &stockController->window());
-			std::fprintf(stderr,
-							 "Settings deep link regression failed: "
-							 "stock window activation did not settle.\n");
+			LogWindowActivationForRegression(app, &stockController->window());
+			std::fprintf(stderr, "Settings deep link regression failed: "
+								 "stock window activation did not settle.\n");
 			return false;
 		}
 		const auto stockToastBeforeMissingController
@@ -10338,7 +10336,8 @@ AddTranslationRegressionMessage(not_null<Main::Session *> session,
 		}
 	}
 	{
-		const auto plainHistory = stockSession.data().history(stockSession.user());
+		const auto plainHistory
+			= stockSession.data().history(stockSession.user());
 		if (!plainHistory) {
 			return false;
 		}
@@ -10356,16 +10355,16 @@ AddTranslationRegressionMessage(not_null<Main::Session *> session,
 		stockHistory->translateTo(target);
 		plainHistory->translateOfferFrom(LanguageId());
 		plainHistory->translateTo(LanguageId());
-		HistoryView::TranslateBar switchingBar(
-			stockController->widget().get(), stockController, stockHistory);
+		HistoryView::TranslateBar switchingBar(stockController->widget().get(),
+											   stockController, stockHistory);
 		switchingBar.finishAnimating();
 		if (!switchingBar.shouldBeShownForRegressionTest()) {
 			return false;
 		}
 		switchingBar.setOverridenToForRegressionTest(offered);
 		switchingBar.hide();
-		const auto translateCallsBeforePlain =
-			switchingBar.translateToCallsForRegressionTest();
+		const auto translateCallsBeforePlain
+			= switchingBar.translateToCallsForRegressionTest();
 		switchingBar.setHistory(plainHistory);
 		switchingBar.finishAnimating();
 		const auto plainHistoryBoundAndHidden
@@ -14221,7 +14220,6 @@ SchedulerEvidenceDiagnosticsRegressionPasses() {
 	return (workNanoseconds >= 0) && (workNanoseconds < budgetNanoseconds);
 }
 
-
 struct CacheChatSwitchRegressionResult final {
 	int attachMenuBotCount = 0;
 	int reactions = 0;
@@ -14739,8 +14737,7 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		  && emptySecondHistory->isReadyFor(ShowAtUnreadMsgId);
 	result.peerScopedUpdateRouting
 		= Data::tests::PeerScopedUpdateRoutingRegressionPasses(
-				session.changes(), firstHistory->peer,
-												  secondHistory->peer)
+			  session.changes(), firstHistory->peer, secondHistory->peer)
 		  && Data::tests::SharedMediaInvalidationRoutingRegressionPasses();
 	const auto historyWidget
 		= controller->content()->historyWidgetForRegressionTest();
@@ -15975,8 +15972,7 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 						   budgetAssessment.workNanoseconds);
 		}
 		if (i == 0) {
-			result.initialHistorySelectionWithinBudget
-				= withinBudget;
+			result.initialHistorySelectionWithinBudget = withinBudget;
 			result.initialHistorySelectionBlockedNanoseconds
 				= estimate.blockedNanoseconds;
 			result.initialHistorySelectionEstimatedWorkNanoseconds
@@ -20969,9 +20965,9 @@ enum class RunnerExternalActivationMarkerState {
 	Failed,
 };
 
-[[nodiscard]] bool RunnerExternalActivationConfigValidForRegression(
-		bool lifecycleRunConfigured,
-		bool markerConfigured) {
+[[nodiscard]] bool
+RunnerExternalActivationConfigValidForRegression(bool lifecycleRunConfigured,
+												 bool markerConfigured) {
 	return !lifecycleRunConfigured || markerConfigured;
 }
 
@@ -21004,8 +21000,8 @@ RunnerExternalActivationMarkerStateForRegression(const QByteArray &contents,
 		   && !RunnerExternalActivationConfigValidForRegression(true, false)
 		   && RunnerExternalActivationConfigValidForRegression(false, false)
 		   && (RunnerExternalActivationMarkerStateForRegression(
-				"pid=4321\nrequest=2\nresult=PASS\n", kPid, kRequestNumber)
-			== RunnerExternalActivationMarkerState::Activated)
+				   "pid=4321\nrequest=2\nresult=PASS\n", kPid, kRequestNumber)
+			   == RunnerExternalActivationMarkerState::Activated)
 		   && (RunnerExternalActivationMarkerStateForRegression(
 				   "pid=4321\nrequest=2\nresult=FAIL\n", kPid, kRequestNumber)
 			   == RunnerExternalActivationMarkerState::Failed)
@@ -21024,8 +21020,8 @@ RunnerExternalActivationMarkerStateForRegression(const QByteArray &contents,
 	const auto markerPath = qEnvironmentVariable(
 		"TDESKTOP_AUTH_LIFECYCLE_REGRESSION_RUNNER_ACTIVATION_MARKER");
 	if (markerPath.isEmpty()) {
-		const auto lifecycleRunConfigured = qEnvironmentVariableIsSet(
-			"TDESKTOP_AUTH_LIFECYCLE_REGRESSION");
+		const auto lifecycleRunConfigured
+			= qEnvironmentVariableIsSet("TDESKTOP_AUTH_LIFECYCLE_REGRESSION");
 		if (!RunnerExternalActivationConfigValidForRegression(
 				lifecycleRunConfigured, false)) {
 			std::fprintf(
