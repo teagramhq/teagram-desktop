@@ -767,6 +767,7 @@ jobs:
           executable="$REPO_NAME/out/Debug/Teagram.app/Contents/MacOS/Teagram"
           set +e
           env HOME="$state/home" TMPDIR="$state/tmp" \
+            RUNNER_EXTERNAL_ACTIVATION_HOME="$HOME" \
             TDESKTOP_MAC_LIFECYCLE_STEP_DEADLINE_EPOCH="$step_deadline_epoch" \
             TDESKTOP_MAC_PROFILE_TEST_TMP_BASE="$state/tmp" \
             TDESKTOP_MAC_PROFILE_TEST_PROFILE_ARTIFACT="$evidence/seatbelt-profile-${BUILD_VARIANT}.sb" \

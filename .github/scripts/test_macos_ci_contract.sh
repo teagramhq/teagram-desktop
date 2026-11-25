@@ -1148,8 +1148,17 @@ profile_step='Run protected profile and IPC integration tests.'
 require_step_field "$mac_workflow" build-macos "$profile_step" '.if' \
   "\${{ !cancelled() && steps.ccache-profile.outputs.protected_path_integration == 'ON' && steps.build.outcome == 'success' }}"
 require_step_script "$mac_workflow" build-macos "$profile_step" \
+  'RUNNER_EXTERNAL_ACTIVATION_HOME="$HOME"' \
   'test_mac_profile_guard.sh'
 profile_harness='Telegram/build/test_mac_profile_guard.sh'
+for activation_contract in \
+  'TDESKTOP_AUTH_LIFECYCLE_REGRESSION_RUNNER_ACTIVATION_REQUIRED=1' \
+  'TDESKTOP_AUTH_LIFECYCLE_REGRESSION_RUNNER_ACTIVATION_MARKER=' \
+  'TDESKTOP_AUTH_LIFECYCLE_REGRESSION_RUNNER_ACTIVATION_REQUEST=' \
+  'macos_process_activation.py'; do
+  grep -Fq "$activation_contract" "$profile_harness" \
+    || contract_fail "$profile_harness must externally activate its authenticated lifecycle launch."
+done
 minidump_symbolizer='.github/scripts/symbolicate_macos_minidump.py'
 python3 "$minidump_symbolizer" --self-test
 for symbolizer_contract in \
