@@ -33,7 +33,7 @@ TEST_CASE(SharedMediaInvalidationRoutingReclaimsSubscriptions) {
 
 TEST_CASE(DestroyedSublistUpdateIsTheFinalScopedDelivery) {
 	auto changes = Data::Changes();
-	const auto sublist = OpaqueObject<SavedSublist>(1);
+	const auto sublist = OpaqueObject<Data::SavedSublist>(1);
 	using Flag = Data::SublistUpdate::Flag;
 	auto lifetime = rpl::lifetime();
 	auto deliveries = std::vector<Data::SublistUpdate::Flags>();
