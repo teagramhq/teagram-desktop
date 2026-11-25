@@ -120,6 +120,7 @@ PRIVATE
     data/data_peer_id.cpp
     data/data_changes.cpp
     storage/storage_shared_media.cpp
+    storage/storage_sparse_ids_list.cpp
     data/data_pts_waiter.cpp
     intro/intro_server_discovery.cpp
     intro/intro_signup_error.cpp
