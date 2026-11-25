@@ -17,6 +17,40 @@ ccache_profile_script=".github/scripts/mac_ccache_profile.sh"
 temp_dir="$(mktemp -d)"
 trap 'rm -rf "$temp_dir"' EXIT
 
+grep_file_pattern_status() {
+  local status
+  if grep -Eq -- "$1" "$2"; then
+    return 0
+  else
+    status=$?
+  fi
+  if (( status == 1 )); then
+    return 1
+  fi
+  return 2
+}
+
+grep_status_fixture="$temp_dir/grep-status.txt"
+printf 'allowed\n' > "$grep_status_fixture"
+grep_file_pattern_status '^allowed$' "$grep_status_fixture" \
+  || contract_fail 'Contract grep must detect a matching line.'
+if grep_file_pattern_status '^missing$' "$grep_status_fixture"; then
+  contract_fail 'Contract grep must distinguish a missing pattern.'
+else
+  grep_status=$?
+  if (( grep_status != 1 )); then
+    contract_fail 'Contract grep must return 1 for a missing pattern.'
+  fi
+fi
+if grep_file_pattern_status '^allowed$' "$temp_dir/missing-file" 2>/dev/null; then
+  contract_fail 'Contract grep must report unreadable files as errors.'
+else
+  grep_status=$?
+  if (( grep_status != 2 )); then
+    contract_fail 'Contract grep must distinguish read errors from no match.'
+  fi
+fi
+
 PYTHONDONTWRITEBYTECODE=1 python3 "$scripts_dir/test_macos_timeout_capture.py"
 PYTHONDONTWRITEBYTECODE=1 python3 "$scripts_dir/test_macos_process_activation.py"
 
@@ -1160,6 +1194,19 @@ for activation_contract in \
   grep -Fq -- "$activation_contract" "$profile_harness" \
     || contract_fail "$profile_harness must externally activate its authenticated lifecycle launch."
 done
+awk '
+  /if ! : > "\$activation_stop"/ { in_stop_failure = 1 }
+  in_stop_failure && /kill -TERM "\$activation_pid"/ { watcher_stopped = 1 }
+  in_stop_failure && /wait "\$activation_pid"/ && watcher_stopped {
+    watcher_reaped = 1
+  }
+  in_stop_failure && /activation stop file could not be written: %s/ {
+    path_reported = 1
+  }
+  in_stop_failure && /return 1/ { exit }
+  END { exit !(watcher_stopped && watcher_reaped && path_reported) }
+' "$profile_harness" \
+  || contract_fail "$profile_harness must stop and reap the activation watcher when its stop-file write fails."
 grep -Fq 'test_profile_runner_serves_multiple_requests_until_stop' \
   .github/scripts/test_macos_process_activation.py \
   || contract_fail 'Runner activation tests must cover multiple profile requests.'
@@ -2695,8 +2742,14 @@ awk '
     settled && activation_recheck && cold_selection) }
 ' "$native_harness" \
   || contract_fail "$native_harness must activate and recheck foreground around the cold first history selection."
-if rg -q 'focusCheckAvailable|native focus assertion skipped' "$native_harness"; then
+if grep_file_pattern_status 'focusCheckAvailable|native focus assertion skipped' \
+	"$native_harness"; then
 	contract_fail "$native_harness must keep every Settings deep-link focus assertion mandatory."
+else
+	grep_status=$?
+	if (( grep_status != 1 )); then
+		contract_fail "$native_harness could not be read for the mandatory focus assertion check."
+	fi
 fi
 grep -Fq 'ordinaryWindowActive' "$native_harness" \
 	|| contract_fail "$native_harness must assert focus for the ordinary Settings route."

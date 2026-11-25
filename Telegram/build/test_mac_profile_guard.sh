@@ -2524,7 +2524,31 @@ while process_alive "$auth_pid"; do
 	fi
 	sleep 0.05
 done
-: > "$activation_stop"
+if ! : > "$activation_stop"; then
+	printf 'activation stop file could not be written: %s\n' \
+		"$activation_stop" >&2
+	kill -TERM "$activation_pid" 2>/dev/null || true
+	if process_alive "$activation_pid"; then
+		sleep 1
+		if process_alive "$activation_pid"; then
+			kill -KILL "$activation_pid" 2>/dev/null || true
+		fi
+	fi
+	if wait "$activation_pid"; then
+		activation_status=0
+	else
+		activation_status=$?
+	fi
+	if wait "$auth_pid"; then
+		auth_status=0
+	else
+		auth_status=$?
+	fi
+	cat "$activation_log" >&2
+	cat "$auth_log" >&2
+	echo "authenticated lifecycle runner activation failed." >&2
+	return 1
+fi
 if wait "$auth_pid"; then
 	auth_status=0
 else
