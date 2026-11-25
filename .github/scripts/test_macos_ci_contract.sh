@@ -1155,10 +1155,14 @@ for activation_contract in \
   'TDESKTOP_AUTH_LIFECYCLE_REGRESSION_RUNNER_ACTIVATION_REQUIRED=1' \
   'TDESKTOP_AUTH_LIFECYCLE_REGRESSION_RUNNER_ACTIVATION_MARKER=' \
   'TDESKTOP_AUTH_LIFECYCLE_REGRESSION_RUNNER_ACTIVATION_REQUEST=' \
-  'macos_process_activation.py'; do
-  grep -Fq "$activation_contract" "$profile_harness" \
+  'macos_process_activation.py' \
+  '--watch'; do
+  grep -Fq -- "$activation_contract" "$profile_harness" \
     || contract_fail "$profile_harness must externally activate its authenticated lifecycle launch."
 done
+grep -Fq 'test_profile_runner_serves_multiple_requests_until_stop' \
+  .github/scripts/test_macos_process_activation.py \
+  || contract_fail 'Runner activation tests must cover multiple profile requests.'
 minidump_symbolizer='.github/scripts/symbolicate_macos_minidump.py'
 python3 "$minidump_symbolizer" --self-test
 for symbolizer_contract in \

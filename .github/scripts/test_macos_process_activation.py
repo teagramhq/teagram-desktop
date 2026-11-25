@@ -10,10 +10,12 @@ from pathlib import Path
 
 from macos_process_activation import (
     ActivationHandshake,
+    ActivationResult,
     activate_process,
     activation_request_is_new,
     read_activation_request,
     run_with_runtime_deadline,
+    serve_activation_requests,
 )
 
 
@@ -91,6 +93,50 @@ class ProcessActivationTests(unittest.TestCase):
             self.assertFalse(handshake.all_requests_passed)
             self.assertEqual(marker.read_text(encoding="utf-8"),
                              "pid=4321\nrequest=3\nresult=PASS\n")
+
+    def test_profile_runner_serves_multiple_requests_until_stop(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            request = Path(directory) / "activation.request"
+            marker = Path(directory) / "activation.status"
+            stop = Path(directory) / "activation.stop"
+            request.write_text("pid=4321\nrequest=1\n", encoding="utf-8")
+            calls: list[int] = []
+            log: list[str] = []
+            first_marker = ""
+
+            def activate(pid: int) -> ActivationResult:
+                nonlocal first_marker
+                calls.append(pid)
+                if len(calls) == 1:
+                    request.write_text(
+                        "pid=4321\nrequest=2\n", encoding="utf-8"
+                    )
+                else:
+                    first_marker = marker.read_text(encoding="utf-8")
+                    stop.touch()
+                return ActivationResult(True, 1, pid, f"frontmost={pid}")
+
+            self.assertTrue(
+                serve_activation_requests(
+                    request,
+                    marker,
+                    stop,
+                    4321,
+                    activate=activate,
+                    sleeper=lambda _delay: None,
+                    emit=log.append,
+                )
+            )
+            self.assertEqual(calls, [4321, 4321])
+            self.assertEqual(
+                first_marker, "pid=4321\nrequest=1\nresult=PASS\n"
+            )
+            self.assertEqual(
+                marker.read_text(encoding="utf-8"),
+                "pid=4321\nrequest=2\nresult=PASS\n",
+            )
+            self.assertTrue(any("request=1" in line for line in log))
+            self.assertTrue(any("request=2" in line for line in log))
 
     def test_handshake_rejects_pid_mismatch_and_missing_requests(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

@@ -37,6 +37,7 @@ class ActivationHandshake:
         marker_path: str | Path,
         *,
         runtime_seconds: float,
+        expected_pid: int | None = None,
         clock: Callable[[], float] = time.monotonic,
         marker_replace: Callable[[str | Path, str | Path], None] = replace,
     ) -> None:
@@ -44,7 +45,7 @@ class ActivationHandshake:
         self.runtime_seconds = runtime_seconds
         self._clock = clock
         self._marker_replace = marker_replace
-        self.app_pid: int | None = None
+        self.app_pid = expected_pid
         self.last_request_number = 0
         self.runtime_deadline: float | None = None
         self._saw_request = False
@@ -261,9 +262,81 @@ def activate_process(
     )
 
 
+def serve_activation_requests(
+    request_path: str | Path,
+    marker_path: str | Path,
+    stop_path: str | Path,
+    expected_pid: int,
+    *,
+    activate: Callable[[int], ActivationResult] = activate_process,
+    sleeper: Callable[[float], None] = time.sleep,
+    poll_interval: float = 0.05,
+    emit: Callable[[str], None] = print,
+) -> bool:
+    """Service each new app request until its owner signals the process exit."""
+    if expected_pid <= 0 or poll_interval <= 0:
+        return False
+    handshake = ActivationHandshake(
+        marker_path,
+        runtime_seconds=1800,
+        expected_pid=expected_pid,
+    )
+    stop = Path(stop_path)
+    while not stop.exists():
+        attempt = handshake.begin(read_activation_request(request_path))
+        if attempt is None:
+            sleeper(poll_interval)
+            continue
+        if attempt.pid_matches:
+            result = activate(attempt.requested_pid)
+        else:
+            result = ActivationResult(
+                False,
+                0,
+                None,
+                "",
+                f"request PID {attempt.requested_pid} did not match "
+                f"child PID {expected_pid}",
+            )
+        marker_error = handshake.complete(attempt, result.ok)
+        emit(
+            f"runner_activation_request={attempt.request_number} "
+            f"pid={attempt.requested_pid} result="
+            f"{'PASS' if attempt.pid_matches and result.ok else 'FAIL'}"
+        )
+        if result.diagnostics:
+            emit(result.diagnostics)
+        if result.error:
+            emit(f"runner_activation_error={result.error}")
+        if marker_error:
+            emit(
+                f"runner_activation_marker_error="
+                f"{marker_error}"
+            )
+            return False
+    return handshake.all_requests_passed
+
+
 def main() -> int:
+    if len(sys.argv) == 6 and sys.argv[1] == "--watch":
+        request_path, marker_path, stop_path = sys.argv[2:5]
+        try:
+            pid = int(sys.argv[5])
+        except ValueError:
+            print(f"invalid process ID: {sys.argv[5]}", file=sys.stderr)
+            return 2
+        return 0 if serve_activation_requests(
+            request_path,
+            marker_path,
+            stop_path,
+            pid,
+        ) else 1
     if len(sys.argv) != 2:
-        print("usage: macos_process_activation.py <pid>", file=sys.stderr)
+        print(
+            "usage: macos_process_activation.py <pid> | "
+            "--watch <request> <marker> <stop> <pid>",
+            file=sys.stderr,
+        )
         return 2
     try:
         pid = int(sys.argv[1])

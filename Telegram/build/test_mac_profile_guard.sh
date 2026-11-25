@@ -2489,17 +2489,13 @@ local auth_home="$1"
 local auth_log="$2"
 local activation_request="$auth_home/runner-external-activation.request"
 local activation_marker="$auth_home/runner-external-activation.status"
+local activation_stop="$auth_home/runner-external-activation.stop"
 local activation_log="$auth_home/runner-external-activation.log"
-local activation_marker_tmp="$activation_marker.tmp"
 local auth_pid
-local request_pid_line=""
-local request_number_line=""
-local requested_pid=""
-local request_number=""
-local request_ready=false
-local activation_result=FAIL
+local activation_pid
 local auth_status=0
-rm -f "$activation_request" "$activation_marker" "$activation_marker_tmp"
+local activation_status=0
+rm -f "$activation_request" "$activation_marker" "$activation_stop"
 env HOME="$auth_home" TMPDIR="$TEST_TMP_BASE" \
 	TDESKTOP_MAC_PROFILE_TEST_HOME="$auth_home" \
 	TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST=1 \
@@ -2510,68 +2506,42 @@ env HOME="$auth_home" TMPDIR="$TEST_TMP_BASE" \
 	"$APP" -noupdate -debug >"$auth_log" 2>&1 &
 auth_pid=$!
 
-for ((attempt = 0; attempt < 4800; ++attempt)); do
-	if [[ -s "$activation_request" ]]; then
-		request_pid_line="$(sed -n '1p' "$activation_request")"
-		request_number_line="$(sed -n '2p' "$activation_request")"
-		if [[ "$request_pid_line" =~ ^pid=([1-9][0-9]*)$ ]]; then
-			requested_pid="${BASH_REMATCH[1]}"
-			if [[ "$request_number_line" =~ ^request=([1-9][0-9]*)$ ]]; then
-				request_number="${BASH_REMATCH[1]}"
-				request_ready=true
-				break
-			fi
+env HOME="${RUNNER_EXTERNAL_ACTIVATION_HOME:-$HOME}" \
+	python3 "$REPO_ROOT/.github/scripts/macos_process_activation.py" \
+		--watch "$activation_request" "$activation_marker" \
+		"$activation_stop" "$auth_pid" >"$activation_log" 2>&1 &
+activation_pid=$!
+while process_alive "$auth_pid"; do
+	if ! process_alive "$activation_pid"; then
+		printf 'runner activation watcher exited while pid=%s was alive.\n' \
+			"$auth_pid" >> "$activation_log"
+		kill -TERM "$auth_pid" 2>/dev/null || true
+		sleep 1
+		if process_alive "$auth_pid"; then
+			kill -KILL "$auth_pid" 2>/dev/null || true
 		fi
-	fi
-	if ! process_alive "$auth_pid"; then
 		break
 	fi
 	sleep 0.05
 done
-
-if [[ "$request_ready" != true ]]; then
-	printf 'runner activation request was not published by pid=%s.\n' \
-		"$auth_pid" > "$activation_log"
-elif [[ "$requested_pid" != "$auth_pid" ]]; then
-	printf 'runner activation request PID mismatch: child=%s request=%s.\n' \
-		"$auth_pid" "$requested_pid" > "$activation_log"
-elif env HOME="${RUNNER_EXTERNAL_ACTIVATION_HOME:-$HOME}" \
-	python3 "$REPO_ROOT/.github/scripts/macos_process_activation.py" \
-		"$requested_pid" > "$activation_log" 2>&1; then
-	activation_result=PASS
-fi
-
-if [[ "$request_ready" == true && "$requested_pid" == "$auth_pid" ]]; then
-	if ! printf 'pid=%s\nrequest=%s\nresult=%s\n' \
-		"$requested_pid" "$request_number" "$activation_result" \
-		> "$activation_marker_tmp" \
-		|| ! mv -f "$activation_marker_tmp" "$activation_marker"; then
-		printf 'runner activation marker could not be published.\n' \
-			>> "$activation_log"
-		activation_result=FAIL
-	fi
-fi
-if [[ "$activation_result" != PASS ]] && process_alive "$auth_pid"; then
-	kill -TERM "$auth_pid" 2>/dev/null || true
-	sleep 1
-	if process_alive "$auth_pid"; then
-		kill -KILL "$auth_pid" 2>/dev/null || true
-	fi
-fi
+: > "$activation_stop"
 if wait "$auth_pid"; then
 	auth_status=0
 else
 	auth_status=$?
 fi
+if wait "$activation_pid"; then
+	activation_status=0
+else
+	activation_status=$?
+fi
 cat "$activation_log"
-if [[ "$request_ready" != true || "$requested_pid" != "$auth_pid" \
-	|| "$activation_result" != PASS || "$auth_status" -ne 0 ]]; then
+if [[ "$auth_status" -ne 0 || "$activation_status" -ne 0 ]]; then
 	cat "$auth_log" >&2
 	echo "authenticated lifecycle runner activation failed." >&2
 	return 1
 fi
-printf 'profile_ipc_runner_activation=PASS pid=%s request=%s\n' \
-	"$requested_pid" "$request_number"
+printf 'profile_ipc_runner_activation=PASS pid=%s\n' "$auth_pid"
 }
 
 run_authenticated_lifecycle_regression() {
