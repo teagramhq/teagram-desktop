@@ -21005,7 +21005,8 @@ RunnerExternalActivationMarkerStateForRegression(const QByteArray &contents,
 	const auto previousRequiredWasSet
 		= qEnvironmentVariableIsSet(kRequiredVariable);
 	const auto previousRequired = qgetenv(kRequiredVariable);
-	const auto previousMarkerWasSet = qEnvironmentVariableIsSet(kMarkerVariable);
+	const auto previousMarkerWasSet
+		= qEnvironmentVariableIsSet(kMarkerVariable);
 	const auto previousMarker = qgetenv(kMarkerVariable);
 	const auto restoreEnvironment = gsl::finally([&] {
 		if (previousRequiredWasSet) {
