@@ -12045,7 +12045,7 @@ constexpr auto kMacOSDisplayLockSchedulerSampleNanoseconds = 1'000'000;
 	if ((offsets.size() < 2U) || (offsets.back() <= offsets.front())
 		|| !Core::UiStallWatchdog::SchedulerTraceCoversDuration(
 			trace, offsets, remainingNanoseconds)
-		|| std::any_of(begin(trace), end(trace), [](QChar state) {
+		|| std::any_of(trace.begin(), trace.end(), [](QChar state) {
 			   return (state != u'W') && (state != u'U');
 		   })) {
 		return 0;
