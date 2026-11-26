@@ -16796,7 +16796,12 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 	auto migrationChatOpened = false;
 	auto migrationOpenPeerMatches = false;
 	auto migrationLinksReady = false;
-	auto migrationStayedOpenDuringNotification = false;
+	auto migrationHistoryUnchangedAfterFlush = false;
+	auto migrationNotificationConsumerEntered = false;
+	auto migrationCallbackReached = false;
+	auto migrationCallbackPeerMatched = false;
+	auto migrationHandlerEntered = false;
+	auto migrationWidgetSwitchedToChannel = false;
 	auto migrationSwitchedToChannel = false;
 	auto migrationWidgetPeerIsChannel = false;
 	auto migrationWidgetStillInstalled = false;
@@ -16807,6 +16812,8 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		if (migrationChatOpened) {
 			migrationOpenPeerMatches
 				= (historyWidget->peer() == migrationChat.get());
+			historyWidget->resetPeerMigrationRegressionStagesForRegressionTest(
+				migrationChat.get());
 			Data::ApplyMigration(migrationChat,
 								 not_null<ChannelData *>(migrationChannel));
 			migrationLinksReady
@@ -16817,7 +16824,7 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 				Data::PeerUpdate::Flag::Migration
 					| Data::PeerUpdate::Flag::FullInfo);
 			session.changes().sendNotifications();
-			migrationStayedOpenDuringNotification
+			migrationHistoryUnchangedAfterFlush
 				= (historyWidget->history() == migrationHistory.get());
 			migrationSwitchedToChannel = WaitForRegressionCondition(
 				[&] {
@@ -16826,6 +16833,15 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 						   && history && (history->peer == migrationChannel);
 				},
 				1500);
+			const auto stages
+				= historyWidget
+					  ->peerMigrationRegressionStagesForRegressionTest();
+			migrationNotificationConsumerEntered
+				= stages.notificationConsumerEntered;
+			migrationCallbackReached = stages.callbackReached;
+			migrationCallbackPeerMatched = stages.callbackPeerMatched;
+			migrationHandlerEntered = stages.handlerEntered;
+			migrationWidgetSwitchedToChannel = stages.widgetSwitchedToChannel;
 			migrationWidgetPeerIsChannel
 				= (historyWidget->peer() == migrationChannel);
 			migrationWidgetStillInstalled
@@ -16848,19 +16864,28 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 	}
 	result.openPeerMigrationRebind
 		= migrationChatOpened && migrationOpenPeerMatches && migrationLinksReady
-		  && migrationStayedOpenDuringNotification && migrationSwitchedToChannel
+		  && migrationHistoryUnchangedAfterFlush
+		  && migrationNotificationConsumerEntered && migrationCallbackReached
+		  && migrationCallbackPeerMatched && migrationHandlerEntered
+		  && migrationWidgetSwitchedToChannel && migrationSwitchedToChannel
 		  && migrationWidgetPeerIsChannel && migrationWidgetStillInstalled
 		  && migrationRestoredHistory;
 	std::fprintf(stderr,
 				 "Open peer migration rebind: opened=%d peer_matches=%d "
-				 "links_ready=%d stayed_open=%d switched_to_channel=%d "
+				 "links_ready=%d history_unchanged_after_flush=%d "
+				 "notification_consumer=%d callback_reached=%d "
+				 "callback_peer_matches=%d handler_entered=%d "
+				 "widget_switched_to_channel=%d switched_to_channel=%d "
 				 "widget_peer_channel=%d widget_installed=%d transition=%d "
 				 "restored=%d passed=%d.\n",
 				 migrationChatOpened, migrationOpenPeerMatches,
-				 migrationLinksReady, migrationStayedOpenDuringNotification,
-				 migrationSwitchedToChannel, migrationWidgetPeerIsChannel,
-				 migrationWidgetStillInstalled, migrationTransitionFinished,
-				 migrationRestoredHistory, result.openPeerMigrationRebind);
+				 migrationLinksReady, migrationHistoryUnchangedAfterFlush,
+				 migrationNotificationConsumerEntered, migrationCallbackReached,
+				 migrationCallbackPeerMatched, migrationHandlerEntered,
+				 migrationWidgetSwitchedToChannel, migrationSwitchedToChannel,
+				 migrationWidgetPeerIsChannel, migrationWidgetStillInstalled,
+				 migrationTransitionFinished, migrationRestoredHistory,
+				 result.openPeerMigrationRebind);
 	std::fprintf(
 		stderr,
 		"Chat switch translation bar reuse: first_bound=%d second_bound=%d "

@@ -304,6 +304,22 @@ public:
 		qint64 mainThreadCpuNanoseconds = -1;
 		qint64 processCpuNanoseconds = -1;
 	};
+	struct PeerMigrationRegressionStages final {
+		bool notificationConsumerEntered = false;
+		bool callbackReached = false;
+		bool callbackPeerMatched = false;
+		bool handlerEntered = false;
+		bool widgetSwitchedToChannel = false;
+	};
+
+	void resetPeerMigrationRegressionStagesForRegressionTest(PeerData *peer) {
+		_peerMigrationRegressionTargetForRegressionTest = peer;
+		_peerMigrationRegressionStagesForRegressionTest = {};
+	}
+	[[nodiscard]] PeerMigrationRegressionStages
+	peerMigrationRegressionStagesForRegressionTest() const {
+		return _peerMigrationRegressionStagesForRegressionTest;
+	}
 
 	void setDraftTextForRegressionTest(const QString &text);
 	[[nodiscard]] Ui::InputField *fieldForRegressionTest() const;
@@ -917,6 +933,11 @@ private:
 	bool _pinnedBarHasCustomButton = false;
 
 	rpl::lifetime _peerUpdatesLifetime;
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+	PeerData *_peerMigrationRegressionTargetForRegressionTest = nullptr;
+	PeerMigrationRegressionStages
+		_peerMigrationRegressionStagesForRegressionTest;
+#endif
 	rpl::lifetime _groupCallBarContentLifetime;
 	std::unique_ptr<Ui::GroupCallBar> _groupCallBar;
 	int _groupCallBarHeight = 0;

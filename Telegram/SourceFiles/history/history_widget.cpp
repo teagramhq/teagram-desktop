@@ -3410,7 +3410,26 @@ void HistoryWidget::subscribePeerUpdates() {
 				}
 				if (flags & PeerUpdateFlag::Migration) {
 					const auto peer = _peer;
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+					if (peer
+						== _peerMigrationRegressionTargetForRegressionTest) {
+						_peerMigrationRegressionStagesForRegressionTest
+							.notificationConsumerEntered = true;
+					}
+#endif
 					QTimer::singleShot(0, this, [=] {
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+						if (peer
+							== _peerMigrationRegressionTargetForRegressionTest) {
+							if (!_peerMigrationRegressionStagesForRegressionTest
+									 .callbackReached) {
+								_peerMigrationRegressionStagesForRegressionTest
+									.callbackPeerMatched = (_peer == peer);
+							}
+							_peerMigrationRegressionStagesForRegressionTest
+								.callbackReached = true;
+						}
+#endif
 						if (_peer == peer) {
 							handlePeerMigration();
 						}
@@ -9545,6 +9564,13 @@ void HistoryWidget::keyPressEvent(QKeyEvent *e) {
 }
 
 void HistoryWidget::handlePeerMigration() {
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+	const auto peerIsRegressionTarget
+		= (_peer == _peerMigrationRegressionTargetForRegressionTest);
+	if (peerIsRegressionTarget) {
+		_peerMigrationRegressionStagesForRegressionTest.handlerEntered = true;
+	}
+#endif
 	const auto current = _peer->migrateToOrMe();
 	const auto chat = current->migrateFrom();
 	if (!chat) {
@@ -9557,6 +9583,12 @@ void HistoryWidget::handlePeerMigration() {
 		showHistory(
 			channel->id,
 			(_showAtMsgId > 0) ? (-_showAtMsgId) : _showAtMsgId);
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+		if (peerIsRegressionTarget) {
+			_peerMigrationRegressionStagesForRegressionTest
+				.widgetSwitchedToChannel = (_peer == channel);
+		}
+#endif
 		channel->session().api().chatParticipants().requestCountDelayed(
 			channel);
 	} else {
