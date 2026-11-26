@@ -12105,6 +12105,63 @@ constexpr auto kMacOSDisplayLockSchedulerSampleNanoseconds = 1'000'000;
 	return bestOverlapNanoseconds;
 }
 
+[[nodiscard]] bool MacOSPingAcknowledgementEvidenceFinalizedForInterval(
+	const MainThreadWorkInterval &interval,
+	const std::vector<Core::UiStallWatchdog::PingAcknowledgementEvidence>
+		&acknowledgements) {
+	if ((interval.startedAtSteadyNanoseconds <= 0)
+		|| (interval.durationNanoseconds < 0)
+		|| (interval.durationNanoseconds
+			> std::numeric_limits<qint64>::max()
+				  - interval.startedAtSteadyNanoseconds)) {
+		return false;
+	}
+	const auto endNanoseconds
+		= interval.startedAtSteadyNanoseconds + interval.durationNanoseconds;
+	const Core::UiStallWatchdog::PingAcknowledgementEvidence
+		*latestAcknowledgement = nullptr;
+	for (const auto &acknowledgement : acknowledgements) {
+		const auto postedAtNanoseconds
+			= acknowledgement.postedAtSteadyNanoseconds;
+		const auto acknowledgedAtNanoseconds
+			= acknowledgement.acknowledgedAtNanoseconds;
+		if ((postedAtNanoseconds <= 0)
+			|| (postedAtNanoseconds > endNanoseconds)) {
+			continue;
+		}
+		if ((acknowledgedAtNanoseconds <= 0)
+			|| (acknowledgedAtNanoseconds < postedAtNanoseconds)) {
+			return false;
+		}
+		if (!latestAcknowledgement
+			|| (postedAtNanoseconds
+				> latestAcknowledgement->postedAtSteadyNanoseconds)
+			|| ((postedAtNanoseconds
+				 == latestAcknowledgement->postedAtSteadyNanoseconds)
+				&& (acknowledgement.sequence
+					> latestAcknowledgement->sequence))) {
+			latestAcknowledgement = &acknowledgement;
+		}
+	}
+	if (!latestAcknowledgement
+		|| !latestAcknowledgement->schedulerTraceComplete) {
+		return false;
+	}
+	const auto latestAcknowledgedAtNanoseconds
+		= latestAcknowledgement->acknowledgedAtNanoseconds;
+	if (latestAcknowledgedAtNanoseconds >= endNanoseconds) {
+		return true;
+	}
+	const auto latestPingIntervalNanoseconds
+		= latestAcknowledgement->pingIntervalNanoseconds;
+	return (latestPingIntervalNanoseconds > 0)
+		   && (latestAcknowledgedAtNanoseconds
+			   <= std::numeric_limits<qint64>::max()
+					  - latestPingIntervalNanoseconds)
+		   && (latestAcknowledgedAtNanoseconds + latestPingIntervalNanoseconds
+			   > endNanoseconds);
+}
+
 [[nodiscard]] bool MacOSDisplayLockEvidenceFinalizedForInterval(
 	const MainThreadWorkInterval &interval,
 	const std::vector<Core::UiStallWatchdog::PingAcknowledgementEvidence>
@@ -12119,7 +12176,6 @@ constexpr auto kMacOSDisplayLockSchedulerSampleNanoseconds = 1'000'000;
 	}
 	const auto startNanoseconds = interval.startedAtSteadyNanoseconds;
 	const auto endNanoseconds = startNanoseconds + interval.durationNanoseconds;
-	auto acknowledgementReachedWindowEnd = false;
 	for (const auto &acknowledgement : acknowledgements) {
 		const auto postedAtNanoseconds
 			= acknowledgement.postedAtSteadyNanoseconds;
@@ -12127,14 +12183,12 @@ constexpr auto kMacOSDisplayLockSchedulerSampleNanoseconds = 1'000'000;
 			= acknowledgement.acknowledgedAtNanoseconds;
 		if ((postedAtNanoseconds <= 0) || (acknowledgedAtNanoseconds <= 0)
 			|| (acknowledgedAtNanoseconds < startNanoseconds)
+			|| (acknowledgedAtNanoseconds < postedAtNanoseconds)
 			|| (postedAtNanoseconds > endNanoseconds)) {
 			continue;
 		}
 		if (!acknowledgement.schedulerTraceComplete) {
 			return false;
-		}
-		if (acknowledgedAtNanoseconds >= endNanoseconds) {
-			acknowledgementReachedWindowEnd = true;
 		}
 		if (acknowledgement.responseNanoseconds
 			< kMacOSDisplayLockEvidenceSettleNanoseconds) {
@@ -12150,7 +12204,8 @@ constexpr auto kMacOSDisplayLockSchedulerSampleNanoseconds = 1'000'000;
 			return false;
 		}
 	}
-	return acknowledgementReachedWindowEnd;
+	return MacOSPingAcknowledgementEvidenceFinalizedForInterval(
+		interval, acknowledgements);
 }
 
 [[nodiscard]] std::optional<std::vector<qint64>>
@@ -12284,7 +12339,6 @@ MarkSchedulerTraceCapturePending(SchedulerTraceWindow samples) {
 	}
 	const auto start = interval.startedAtSteadyNanoseconds;
 	const auto windowEnd = start + interval.durationNanoseconds;
-	auto acknowledgementReachedWindowEnd = false;
 	auto capturePending = false;
 	struct TraceSample final {
 		qint64 offset = 0;
@@ -12299,8 +12353,6 @@ MarkSchedulerTraceCapturePending(SchedulerTraceWindow samples) {
 			|| (postedAt > windowEnd)) {
 			continue;
 		}
-		acknowledgementReachedWindowEnd
-			= acknowledgementReachedWindowEnd || (acknowledgedAt >= windowEnd);
 		capturePending
 			= capturePending || !acknowledgement.schedulerTraceComplete;
 		if (acknowledgement.schedulerTrace.isEmpty()
@@ -12349,7 +12401,10 @@ MarkSchedulerTraceCapturePending(SchedulerTraceWindow samples) {
 		result.sampleMainThreadCpuNanoseconds.push_back(
 			sample.mainThreadCpuNanoseconds);
 	}
-	result.capturePending = capturePending || !acknowledgementReachedWindowEnd;
+	result.capturePending
+		= capturePending
+		  || !MacOSPingAcknowledgementEvidenceFinalizedForInterval(
+			  interval, acknowledgements);
 	return result;
 }
 
@@ -13773,13 +13828,15 @@ void AccumulateMainThreadWorkEstimate(qint64 &aggregateNanoseconds,
 	const auto acknowledgementBeforeNextPing
 		= Core::UiStallWatchdog::PingAcknowledgementEvidence{
 			.acknowledgedAtNanoseconds
-			= windowEndingBetweenPings.startedAtSteadyNanoseconds + 30'000'000,
-			.responseNanoseconds = 30'000'000,
+			= windowEndingBetweenPings.startedAtSteadyNanoseconds + 59'000'000,
+			.responseNanoseconds = 2'000'000,
+			.pingIntervalNanoseconds = 2'000'000,
+			.sequence = 7,
 			.postedAtSteadyNanoseconds
-			= windowEndingBetweenPings.startedAtSteadyNanoseconds,
+			= windowEndingBetweenPings.startedAtSteadyNanoseconds + 57'000'000,
 			.schedulerTraceComplete = true,
 	};
-	const auto acknowledgementBeforeNextPingCoversWindowEnd
+	const auto acknowledgementBeforeNextPingFinalized
 		= MacOSDisplayLockEvidenceFinalizedForInterval(
 			windowEndingBetweenPings,
 			std::vector<Core::UiStallWatchdog::PingAcknowledgementEvidence>{
@@ -13789,6 +13846,28 @@ void AccumulateMainThreadWorkEstimate(qint64 &aggregateNanoseconds,
 		= MacOSChatSwitchEvidenceFinalizedForInterval(
 			windowEndingBetweenPings, windowEndingBetweenPingsEstimate,
 			windowEndingBetweenPingsSchedulerSamples,
+			std::vector<Core::UiStallWatchdog::PingAcknowledgementEvidence>{
+				acknowledgementBeforeNextPing},
+			{}, kMaxChatSwitchNanoseconds);
+	const auto untracedWindowEndingBetweenPingsSchedulerSamples
+		= SchedulerTraceForInterval(
+			windowEndingBetweenPings,
+			std::vector<Core::UiStallWatchdog::PingAcknowledgementEvidence>{
+				acknowledgementBeforeNextPing});
+	const auto untracedWindowEndingBetweenPingsEstimate
+		= EstimateMainThreadWork(
+			windowEndingBetweenPings.mainThreadWorkNanoseconds,
+			windowEndingBetweenPings.durationNanoseconds,
+			untracedWindowEndingBetweenPingsSchedulerSamples);
+	const auto untracedWindowEndingBetweenPingsAssessment
+		= AssessMainThreadWorkBudget(
+			untracedWindowEndingBetweenPingsEstimate,
+			windowEndingBetweenPings.mainThreadWorkNanoseconds,
+			kMaxChatSwitchNanoseconds);
+	const auto untracedWindowEndingBetweenPingsEvidenceIsFinalized
+		= MacOSChatSwitchEvidenceFinalizedForInterval(
+			windowEndingBetweenPings, untracedWindowEndingBetweenPingsEstimate,
+			untracedWindowEndingBetweenPingsSchedulerSamples,
 			std::vector<Core::UiStallWatchdog::PingAcknowledgementEvidence>{
 				acknowledgementBeforeNextPing},
 			{}, kMaxChatSwitchNanoseconds);
@@ -14644,8 +14723,18 @@ void AccumulateMainThreadWorkEstimate(qint64 &aggregateNanoseconds,
 		   && (windowEndingBetweenPingsEstimate.blockedNanoseconds == 0)
 		   && windowEndingBetweenPingsAssessment.schedulerEvidenceAvailable
 		   && windowEndingBetweenPingsAssessment.withinBudget
-		   && !acknowledgementBeforeNextPingCoversWindowEnd
+		   && acknowledgementBeforeNextPingFinalized
 		   && windowEndingBetweenPingsEvidenceIsFinalized
+		   && !untracedWindowEndingBetweenPingsSchedulerSamples.capturePending
+		   && !untracedWindowEndingBetweenPingsAssessment
+				   .schedulerEvidenceAvailable
+		   && (windowEndingBetweenPings.durationNanoseconds
+			   >= kMaxChatSwitchNanoseconds)
+		   && !MainThreadWorkBudgetEvidenceWithinBudget(
+			   untracedWindowEndingBetweenPingsAssessment,
+			   windowEndingBetweenPings.durationNanoseconds,
+			   kMaxChatSwitchNanoseconds)
+		   && untracedWindowEndingBetweenPingsEvidenceIsFinalized
 		   && firstDisplayLockOverrunWithinBudget
 		   && !secondDisplayLockOverrunWithinBudget
 		   && !repeatedDisplayLockOverruns.WithinBudget()
