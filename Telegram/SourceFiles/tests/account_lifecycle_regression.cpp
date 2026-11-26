@@ -16787,20 +16787,32 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 			  ? data.history(not_null<const PeerData *>(migrationChannel)).get()
 			  : nullptr;
 	if (migrationTargetHistory) {
+		migrationTargetHistory->getReadyFor(ShowAtUnreadMsgId);
 		migrationTargetHistory->getReadyFor(ShowAtTheEndMsgId);
 		migrationTargetHistory->markLoadedAtTop();
+		migrationTargetHistory->markLoadedAtBottom();
 	}
 	session.changes().sendNotifications();
 	QCoreApplication::processEvents();
 	auto migrationChatOpened = false;
+	auto migrationOpenPeerMatches = false;
+	auto migrationLinksReady = false;
 	auto migrationStayedOpenDuringNotification = false;
 	auto migrationSwitchedToChannel = false;
+	auto migrationWidgetPeerIsChannel = false;
+	auto migrationWidgetStillInstalled = false;
+	auto migrationTransitionFinished = false;
 	auto migrationRestoredHistory = false;
 	if (migrationChannel && migrationTargetHistory) {
 		migrationChatOpened = showHistoryForTranslateBar(migrationHistory);
 		if (migrationChatOpened) {
+			migrationOpenPeerMatches
+				= (historyWidget->peer() == migrationChat.get());
 			Data::ApplyMigration(migrationChat,
 								 not_null<ChannelData *>(migrationChannel));
+			migrationLinksReady
+				= (migrationChat->migrateTo() == migrationChannel)
+				  && (migrationChannel->migrateFrom() == migrationChat.get());
 			session.changes().peerUpdated(
 				not_null<PeerData *>(migrationChat.get()),
 				Data::PeerUpdate::Flag::Migration
@@ -16810,15 +16822,18 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 				= (historyWidget->history() == migrationHistory.get());
 			migrationSwitchedToChannel = WaitForRegressionCondition(
 				[&] {
-					return (controller->content()
-								->historyWidgetForRegressionTest()
-							== historyWidget)
-						   && (historyWidget->history()
-							   == migrationTargetHistory)
-						   && historyWidget
-								  ->historyTransitionFinishedForRegressionTest();
+					const auto history = historyWidget->history();
+					return (historyWidget->peer() == migrationChannel)
+						   && history && (history->peer == migrationChannel);
 				},
 				1500);
+			migrationWidgetPeerIsChannel
+				= (historyWidget->peer() == migrationChannel);
+			migrationWidgetStillInstalled
+				= (controller->content()->historyWidgetForRegressionTest()
+				   == historyWidget);
+			migrationTransitionFinished
+				= historyWidget->historyTransitionFinishedForRegressionTest();
 		}
 	}
 	if (historyBeforeMigration) {
@@ -16833,14 +16848,20 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 			1500);
 	}
 	result.openPeerMigrationRebind
-		= migrationChatOpened && migrationStayedOpenDuringNotification
-		  && migrationSwitchedToChannel && migrationRestoredHistory;
+		= migrationChatOpened && migrationOpenPeerMatches && migrationLinksReady
+		  && migrationStayedOpenDuringNotification && migrationSwitchedToChannel
+		  && migrationWidgetPeerIsChannel && migrationWidgetStillInstalled
+		  && migrationRestoredHistory;
 	std::fprintf(stderr,
-				 "Open peer migration rebind: opened=%d stayed_open=%d "
-				 "switched_to_channel=%d restored=%d passed=%d.\n",
-				 migrationChatOpened, migrationStayedOpenDuringNotification,
-				 migrationSwitchedToChannel, migrationRestoredHistory,
-				 result.openPeerMigrationRebind);
+				 "Open peer migration rebind: opened=%d peer_matches=%d "
+				 "links_ready=%d stayed_open=%d switched_to_channel=%d "
+				 "widget_peer_channel=%d widget_installed=%d transition=%d "
+				 "restored=%d passed=%d.\n",
+				 migrationChatOpened, migrationOpenPeerMatches,
+				 migrationLinksReady, migrationStayedOpenDuringNotification,
+				 migrationSwitchedToChannel, migrationWidgetPeerIsChannel,
+				 migrationWidgetStillInstalled, migrationTransitionFinished,
+				 migrationRestoredHistory, result.openPeerMigrationRebind);
 	std::fprintf(
 		stderr,
 		"Chat switch translation bar reuse: first_bound=%d second_bound=%d "
