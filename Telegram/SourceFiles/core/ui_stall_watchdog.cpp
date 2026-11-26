@@ -975,8 +975,7 @@ void UiStallWatchdog::run() {
 			const auto evidenceLock = std::lock_guard(StallEvidenceMutex);
 			for (auto i = PingAcknowledgementHistory.rbegin();
 				 i != PingAcknowledgementHistory.rend(); ++i) {
-				if ((i->watchdogId == _watchdogId)
-					&& (i->sequence == current)
+				if ((i->watchdogId == _watchdogId) && (i->sequence == current)
 					&& (i->postedAtSteadyNanoseconds
 						== std::chrono::duration_cast<std::chrono::nanoseconds>(
 							   postedAt.time_since_epoch())
@@ -1045,7 +1044,7 @@ void UiStallWatchdog::run() {
 						if ((i->watchdogId == _watchdogId)
 							&& (i->sequence == current)
 							&& (i->postedAtSteadyNanoseconds
-							== postedAtSteadyNanoseconds)) {
+								== postedAtSteadyNanoseconds)) {
 							i->stack = stack;
 							i->stackFinalized = true;
 							break;

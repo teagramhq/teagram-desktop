@@ -952,14 +952,15 @@ HistoryWidget::HistoryWidget(
 	}, lifetime());
 
 	using PeerUpdateFlag = Data::PeerUpdate::Flag;
-	session().changes().peerUpdates(
-		not_null<PeerData *>(session().user()),
-		PeerUpdateFlag::GiftSettings
-	) | rpl::on_next([=] {
-		refreshSendGiftToggle();
-		updateControlsVisibility();
-		updateControlsGeometry();
-	}, lifetime());
+	session().changes().peerUpdates(not_null<PeerData *>(session().user()),
+									PeerUpdateFlag::GiftSettings)
+		| rpl::on_next(
+			[=] {
+				refreshSendGiftToggle();
+				updateControlsVisibility();
+				updateControlsGeometry();
+			},
+			lifetime());
 
 	using Type = Data::DefaultNotify;
 	rpl::merge(
@@ -3378,119 +3379,115 @@ void HistoryWidget::subscribePeerUpdates() {
 	Expects(_peer != nullptr);
 
 	using PeerUpdateFlag = Data::PeerUpdate::Flag;
-	auto flags = PeerUpdateFlag::Rights
-		| PeerUpdateFlag::Migration
-		| PeerUpdateFlag::UnavailableReason
-		| PeerUpdateFlag::IsBlocked
-		| PeerUpdateFlag::Admins
-		| PeerUpdateFlag::Members
-		| PeerUpdateFlag::OnlineStatus
-		| PeerUpdateFlag::Notifications
-		| PeerUpdateFlag::ChannelAmIn
-		| PeerUpdateFlag::DiscussionLink
-		| PeerUpdateFlag::Slowmode
-		| PeerUpdateFlag::BotStartToken
-		| PeerUpdateFlag::MessagesTTL
-		| PeerUpdateFlag::ChatThemeToken
-		| PeerUpdateFlag::FullInfo
-		| PeerUpdateFlag::ManagedBot
-		| PeerUpdateFlag::StarsPerMessage;
+	auto flags = PeerUpdateFlag::Rights | PeerUpdateFlag::Migration
+				 | PeerUpdateFlag::UnavailableReason | PeerUpdateFlag::IsBlocked
+				 | PeerUpdateFlag::Admins | PeerUpdateFlag::Members
+				 | PeerUpdateFlag::OnlineStatus | PeerUpdateFlag::Notifications
+				 | PeerUpdateFlag::ChannelAmIn | PeerUpdateFlag::DiscussionLink
+				 | PeerUpdateFlag::Slowmode | PeerUpdateFlag::BotStartToken
+				 | PeerUpdateFlag::MessagesTTL | PeerUpdateFlag::ChatThemeToken
+				 | PeerUpdateFlag::FullInfo | PeerUpdateFlag::ManagedBot
+				 | PeerUpdateFlag::StarsPerMessage;
 	if (_peer != session().user()) {
 		flags |= PeerUpdateFlag::GiftSettings;
 	}
-	session().changes().peerUpdates(not_null(_peer), flags
-	) | rpl::on_next([=](const Data::PeerUpdate &update) {
-		const auto flags = update.flags;
-		if (flags & PeerUpdateFlag::Rights) {
-			updateFieldPlaceholder();
-			updateSendButtonType();
-			_preview->checkNow(false);
+	session().changes().peerUpdates(not_null(_peer), flags)
+		| rpl::on_next(
+			[=](const Data::PeerUpdate &update) {
+				const auto flags = update.flags;
+				if (flags & PeerUpdateFlag::Rights) {
+					updateFieldPlaceholder();
+					updateSendButtonType();
+					_preview->checkNow(false);
 
-			const auto was = (_sendAs != nullptr);
-			refreshSendAsToggle();
-			if (was != (_sendAs != nullptr)) {
-				updateControlsVisibility();
-				updateControlsGeometry();
-				orderWidgets();
-			}
-		}
-		if (flags & PeerUpdateFlag::Migration) {
-			handlePeerMigration();
-		}
-		if (flags & PeerUpdateFlag::Notifications) {
-			updateNotifyControls();
-		}
-		if (flags & PeerUpdateFlag::UnavailableReason) {
-			const auto unavailable = _peer->computeUnavailableReason();
-			if (!unavailable.isEmpty()) {
-				const auto account = not_null(&_peer->account());
-				closeCurrent();
-				if (const auto primary = Core::App().windowFor(account)) {
-					primary->showToast(unavailable);
-				}
-				return;
-			}
-		}
-		if (flags & PeerUpdateFlag::StarsPerMessage) {
-			updateFieldPlaceholder();
-			updateSendButtonType();
-		}
-		if (flags & PeerUpdateFlag::GiftSettings) {
-			refreshSendGiftToggle();
-		}
-		if (flags & (PeerUpdateFlag::BotStartToken
-			| PeerUpdateFlag::GiftSettings)) {
-			updateControlsVisibility();
-			updateControlsGeometry();
-		}
-		if (flags & PeerUpdateFlag::Slowmode) {
-			updateSendButtonType();
-		}
-		if ((flags & PeerUpdateFlag::ManagedBot) && _list) {
-			_list->refreshAboutView();
-			_list->updateBotInfo();
-		}
-		if (flags & (PeerUpdateFlag::IsBlocked
-			| PeerUpdateFlag::Admins
-			| PeerUpdateFlag::Members
-			| PeerUpdateFlag::OnlineStatus
-			| PeerUpdateFlag::Rights
-			| PeerUpdateFlag::ChannelAmIn
-			| PeerUpdateFlag::DiscussionLink)) {
-			handlePeerUpdate();
-		}
-		if (flags & PeerUpdateFlag::MessagesTTL) {
-			checkMessagesTTL();
-		}
-		if ((flags & PeerUpdateFlag::ChatThemeToken) && _list) {
-			const auto emoji = _peer->themeToken();
-			if (Data::CloudThemes::TestingColors() && !emoji.isEmpty()) {
-				_peer->owner().cloudThemes().themeForTokenValue(
-					emoji
-				) | rpl::filter_optional(
-				) | rpl::take(
-					1
-				) | rpl::on_next([=](const Data::CloudTheme &theme) {
-					const auto &themes = _peer->owner().cloudThemes();
-					const auto text = themes.prepareTestingLink(theme);
-					if (!text.isEmpty()) {
-						_field->setText(text);
+					const auto was = (_sendAs != nullptr);
+					refreshSendAsToggle();
+					if (was != (_sendAs != nullptr)) {
+						updateControlsVisibility();
+						updateControlsGeometry();
+						orderWidgets();
 					}
-				}, _list->lifetime());
-			}
-		}
-		if (flags & PeerUpdateFlag::FullInfo) {
-			fullInfoUpdated();
-			updateSendButtonType();
-			if (_peer->starsPerMessageChecked()) {
-				session().credits().load();
-			} else if (const auto channel = _peer->asChannel()) {
-				if (channel->allowedReactions().paidEnabled) {
-					session().credits().load();
 				}
-			}
-		}
-	}, _peerUpdatesLifetime);
+				if (flags & PeerUpdateFlag::Migration) {
+					handlePeerMigration();
+				}
+				if (flags & PeerUpdateFlag::Notifications) {
+					updateNotifyControls();
+				}
+				if (flags & PeerUpdateFlag::UnavailableReason) {
+					const auto unavailable = _peer->computeUnavailableReason();
+					if (!unavailable.isEmpty()) {
+						const auto account = not_null(&_peer->account());
+						closeCurrent();
+						if (const auto primary
+							= Core::App().windowFor(account)) {
+							primary->showToast(unavailable);
+						}
+						return;
+					}
+				}
+				if (flags & PeerUpdateFlag::StarsPerMessage) {
+					updateFieldPlaceholder();
+					updateSendButtonType();
+				}
+				if (flags & PeerUpdateFlag::GiftSettings) {
+					refreshSendGiftToggle();
+				}
+				if (flags
+					& (PeerUpdateFlag::BotStartToken
+					   | PeerUpdateFlag::GiftSettings)) {
+					updateControlsVisibility();
+					updateControlsGeometry();
+				}
+				if (flags & PeerUpdateFlag::Slowmode) {
+					updateSendButtonType();
+				}
+				if ((flags & PeerUpdateFlag::ManagedBot) && _list) {
+					_list->refreshAboutView();
+					_list->updateBotInfo();
+				}
+				if (flags
+					& (PeerUpdateFlag::IsBlocked | PeerUpdateFlag::Admins
+					   | PeerUpdateFlag::Members | PeerUpdateFlag::OnlineStatus
+					   | PeerUpdateFlag::Rights | PeerUpdateFlag::ChannelAmIn
+					   | PeerUpdateFlag::DiscussionLink)) {
+					handlePeerUpdate();
+				}
+				if (flags & PeerUpdateFlag::MessagesTTL) {
+					checkMessagesTTL();
+				}
+				if ((flags & PeerUpdateFlag::ChatThemeToken) && _list) {
+					const auto emoji = _peer->themeToken();
+					if (Data::CloudThemes::TestingColors()
+						&& !emoji.isEmpty()) {
+						_peer->owner().cloudThemes().themeForTokenValue(emoji)
+							| rpl::filter_optional() | rpl::take(1)
+							| rpl::on_next(
+								[=](const Data::CloudTheme &theme) {
+									const auto &themes
+										= _peer->owner().cloudThemes();
+									const auto text
+										= themes.prepareTestingLink(theme);
+									if (!text.isEmpty()) {
+										_field->setText(text);
+									}
+								},
+								_list->lifetime());
+					}
+				}
+				if (flags & PeerUpdateFlag::FullInfo) {
+					fullInfoUpdated();
+					updateSendButtonType();
+					if (_peer->starsPerMessageChecked()) {
+						session().credits().load();
+					} else if (const auto channel = _peer->asChannel()) {
+						if (channel->allowedReactions().paidEnabled) {
+							session().credits().load();
+						}
+					}
+				}
+			},
+			_peerUpdatesLifetime);
 }
 
 void HistoryWidget::setupPreview() {

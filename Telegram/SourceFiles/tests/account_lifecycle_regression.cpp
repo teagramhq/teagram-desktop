@@ -12058,7 +12058,7 @@ IsMacOSDisplayLockStall(const Core::UiStallWatchdog::StallEvidence &evidence) {
 	if ((latestPingIntervalNanoseconds > 0)
 		&& (latestAcknowledgedAtNanoseconds
 			<= std::numeric_limits<qint64>::max()
-				  - latestPingIntervalNanoseconds)
+				   - latestPingIntervalNanoseconds)
 		&& (latestAcknowledgedAtNanoseconds + latestPingIntervalNanoseconds
 			> endNanoseconds)) {
 		return true;
@@ -13390,12 +13390,12 @@ void AccumulateMainThreadWorkEstimate(qint64 &aggregateNanoseconds,
 	};
 	const auto displayLockAssessment = AssessMainThreadWorkBudget(
 		displayLockFallbackEstimate,
-		displayLockWindow.mainThreadWorkNanoseconds,
-		kMaxChatSwitchNanoseconds);
+		displayLockWindow.mainThreadWorkNanoseconds, kMaxChatSwitchNanoseconds);
 	auto verifiedDisplayLockRun = MainThreadWorkBudgetRun();
 	const auto verifiedDisplayLockWithinBudget = verifiedDisplayLockRun.Observe(
 		displayLockAssessment, displayLockWindow.durationNanoseconds,
-		kMaxChatSwitchNanoseconds, displayLockWindow.startedAtSteadyNanoseconds);
+		kMaxChatSwitchNanoseconds,
+		displayLockWindow.startedAtSteadyNanoseconds);
 	const auto recordedDisplayLockWindow = MainThreadWorkInterval{
 		.startedAt = displayLockWindow.startedAt,
 		.durationNanoseconds = 77'931'083,
@@ -13457,7 +13457,7 @@ void AccumulateMainThreadWorkEstimate(qint64 &aggregateNanoseconds,
 		recordedDisplayLockWindow.startedAtSteadyNanoseconds);
 	const auto mixedWaitDisplayLockWindow = MainThreadWorkInterval{
 		.startedAt = QDateTime::fromString(u"2026-11-25T00:00:04.000"_q,
-											   Qt::ISODateWithMs),
+										   Qt::ISODateWithMs),
 		.durationNanoseconds = 85'000'000,
 		.mainThreadWorkNanoseconds = 6'000'000,
 		.startedAtSteadyNanoseconds = 4'000'000'000,
@@ -13477,8 +13477,8 @@ void AccumulateMainThreadWorkEstimate(qint64 &aggregateNanoseconds,
 	auto mixedWaitSchedulerSamples = SchedulerTraceWindow();
 	for (auto offset = qint64(0); offset <= 84'000'000; offset += 2'000'000) {
 		mixedWaitSchedulerSamples.sampleOffsetsNanoseconds.push_back(offset);
-		mixedWaitSchedulerSamples.trace.append(
-			(offset < 58'000'000) ? u'W' : u'U');
+		mixedWaitSchedulerSamples.trace.append((offset < 58'000'000) ? u'W'
+																	 : u'U');
 	}
 	for (auto i = std::size_t(0);
 		 i != mixedWaitSchedulerSamples.sampleOffsetsNanoseconds.size(); ++i) {
@@ -13538,11 +13538,12 @@ void AccumulateMainThreadWorkEstimate(qint64 &aggregateNanoseconds,
 		excessiveDisplayLockWindow.mainThreadWorkNanoseconds,
 		kMaxChatSwitchNanoseconds);
 	auto excessiveDisplayLockRun = MainThreadWorkBudgetRun();
-	const auto excessiveDisplayLockWithinBudget = excessiveDisplayLockRun.Observe(
-		excessiveDisplayLockAssessment,
-		excessiveDisplayLockWindow.durationNanoseconds,
-		kMaxChatSwitchNanoseconds,
-		excessiveDisplayLockWindow.startedAtSteadyNanoseconds);
+	const auto excessiveDisplayLockWithinBudget
+		= excessiveDisplayLockRun.Observe(
+			excessiveDisplayLockAssessment,
+			excessiveDisplayLockWindow.durationNanoseconds,
+			kMaxChatSwitchNanoseconds,
+			excessiveDisplayLockWindow.startedAtSteadyNanoseconds);
 	const auto windowEndingBetweenPings = MainThreadWorkInterval{
 		.durationNanoseconds = 60'000'000,
 		.mainThreadWorkNanoseconds = 21'272'000,
@@ -13599,8 +13600,7 @@ void AccumulateMainThreadWorkEstimate(qint64 &aggregateNanoseconds,
 		= MacOSPingAcknowledgementEvidenceFinalizedForInterval(
 			windowEndingBetweenPings,
 			std::vector<Core::UiStallWatchdog::PingAcknowledgementEvidence>{
-				delayedPostAcknowledgement,
-				delayedNextPostAcknowledgement});
+				delayedPostAcknowledgement, delayedNextPostAcknowledgement});
 	auto differentWatchdogDelayedPost = delayedNextPostAcknowledgement;
 	differentWatchdogDelayedPost.watchdogId = 2;
 	const auto differentWatchdogDoesNotFinalizeDelayedPost
@@ -16313,8 +16313,7 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		const auto windowEvidenceFinalized
 			= (chatSwitchWindows[i].durationNanoseconds
 			   < windowBudgetNanoseconds)
-			  || MacOSChatSwitchEvidenceFinalizedForInterval(
-				  schedulerSamples);
+			  || MacOSChatSwitchEvidenceFinalizedForInterval(schedulerSamples);
 		const auto attributedWallNanoseconds
 			= chatSwitchWindows[i].durationNanoseconds;
 		const auto budgetAssessment = AssessMainThreadWorkBudget(
