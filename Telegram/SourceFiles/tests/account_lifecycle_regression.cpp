@@ -13664,13 +13664,43 @@ void AccumulateMainThreadWorkEstimate(qint64 &aggregateNanoseconds,
 		.startedAtSteadyNanoseconds
 		= displayLockWindow.startedAtSteadyNanoseconds,
 	};
+	const auto recordedChatSwitchSchedulerSamples = SchedulerTraceWindow{
+		.trace = u"RRRWWR"_q,
+		.sampleOffsetsNanoseconds = {
+			10'092'542,
+			17'928'292,
+			19'730'500,
+			29'994'209,
+			40'609'750,
+			77'447'834,
+		},
+	};
+	// Replay the failed run's sampled window states and offsets. The watchdog
+	// stall begins 18 ms into that window, so retain only its RWWR subtrace.
 	auto recordedDisplayLockStall = displayLockStall;
 	recordedDisplayLockStall.startedAt = u"2026-11-25T00:00:01.006"_q;
-	recordedDisplayLockStall.postedAtSteadyNanoseconds = 1'006'000'000;
-	recordedDisplayLockStall.stackCapturedAtSteadyNanoseconds = 1'046'000'000;
+	recordedDisplayLockStall.postedAtSteadyNanoseconds
+		= recordedDisplayLockWindow.startedAtSteadyNanoseconds + 18'000'000;
+	recordedDisplayLockStall.stackCapturedAtSteadyNanoseconds
+		= recordedDisplayLockStall.postedAtSteadyNanoseconds + 40'000'000;
 	recordedDisplayLockStall.schedulerTrace.clear();
 	recordedDisplayLockStall.schedulerSampleOffsetsNanoseconds.clear();
-	addBlockedDisplayLockSchedulerTrace(recordedDisplayLockStall, 0);
+	for (auto i = std::size_t(0);
+		 i
+		 != recordedChatSwitchSchedulerSamples.sampleOffsetsNanoseconds.size();
+		 ++i) {
+		const auto offset
+			= recordedChatSwitchSchedulerSamples.sampleOffsetsNanoseconds[i];
+		if ((offset < 18'000'000)
+			|| (offset
+				> 18'000'000 + recordedDisplayLockStall.durationNanoseconds)) {
+			continue;
+		}
+		recordedDisplayLockStall.schedulerTrace.append(
+			recordedChatSwitchSchedulerSamples.trace[qsizetype(i)]);
+		recordedDisplayLockStall.schedulerSampleOffsetsNanoseconds.push_back(
+			offset - 18'000'000);
+	}
 	const auto recordedDisplayLockOverlapNanoseconds
 		= MacOSDisplayLockOverlapNanoseconds(
 			recordedDisplayLockWindow,
@@ -13691,23 +13721,6 @@ void AccumulateMainThreadWorkEstimate(qint64 &aggregateNanoseconds,
 			recordedDisplayLockAssessment,
 			recordedDisplayLockWindow.durationNanoseconds,
 			kMaxChatSwitchNanoseconds, 100'000'000);
-	auto recordedDisplayLockStallWithRunnablePrefix = recordedDisplayLockStall;
-	recordedDisplayLockStallWithRunnablePrefix.schedulerTrace[10] = u'R';
-	const auto recordedDisplayLockOverlapWithRunnablePrefixNanoseconds
-		= MacOSDisplayLockOverlapNanoseconds(
-			recordedDisplayLockWindow,
-			std::vector<Core::UiStallWatchdog::StallEvidence>{
-				recordedDisplayLockStallWithRunnablePrefix});
-	const auto recordedDisplayLockAttributedWallWithRunnablePrefixNanoseconds
-		= std::max(
-			recordedDisplayLockWindow.mainThreadWorkNanoseconds,
-			recordedDisplayLockWindow.durationNanoseconds
-				- recordedDisplayLockOverlapWithRunnablePrefixNanoseconds);
-	const auto recordedDisplayLockAssessmentWithRunnablePrefix
-		= AssessMacOSDisplayLockAttributedWorkBudget(
-			recordedDisplayLockWindow.mainThreadWorkNanoseconds,
-			recordedDisplayLockAttributedWallWithRunnablePrefixNanoseconds,
-			kMaxChatSwitchNanoseconds);
 	const auto applicationStallWithDisplayLockAssessment
 		= AssessMacOSDisplayLockAttributedWorkBudget(
 			51'000'000,
@@ -14773,22 +14786,26 @@ void AccumulateMainThreadWorkEstimate(qint64 &aggregateNanoseconds,
 		   && displayLockAssessment.withinBudget
 		   && verifiedDisplayLockWithinBudget
 		   && verifiedDisplayLockRun.WithinBudget()
-		   && (recordedDisplayLockOverlapNanoseconds == 59'931'083)
-		   && (recordedDisplayLockAttributedWallNanoseconds == 21'272'000)
+		   && (recordedChatSwitchSchedulerSamples.trace == u"RRRWWR"_q)
+		   && (recordedDisplayLockStall.schedulerTrace == u"RWWR"_q)
+		   && (recordedDisplayLockStall.schedulerSampleOffsetsNanoseconds
+			   == std::vector<qint64>{
+				   1'730'500,
+				   11'994'209,
+				   22'609'750,
+				   59'447'834,
+			   })
+		   && (recordedDisplayLockOverlapNanoseconds == 0)
+		   && (recordedDisplayLockAttributedWallNanoseconds == 77'931'083)
 		   && (recordedDisplayLockStall.postedAtSteadyNanoseconds
 				   - recordedDisplayLockWindow.startedAtSteadyNanoseconds
 			   == 18'000'000)
 		   && (recordedDisplayLockStall.stackCapturedAtSteadyNanoseconds
 				   - recordedDisplayLockStall.postedAtSteadyNanoseconds
 			   == 40'000'000)
-		   && recordedDisplayLockAssessment.withinBudget
-		   && recordedDisplayLockWithinBudget
-		   && recordedDisplayLockRun.WithinBudget()
-		   && (recordedDisplayLockOverlapWithRunnablePrefixNanoseconds
-			   == 48'931'083)
-		   && (recordedDisplayLockAttributedWallWithRunnablePrefixNanoseconds
-			   == 29'000'000)
-		   && recordedDisplayLockAssessmentWithRunnablePrefix.withinBudget
+		   && !recordedDisplayLockAssessment.withinBudget
+		   && !recordedDisplayLockWithinBudget
+		   && !recordedDisplayLockRun.WithinBudget()
 		   && !applicationStallWithDisplayLockAssessment.withinBudget
 		   && !applicationStallWithDisplayLockWithinBudget
 		   && !applicationStallWithDisplayLockRun.WithinBudget()
