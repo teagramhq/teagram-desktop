@@ -16790,7 +16790,6 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		migrationTargetHistory->getReadyFor(ShowAtUnreadMsgId);
 		migrationTargetHistory->getReadyFor(ShowAtTheEndMsgId);
 		migrationTargetHistory->markLoadedAtTop();
-		migrationTargetHistory->markLoadedAtBottom();
 	}
 	session.changes().sendNotifications();
 	QCoreApplication::processEvents();
