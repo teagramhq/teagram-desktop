@@ -566,6 +566,7 @@ private:
 	void toggleTabbedSelectorMode();
 	void recountChatWidth();
 	void handlePeerUpdate();
+	void subscribePeerUpdates();
 	bool updateCanSendMessage();
 	void setMembersShowAreaActive(bool active);
 	void handleHistoryChange(not_null<const History*> history);
@@ -915,6 +916,7 @@ private:
 	std::optional<FullMsgId> _minPinnedId;
 	bool _pinnedBarHasCustomButton = false;
 
+	rpl::lifetime _peerUpdatesLifetime;
 	rpl::lifetime _groupCallBarContentLifetime;
 	std::unique_ptr<Ui::GroupCallBar> _groupCallBar;
 	int _groupCallBarHeight = 0;

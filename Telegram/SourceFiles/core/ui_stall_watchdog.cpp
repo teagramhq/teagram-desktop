@@ -70,6 +70,7 @@ std::deque<UiStallWatchdog::PingAcknowledgementEvidence>
 	PingAcknowledgementHistory;
 std::mutex SchedulerSampleHistoryMutex;
 std::deque<UiStallWatchdog::SchedulerSampleEvidence> SchedulerSampleHistory;
+std::atomic<std::uint64_t> NextWatchdogId = 1;
 
 #if defined(Q_OS_MAC)
 [[nodiscard]] std::uint64_t SchedulerSampleIntervalMachTicks() {
@@ -425,7 +426,8 @@ UiStallWatchdog::UiStallWatchdog(
 	  _logRateLimit(settings.captureShortStalls || settings.disableRateLimit
 						? 0ms
 						: kLogRateLimit),
-	  _captureSchedulerTrace(settings.captureSchedulerTrace) {
+	  _captureSchedulerTrace(settings.captureSchedulerTrace),
+	  _watchdogId(NextWatchdogId.fetch_add(1, std::memory_order_relaxed)) {
 #if defined(Q_OS_LINUX) || defined(Q_OS_MAC)
 	_canCaptureStack = InstallSignalHandler();
 	try {
@@ -661,6 +663,7 @@ bool UiStallWatchdog::event(QEvent *event) {
 					= std::chrono::duration_cast<std::chrono::nanoseconds>(
 						  ping->postedAt.time_since_epoch())
 						  .count(),
+					.watchdogId = _watchdogId,
 				};
 				const auto evidenceLock = std::lock_guard(StallEvidenceMutex);
 				PingAcknowledgementHistory.push_back(evidence);
@@ -972,7 +975,8 @@ void UiStallWatchdog::run() {
 			const auto evidenceLock = std::lock_guard(StallEvidenceMutex);
 			for (auto i = PingAcknowledgementHistory.rbegin();
 				 i != PingAcknowledgementHistory.rend(); ++i) {
-				if ((i->sequence == current)
+				if ((i->watchdogId == _watchdogId)
+					&& (i->sequence == current)
 					&& (i->postedAtSteadyNanoseconds
 						== std::chrono::duration_cast<std::chrono::nanoseconds>(
 							   postedAt.time_since_epoch())
@@ -1020,6 +1024,8 @@ void UiStallWatchdog::run() {
 					= schedulerSampleMainThreadCpuNanoseconds,
 					.stack = rawStack,
 					.stackFinalized = false,
+					.watchdogId = _watchdogId,
+					.sequence = current,
 				};
 				const auto evidenceLock = std::lock_guard(StallEvidenceMutex);
 				StallEvidenceHistory.push_back(evidence);
@@ -1036,8 +1042,10 @@ void UiStallWatchdog::run() {
 					auto evidenceLock = std::lock_guard(StallEvidenceMutex);
 					for (auto i = StallEvidenceHistory.rbegin();
 						 i != StallEvidenceHistory.rend(); ++i) {
-						if (i->postedAtSteadyNanoseconds
-							== postedAtSteadyNanoseconds) {
+						if ((i->watchdogId == _watchdogId)
+							&& (i->sequence == current)
+							&& (i->postedAtSteadyNanoseconds
+							== postedAtSteadyNanoseconds)) {
 							i->stack = stack;
 							i->stackFinalized = true;
 							break;
