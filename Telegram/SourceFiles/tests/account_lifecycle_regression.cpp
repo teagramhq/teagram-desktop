@@ -12008,6 +12008,50 @@ IsMacOSDisplayLockStall(const Core::UiStallWatchdog::StallEvidence &evidence) {
 
 constexpr auto kMaxMacOSDisplayLockOverrunNanoseconds = 90'000'000;
 constexpr auto kMacOSDisplayLockEvidenceSettleNanoseconds = 40'000'000;
+constexpr auto kMacOSDisplayLockSchedulerSampleNanoseconds = 1'000'000;
+
+[[nodiscard]] qint64 MacOSDisplayLockCorroboratedEndNanoseconds(
+	const Core::UiStallWatchdog::StallEvidence &evidence) {
+	if ((evidence.postedAtSteadyNanoseconds <= 0)
+		|| (evidence.stackCapturedAtSteadyNanoseconds
+			< evidence.postedAtSteadyNanoseconds)
+		|| (evidence.durationNanoseconds <= 0)
+		|| (evidence.postedAtSteadyNanoseconds
+			> std::numeric_limits<qint64>::max() - evidence.durationNanoseconds)
+		|| (evidence.schedulerTrace.size()
+			!= qsizetype(evidence.schedulerSampleOffsetsNanoseconds.size()))) {
+		return 0;
+	}
+	const auto captureOffsetNanoseconds
+		= evidence.stackCapturedAtSteadyNanoseconds
+		  - evidence.postedAtSteadyNanoseconds;
+	const auto remainingNanoseconds
+		= evidence.durationNanoseconds - captureOffsetNanoseconds;
+	if (remainingNanoseconds <= 0) {
+		return 0;
+	}
+	auto trace = QString();
+	auto offsets = std::vector<qint64>();
+	for (auto i = std::size_t(0);
+		 i != evidence.schedulerSampleOffsetsNanoseconds.size(); ++i) {
+		const auto offset = evidence.schedulerSampleOffsetsNanoseconds[i];
+		if ((offset < captureOffsetNanoseconds)
+			|| (offset > evidence.durationNanoseconds)) {
+			continue;
+		}
+		trace.append(evidence.schedulerTrace[qsizetype(i)]);
+		offsets.push_back(offset - captureOffsetNanoseconds);
+	}
+	if ((offsets.size() < 2U) || (offsets.back() <= offsets.front())
+		|| !Core::UiStallWatchdog::SchedulerTraceCoversDuration(
+			trace, offsets, remainingNanoseconds)
+		|| std::any_of(begin(trace), end(trace), [](QChar state) {
+			   return (state != u'W') && (state != u'U');
+		   })) {
+		return 0;
+	}
+	return evidence.stackCapturedAtSteadyNanoseconds + offsets.back();
+}
 
 [[nodiscard]] qint64 MacOSDisplayLockOverlapNanoseconds(
 	const MainThreadWorkInterval &interval,
@@ -12041,14 +12085,18 @@ constexpr auto kMacOSDisplayLockEvidenceSettleNanoseconds = 40'000'000;
 		}
 		const auto stallEndNanoseconds = candidate.postedAtSteadyNanoseconds
 										 + candidate.durationNanoseconds;
-		if (candidate.stackCapturedAtSteadyNanoseconds > stallEndNanoseconds) {
+		const auto corroboratedEndNanoseconds
+			= MacOSDisplayLockCorroboratedEndNanoseconds(candidate);
+		if ((candidate.stackCapturedAtSteadyNanoseconds > stallEndNanoseconds)
+			|| (corroboratedEndNanoseconds
+				<= candidate.stackCapturedAtSteadyNanoseconds)) {
 			continue;
 		}
 		const auto overlapStartNanoseconds
 			= std::max(intervalStartNanoseconds,
 					   candidate.stackCapturedAtSteadyNanoseconds);
 		const auto overlapEndNanoseconds
-			= std::min(intervalEndNanoseconds, stallEndNanoseconds);
+			= std::min(intervalEndNanoseconds, corroboratedEndNanoseconds);
 		bestOverlapNanoseconds
 			= std::max(bestOverlapNanoseconds,
 					   std::max(qint64(0), overlapEndNanoseconds
@@ -13406,16 +13454,27 @@ void AccumulateMainThreadWorkEstimate(qint64 &aggregateNanoseconds,
 		.label = u"chat switch index=9"_q,
 		.startedAtSteadyNanoseconds = 988'000'000,
 	};
-	const auto displayLockStall = Core::UiStallWatchdog::StallEvidence{
+	const auto addBlockedDisplayLockSchedulerTrace
+		= [](Core::UiStallWatchdog::StallEvidence &evidence,
+			 qint64 firstSampleOffsetNanoseconds) {
+			  for (auto offset = firstSampleOffsetNanoseconds;
+				   offset < evidence.durationNanoseconds;
+				   offset += kMacOSDisplayLockSchedulerSampleNanoseconds) {
+				  evidence.schedulerSampleOffsetsNanoseconds.push_back(offset);
+				  evidence.schedulerTrace.append(u'W');
+			  }
+		  };
+	auto displayLockStall = Core::UiStallWatchdog::StallEvidence{
 		.startedAt = u"2026-11-25T00:00:01.006"_q,
 		.postedAtSteadyNanoseconds = 1'006'000'000,
-		.stackCapturedAtSteadyNanoseconds = 1'006'000'000,
+		.stackCapturedAtSteadyNanoseconds = 1'007'000'000,
 		.durationMilliseconds = 65,
 		.durationNanoseconds = 65'000'000,
 		.stack = u"QReadWriteLockPrivate::recursiveLockForRead <- "
 				 u"QCocoaWindow::deliverUpdateRequest"_q,
 		.stackFinalized = true,
 	};
+	addBlockedDisplayLockSchedulerTrace(displayLockStall, 1'000'000);
 	const auto displayLockStallEvidence
 		= std::vector<Core::UiStallWatchdog::StallEvidence>{displayLockStall};
 	const auto displayLockOverlapNanoseconds
@@ -13471,8 +13530,8 @@ void AccumulateMainThreadWorkEstimate(qint64 &aggregateNanoseconds,
 		.startedAtSteadyNanoseconds
 		= displayLockWindow.startedAtSteadyNanoseconds,
 	};
-	const auto excessiveDisplayLockStall = Core::UiStallWatchdog::StallEvidence{
-		.startedAt = u"2026-11-25T00:00:01.006"_q,
+	auto excessiveDisplayLockStall = Core::UiStallWatchdog::StallEvidence{
+		.startedAt = u"2026-11-25T00:00:00.988"_q,
 		.postedAtSteadyNanoseconds
 		= excessiveDisplayLockWindow.startedAtSteadyNanoseconds,
 		.stackCapturedAtSteadyNanoseconds
@@ -13482,6 +13541,7 @@ void AccumulateMainThreadWorkEstimate(qint64 &aggregateNanoseconds,
 		.stack = displayLockStall.stack,
 		.stackFinalized = true,
 	};
+	addBlockedDisplayLockSchedulerTrace(excessiveDisplayLockStall, 0);
 	const auto excessiveDisplayLockOverlapNanoseconds
 		= MacOSDisplayLockOverlapNanoseconds(
 			excessiveDisplayLockWindow,
@@ -13520,7 +13580,7 @@ void AccumulateMainThreadWorkEstimate(qint64 &aggregateNanoseconds,
 		.label = u"chat switch with application work before display lock"_q,
 		.startedAtSteadyNanoseconds = 2'000'000'000,
 	};
-	const auto mixedDisplayLockStall = Core::UiStallWatchdog::StallEvidence{
+	auto mixedDisplayLockStall = Core::UiStallWatchdog::StallEvidence{
 		.startedAt
 		= mixedDisplayLockWindow.startedAt.toString(Qt::ISODateWithMs),
 		.postedAtSteadyNanoseconds
@@ -13532,6 +13592,7 @@ void AccumulateMainThreadWorkEstimate(qint64 &aggregateNanoseconds,
 		.stack = displayLockStall.stack,
 		.stackFinalized = true,
 	};
+	addBlockedDisplayLockSchedulerTrace(mixedDisplayLockStall, 56'000'000);
 	const auto mixedDisplayLockOverlapNanoseconds
 		= MacOSDisplayLockOverlapNanoseconds(
 			mixedDisplayLockWindow,
@@ -13547,6 +13608,42 @@ void AccumulateMainThreadWorkEstimate(qint64 &aggregateNanoseconds,
 							   u"none"_q, {}),
 		mixedDisplayLockWindow.mainThreadWorkNanoseconds,
 		kMaxChatSwitchNanoseconds);
+	auto uncorroboratedDisplayLockWindow = mixedDisplayLockWindow;
+	uncorroboratedDisplayLockWindow.startedAt = QDateTime::fromString(
+		u"2026-11-25T00:00:03.000"_q, Qt::ISODateWithMs);
+	uncorroboratedDisplayLockWindow.startedAtSteadyNanoseconds = 3'000'000'000;
+	uncorroboratedDisplayLockWindow.label
+		= u"chat switch with an uncorroborated display-lock tail"_q;
+	auto uncorroboratedDisplayLockStall = mixedDisplayLockStall;
+	uncorroboratedDisplayLockStall.startedAt = u"2026-11-25T00:00:03.000"_q;
+	uncorroboratedDisplayLockStall.postedAtSteadyNanoseconds
+		= uncorroboratedDisplayLockWindow.startedAtSteadyNanoseconds;
+	uncorroboratedDisplayLockStall.stackCapturedAtSteadyNanoseconds
+		= uncorroboratedDisplayLockWindow.startedAtSteadyNanoseconds
+		  + 45'000'000;
+	uncorroboratedDisplayLockStall.schedulerTrace.clear();
+	uncorroboratedDisplayLockStall.schedulerSampleOffsetsNanoseconds.clear();
+	const auto uncorroboratedDisplayLockOverlapNanoseconds
+		= MacOSDisplayLockOverlapNanoseconds(
+			uncorroboratedDisplayLockWindow,
+			std::vector<Core::UiStallWatchdog::StallEvidence>{
+				uncorroboratedDisplayLockStall});
+	const auto uncorroboratedDisplayLockAttributedWallNanoseconds
+		= std::max(uncorroboratedDisplayLockWindow.mainThreadWorkNanoseconds,
+				   uncorroboratedDisplayLockWindow.durationNanoseconds
+					   - uncorroboratedDisplayLockOverlapNanoseconds);
+	const auto uncorroboratedDisplayLockAssessment = AssessMainThreadWorkBudget(
+		EstimateMainThreadWork(
+			uncorroboratedDisplayLockWindow.mainThreadWorkNanoseconds,
+			uncorroboratedDisplayLockAttributedWallNanoseconds, u"none"_q, {}),
+		uncorroboratedDisplayLockWindow.mainThreadWorkNanoseconds,
+		kMaxChatSwitchNanoseconds);
+	auto uncorroboratedDisplayLockRun = MainThreadWorkBudgetRun();
+	const auto uncorroboratedDisplayLockWithinBudget
+		= uncorroboratedDisplayLockRun.Observe(
+			uncorroboratedDisplayLockAssessment,
+			uncorroboratedDisplayLockAttributedWallNanoseconds,
+			kMaxChatSwitchNanoseconds);
 	auto mixedDisplayLockRun = MainThreadWorkBudgetRun();
 	const auto mixedDisplayLockWithinBudget
 		= mixedDisplayLockRun.RecordMacOSDisplayLockOverrun(
@@ -14395,7 +14492,7 @@ void AccumulateMainThreadWorkEstimate(qint64 &aggregateNanoseconds,
 		   && !injectedChatSwitchStallWithinBudget
 		   && !injectedChatSwitchStallRun.WithinBudget()
 		   && IsMacOSDisplayLockStall(displayLockStall)
-		   && (displayLockOverlapNanoseconds == 59'931'083)
+		   && (displayLockOverlapNanoseconds == 58'931'083)
 		   && (displayLockAttributedWallNanoseconds == 21'272'000)
 		   && displayLockAssessment.withinBudget
 		   && verifiedDisplayLockWithinBudget
@@ -14404,15 +14501,20 @@ void AccumulateMainThreadWorkEstimate(qint64 &aggregateNanoseconds,
 		   && !applicationStallWithDisplayLockWithinBudget
 		   && !applicationStallWithDisplayLockRun.WithinBudget()
 		   && (unrelatedDisplayStallOverlap == 0)
-		   && (excessiveDisplayLockOverlapNanoseconds == 180'000'000)
+		   && (excessiveDisplayLockOverlapNanoseconds == 179'000'000)
 		   && excessiveDisplayLockAssessment.withinBudget
 		   && !excessiveDisplayLockWithinBudget
 		   && !excessiveDisplayLockRun.WithinBudget()
-		   && (mixedDisplayLockOverlapNanoseconds == 30'000'000)
-		   && (mixedDisplayLockAttributedWallNanoseconds == 55'000'000)
+		   && (mixedDisplayLockOverlapNanoseconds == 29'000'000)
+		   && (mixedDisplayLockAttributedWallNanoseconds == 56'000'000)
 		   && !mixedDisplayLockAssessment.withinBudget
 		   && !mixedDisplayLockWithinBudget
 		   && !mixedDisplayLockRun.WithinBudget()
+		   && (uncorroboratedDisplayLockOverlapNanoseconds == 0)
+		   && (uncorroboratedDisplayLockAttributedWallNanoseconds == 85'000'000)
+		   && !uncorroboratedDisplayLockAssessment.withinBudget
+		   && !uncorroboratedDisplayLockWithinBudget
+		   && !uncorroboratedDisplayLockRun.WithinBudget()
 		   && !unfinishedMixedDisplayLockEvidenceIsFinalized
 		   && mixedDisplayLockEvidenceIsFinalized
 		   && !incompleteMixedDisplayLockCaptureIsFinalized
