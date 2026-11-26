@@ -16781,10 +16781,10 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		= migrationChannelPeer ? migrationChannelPeer->asChannel() : nullptr;
 	if (migrationChannel) {
 		PrepareRegressionChannel(not_null<ChannelData *>(migrationChannel));
-		// Keep this synthetic destination self-owned and fully loaded. Opening a
-		// partially initialized channel would issue live participant requests;
-		// a refusal can mark the fixture forbidden and close the history we are
-		// using to verify the migration rebind.
+		// Keep this synthetic destination self-owned and fully loaded. Opening
+		// a partially initialized channel would issue live participant
+		// requests; a refusal can mark the fixture forbidden and close the
+		// history we are using to verify the migration rebind.
 		migrationChannel->mgInfo->creator = session.user();
 		migrationChannel->mgInfo->botStatus = Data::BotStatus::NoBots;
 		migrationChannel->mgInfo->adminsLoaded = true;
