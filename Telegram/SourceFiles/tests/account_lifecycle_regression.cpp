@@ -13639,6 +13639,57 @@ void AccumulateMainThreadWorkEstimate(qint64 &aggregateNanoseconds,
 		.stackFinalized = true,
 	};
 	addBlockedDisplayLockSchedulerTrace(displayLockStall, 40'000'000);
+	const auto addTwoMillisecondDisplayLockSchedulerTrace =
+		[](Core::UiStallWatchdog::StallEvidence &evidence,
+		   bool runnablePrefix) {
+			for (auto offset = qint64(0);
+				 offset <= evidence.durationNanoseconds; offset += 2'000'000) {
+				evidence.schedulerSampleOffsetsNanoseconds.push_back(offset);
+				const auto state = (runnablePrefix && (offset == 0)) ? u'R'
+								   : ((offset % 4'000'000) == 0)	 ? u'W'
+																	 : u'U';
+				evidence.schedulerTrace.append(state);
+			}
+		};
+	const auto preCaptureDisplayLockWindow = MainThreadWorkInterval{
+		.startedAt = QDateTime::fromString(u"2026-11-25T00:00:01.500"_q,
+										   Qt::ISODateWithMs),
+		.durationNanoseconds = 65'000'000,
+		.startedAtSteadyNanoseconds = 1'500'000'000,
+	};
+	auto preCaptureDisplayLockStall = displayLockStall;
+	preCaptureDisplayLockStall.startedAt = u"2026-11-25T00:00:01.500"_q;
+	preCaptureDisplayLockStall.postedAtSteadyNanoseconds
+		= preCaptureDisplayLockWindow.startedAtSteadyNanoseconds;
+	preCaptureDisplayLockStall.stackCapturedAtSteadyNanoseconds
+		= preCaptureDisplayLockStall.postedAtSteadyNanoseconds + 40'000'000;
+	preCaptureDisplayLockStall.schedulerTrace.clear();
+	preCaptureDisplayLockStall.schedulerSampleOffsetsNanoseconds.clear();
+	addTwoMillisecondDisplayLockSchedulerTrace(preCaptureDisplayLockStall,
+											   false);
+	const auto preCaptureDisplayLockSpan
+		= MacOSDisplayLockCorroboratedSpanForEvidence(
+			preCaptureDisplayLockStall);
+	const auto preCaptureDisplayLockOverlapNanoseconds
+		= MacOSDisplayLockOverlapNanoseconds(
+			preCaptureDisplayLockWindow,
+			std::vector<Core::UiStallWatchdog::StallEvidence>{
+				preCaptureDisplayLockStall});
+	auto preCaptureDisplayLockStallWithRunnablePrefix
+		= preCaptureDisplayLockStall;
+	preCaptureDisplayLockStallWithRunnablePrefix.schedulerTrace.clear();
+	preCaptureDisplayLockStallWithRunnablePrefix
+		.schedulerSampleOffsetsNanoseconds.clear();
+	addTwoMillisecondDisplayLockSchedulerTrace(
+		preCaptureDisplayLockStallWithRunnablePrefix, true);
+	const auto preCaptureDisplayLockSpanWithRunnablePrefix
+		= MacOSDisplayLockCorroboratedSpanForEvidence(
+			preCaptureDisplayLockStallWithRunnablePrefix);
+	const auto preCaptureDisplayLockOverlapWithRunnablePrefixNanoseconds
+		= MacOSDisplayLockOverlapNanoseconds(
+			preCaptureDisplayLockWindow,
+			std::vector<Core::UiStallWatchdog::StallEvidence>{
+				preCaptureDisplayLockStallWithRunnablePrefix});
 	const auto displayLockStallEvidence
 		= std::vector<Core::UiStallWatchdog::StallEvidence>{displayLockStall};
 	const auto displayLockOverlapNanoseconds
@@ -14786,6 +14837,28 @@ void AccumulateMainThreadWorkEstimate(qint64 &aggregateNanoseconds,
 		   && displayLockAssessment.withinBudget
 		   && verifiedDisplayLockWithinBudget
 		   && verifiedDisplayLockRun.WithinBudget()
+		   && (preCaptureDisplayLockStall.schedulerSampleOffsetsNanoseconds
+			   .size()
+			   == 33U)
+		   && (preCaptureDisplayLockStall.schedulerTrace[0] == u'W')
+		   && (preCaptureDisplayLockStall.schedulerTrace[1] == u'U')
+		   && preCaptureDisplayLockSpan
+		   && (preCaptureDisplayLockSpan->startNanoseconds
+			   == preCaptureDisplayLockWindow.startedAtSteadyNanoseconds)
+		   && (preCaptureDisplayLockOverlapNanoseconds == 64'000'000)
+		   && (preCaptureDisplayLockStallWithRunnablePrefix
+					.schedulerSampleOffsetsNanoseconds.size()
+			   == 33U)
+		   && (preCaptureDisplayLockStallWithRunnablePrefix.schedulerTrace[0]
+			   == u'R')
+		   && (preCaptureDisplayLockStallWithRunnablePrefix.schedulerTrace[1]
+			   == u'U')
+		   && preCaptureDisplayLockSpanWithRunnablePrefix
+		   && (preCaptureDisplayLockSpanWithRunnablePrefix->startNanoseconds
+			   == preCaptureDisplayLockWindow.startedAtSteadyNanoseconds
+				  + 2'000'000)
+		   && (preCaptureDisplayLockOverlapWithRunnablePrefixNanoseconds
+			   == 62'000'000)
 		   && (recordedChatSwitchSchedulerSamples.trace == u"RRRWWR"_q)
 		   && (recordedDisplayLockStall.schedulerTrace == u"RWWR"_q)
 		   && (recordedDisplayLockStall.schedulerSampleOffsetsNanoseconds
