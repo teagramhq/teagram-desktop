@@ -840,6 +840,7 @@ void UiStallWatchdog::run() {
 		auto replaceLog = false;
 		auto detectedAt = Clock::time_point();
 		auto frames = std::vector<void *>();
+		auto stackCapturedAtSteadyNanoseconds = qint64(0);
 		auto rawStack = QString();
 		auto formattedStack = std::shared_ptr<QString>();
 		auto startedAt = QString();
@@ -912,6 +913,10 @@ void UiStallWatchdog::run() {
 				lock.unlock();
 				if (_canCaptureStack) {
 					frames = CaptureStack();
+					stackCapturedAtSteadyNanoseconds
+						= std::chrono::duration_cast<std::chrono::nanoseconds>(
+							  Clock::now().time_since_epoch())
+							  .count();
 				}
 				rawStack = FormatRawStack(frames);
 				formattedStack = std::make_shared<QString>();
@@ -988,6 +993,10 @@ void UiStallWatchdog::run() {
 		if (writeLog) {
 			const auto completedAt = _acknowledgedAt;
 			lock.unlock();
+			const auto postedAtSteadyNanoseconds
+				= std::chrono::duration_cast<std::chrono::nanoseconds>(
+					  postedAt.time_since_epoch())
+					  .count();
 			const auto completedDurationMilliseconds
 				= std::chrono::duration_cast<std::chrono::milliseconds>(
 					  completedAt - postedAt)
@@ -996,10 +1005,9 @@ void UiStallWatchdog::run() {
 			if (_captureSchedulerTrace) {
 				const auto evidence = StallEvidence{
 					.startedAt = startedAt,
-					.postedAtSteadyNanoseconds
-					= std::chrono::duration_cast<std::chrono::nanoseconds>(
-						  postedAt.time_since_epoch())
-						  .count(),
+					.postedAtSteadyNanoseconds = postedAtSteadyNanoseconds,
+					.stackCapturedAtSteadyNanoseconds
+					= stackCapturedAtSteadyNanoseconds,
 					.durationMilliseconds = completedDurationMilliseconds,
 					.durationNanoseconds
 					= std::chrono::duration_cast<std::chrono::nanoseconds>(
@@ -1011,6 +1019,7 @@ void UiStallWatchdog::run() {
 					.schedulerSampleMainThreadCpuNanoseconds
 					= schedulerSampleMainThreadCpuNanoseconds,
 					.stack = rawStack,
+					.stackFinalized = false,
 				};
 				const auto evidenceLock = std::lock_guard(StallEvidenceMutex);
 				StallEvidenceHistory.push_back(evidence);
@@ -1018,17 +1027,19 @@ void UiStallWatchdog::run() {
 					StallEvidenceHistory.erase(StallEvidenceHistory.begin());
 				}
 			}
-			enqueueReport([this, startedAt, schedulerTraceText,
-						   completedDurationMilliseconds, rawStack,
-						   reportedStack = formattedStack] {
+			enqueueReport([this, startedAt, postedAtSteadyNanoseconds,
+						   schedulerTraceText, completedDurationMilliseconds,
+						   rawStack, reportedStack = formattedStack] {
 				const auto stack
 					= reportedStack->isEmpty() ? rawStack : *reportedStack;
-				if (_captureSchedulerTrace && !reportedStack->isEmpty()) {
+				if (_captureSchedulerTrace) {
 					auto evidenceLock = std::lock_guard(StallEvidenceMutex);
 					for (auto i = StallEvidenceHistory.rbegin();
 						 i != StallEvidenceHistory.rend(); ++i) {
-						if (i->startedAt == startedAt) {
+						if (i->postedAtSteadyNanoseconds
+							== postedAtSteadyNanoseconds) {
 							i->stack = stack;
+							i->stackFinalized = true;
 							break;
 						}
 					}

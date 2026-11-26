@@ -458,6 +458,21 @@ TEST_CASE(UiStallWatchdogLogsMainThreadStack) {
 	const auto acknowledgements
 		= Core::UiStallWatchdog::RecentPingAcknowledgementsForTesting();
 	CHECK(!evidence.empty());
+	const auto finalizedEvidence
+		= std::find_if(evidence.begin(), evidence.end(),
+					   [lastAcknowledgedAtNanoseconds](const auto &item) {
+						   return (item.postedAtSteadyNanoseconds
+								   > lastAcknowledgedAtNanoseconds)
+								  && item.stackFinalized;
+					   });
+	CHECK(finalizedEvidence != evidence.end());
+	if (finalizedEvidence != evidence.end()) {
+		CHECK(finalizedEvidence->stackCapturedAtSteadyNanoseconds
+			  >= finalizedEvidence->postedAtSteadyNanoseconds);
+		CHECK(finalizedEvidence->stackCapturedAtSteadyNanoseconds
+			  <= finalizedEvidence->postedAtSteadyNanoseconds
+					 + finalizedEvidence->durationNanoseconds);
+	}
 	CHECK(std::all_of(
 		acknowledgements.begin(), acknowledgements.end(),
 		[lastAcknowledgedAtNanoseconds](const auto &acknowledgement) {

@@ -33,12 +33,14 @@ class UiStallWatchdog final : public QObject {
 	struct StallEvidence {
 		QString startedAt;
 		qint64 postedAtSteadyNanoseconds = 0;
+		qint64 stackCapturedAtSteadyNanoseconds = 0;
 		qint64 durationMilliseconds = 0;
 		qint64 durationNanoseconds = 0;
 		QString schedulerTrace;
 		std::vector<qint64> schedulerSampleOffsetsNanoseconds;
 		std::vector<qint64> schedulerSampleMainThreadCpuNanoseconds;
 		QString stack;
+		bool stackFinalized = false;
 	};
 
 	struct PingAcknowledgementEvidence {
