@@ -3409,7 +3409,12 @@ void HistoryWidget::subscribePeerUpdates() {
 					}
 				}
 				if (flags & PeerUpdateFlag::Migration) {
-					handlePeerMigration();
+					const auto peer = _peer;
+					crl::on_main(this, [=] {
+						if (_peer == peer) {
+							handlePeerMigration();
+						}
+					});
 				}
 				if (flags & PeerUpdateFlag::Notifications) {
 					updateNotifyControls();

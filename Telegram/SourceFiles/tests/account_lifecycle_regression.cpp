@@ -14707,6 +14707,7 @@ struct CacheChatSwitchRegressionResult final {
 	bool chatSwitchComposeUiReused = false;
 	bool translateBarReused = false;
 	bool translateBarTracksCurrentHistory = false;
+	bool openPeerMigrationRebind = false;
 	bool historyChatModeInitiallyWide = false;
 	bool historyChatModeChangedWhileHidden = false;
 	bool historyChatModeLayoutWideAfter = false;
@@ -16757,6 +16758,89 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 	result.translateBarReused = translateBarBoundToFirstHistory
 								&& sameTranslateBarOnSecondHistory
 								&& sameTranslateBarOnReturn;
+	const auto historyBeforeMigration = historyWidget->history();
+	const auto migrationChatId = ChatId(1'050'057);
+	const auto migrationChannelId = ChannelId(1'050'058);
+	const auto migrationChat = data.chat(migrationChatId);
+	const auto migrationHistory = makeHistory(migrationChatId);
+	migrationHistory->getReadyFor(ShowAtTheEndMsgId);
+	migrationHistory->markLoadedAtTop();
+	using ChannelFlag = MTPDchannel::Flag;
+	const auto migrationChannelPeer
+		= data.processChats(MTP_vector<MTPChat>({MTP_channel(
+			MTP_flags(ChannelFlag::f_megagroup | ChannelFlag::f_access_hash),
+			MTP_long(migrationChannelId.bare),
+			MTP_long(migrationChannelId.bare + 100),
+			MTP_string(u"Migration regression channel"_q), MTPstring(),
+			MTP_chatPhotoEmpty(), MTP_int(1), MTPVector<MTPRestrictionReason>(),
+			MTPChatAdminRights(), MTPChatBannedRights(), MTPChatBannedRights(),
+			MTPint(), MTPVector<MTPUsername>(), MTPRecentStory(),
+			MTPPeerColor(), MTPPeerColor(), MTPEmojiStatus(), MTPint(),
+			MTPint(), MTPlong(), MTPlong(), MTPlong(), MTPlong())}));
+	const auto migrationChannel
+		= migrationChannelPeer ? migrationChannelPeer->asChannel() : nullptr;
+	if (migrationChannel) {
+		PrepareRegressionChannel(not_null<ChannelData *>(migrationChannel));
+	}
+	const auto migrationTargetHistory
+		= migrationChannel
+			  ? data.history(not_null<const PeerData *>(migrationChannel)).get()
+			  : nullptr;
+	if (migrationTargetHistory) {
+		migrationTargetHistory->getReadyFor(ShowAtTheEndMsgId);
+		migrationTargetHistory->markLoadedAtTop();
+	}
+	session.changes().sendNotifications();
+	QCoreApplication::processEvents();
+	auto migrationChatOpened = false;
+	auto migrationStayedOpenDuringNotification = false;
+	auto migrationSwitchedToChannel = false;
+	auto migrationRestoredHistory = false;
+	if (migrationChannel && migrationTargetHistory) {
+		migrationChatOpened = showHistoryForTranslateBar(migrationHistory);
+		if (migrationChatOpened) {
+			Data::ApplyMigration(migrationChat,
+								 not_null<ChannelData *>(migrationChannel));
+			session.changes().peerUpdated(
+				not_null<PeerData *>(migrationChat.get()),
+				Data::PeerUpdate::Flag::Migration
+					| Data::PeerUpdate::Flag::FullInfo);
+			session.changes().sendNotifications();
+			migrationStayedOpenDuringNotification
+				= (historyWidget->history() == migrationHistory.get());
+			migrationSwitchedToChannel = WaitForRegressionCondition(
+				[&] {
+					return (controller->content()
+								->historyWidgetForRegressionTest()
+							== historyWidget)
+						   && (historyWidget->history()
+							   == migrationTargetHistory)
+						   && historyWidget
+								  ->historyTransitionFinishedForRegressionTest();
+				},
+				1500);
+		}
+	}
+	if (historyBeforeMigration) {
+		controller->showPeerHistory(
+			not_null<History *>(historyBeforeMigration));
+		migrationRestoredHistory = WaitForRegressionCondition(
+			[&] {
+				return (historyWidget->history() == historyBeforeMigration)
+					   && historyWidget
+							  ->historyTransitionFinishedForRegressionTest();
+			},
+			1500);
+	}
+	result.openPeerMigrationRebind
+		= migrationChatOpened && migrationStayedOpenDuringNotification
+		  && migrationSwitchedToChannel && migrationRestoredHistory;
+	std::fprintf(stderr,
+				 "Open peer migration rebind: opened=%d stayed_open=%d "
+				 "switched_to_channel=%d restored=%d passed=%d.\n",
+				 migrationChatOpened, migrationStayedOpenDuringNotification,
+				 migrationSwitchedToChannel, migrationRestoredHistory,
+				 result.openPeerMigrationRebind);
 	std::fprintf(
 		stderr,
 		"Chat switch translation bar reuse: first_bound=%d second_bound=%d "
@@ -16810,6 +16894,7 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		  && result.attachMenuCacheBounded && result.chatSwitchComposeUiReused
 		  && result.translateBarReused
 		  && result.translateBarTracksCurrentHistory
+		  && result.openPeerMigrationRebind
 		  && result.fieldAutocompleteSuggestionsReady
 		  && result.botCommandsShownWhileFieldUnfocused
 		  && result.pendingRevealStartedAfterControlsGeometry
