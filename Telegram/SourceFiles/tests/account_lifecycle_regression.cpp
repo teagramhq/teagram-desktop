@@ -16441,7 +16441,7 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 			stderr,
 			"Cache chat switch work window: index=%zu peer_id=%lld "
 			"wall_ns=%lld attributed_wall_ns=%lld "
-			"native_display_lock_ns=%lld main_thread_cpu_ns=%lld "
+			"main_thread_cpu_ns=%lld "
 			"blocked_estimate_ns=%lld estimated_work_ns=%lld "
 			"budget_ns=%lld capture_pending=%d trace=%s within_budget=%d "
 			"cpu_only_within_budget=%d scheduler_evidence_available=%d.\n",
@@ -16450,7 +16450,6 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 				chatSwitchWindows[i].label.section(u'=', -1).toLongLong()),
 			static_cast<long long>(chatSwitchWindows[i].durationNanoseconds),
 			static_cast<long long>(attributedWallNanoseconds),
-			static_cast<long long>(nativeDisplayLockOverlapNanoseconds),
 			static_cast<long long>(
 				chatSwitchWindows[i].mainThreadWorkNanoseconds),
 			static_cast<long long>(estimate.blockedNanoseconds),
