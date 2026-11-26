@@ -16764,7 +16764,22 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 	const auto migrationChat = data.chat(migrationChatId);
 	const auto migrationHistory = makeHistory(migrationChatId);
 	migrationHistory->getReadyFor(ShowAtTheEndMsgId);
+	migrationHistory->getReadyFor(ShowAtUnreadMsgId);
+	migrationHistory->addNewLocalMessage(
+		{
+			.id = data.nextLocalMessageId(),
+			.flags = (MessageFlag::Outgoing | MessageFlag::HasFromId),
+			.from = session.userPeerId(),
+			.date = base::unixtime::now(),
+		},
+		TextWithEntities{.text = u"migration fixture"_q},
+		MTP_messageMediaEmpty());
 	migrationHistory->markLoadedAtTop();
+	const auto migrationSourceHistoryReady
+		= !migrationHistory->isEmpty() && migrationHistory->loadedAtTop()
+		  && migrationHistory->loadedAtBottom()
+		  && migrationHistory->isReadyFor(ShowAtUnreadMsgId)
+		  && migrationHistory->isReadyFor(ShowAtTheEndMsgId);
 	using ChannelFlag = MTPDchannel::Flag;
 	const auto migrationChannelPeer
 		= data.processChats(MTP_vector<MTPChat>({MTP_channel(
@@ -16871,7 +16886,8 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 			1500);
 	}
 	result.openPeerMigrationRebind
-		= migrationChatOpened && migrationOpenPeerMatches && migrationLinksReady
+		= migrationSourceHistoryReady && migrationChatOpened
+		  && migrationOpenPeerMatches && migrationLinksReady
 		  && migrationHistoryUnchangedAfterFlush
 		  && migrationNotificationConsumerEntered && migrationCallbackReached
 		  && migrationCallbackPeerMatched && migrationHandlerEntered
@@ -16879,15 +16895,17 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		  && migrationWidgetPeerIsChannel && migrationWidgetStillInstalled
 		  && migrationRestoredHistory;
 	std::fprintf(stderr,
-				 "Open peer migration rebind: opened=%d peer_matches=%d "
+				 "Open peer migration rebind: source_history_ready=%d "
+				 "opened=%d peer_matches=%d "
 				 "links_ready=%d history_unchanged_after_flush=%d "
 				 "notification_consumer=%d callback_reached=%d "
 				 "callback_peer_matches=%d handler_entered=%d "
 				 "widget_switched_to_channel=%d switched_to_channel=%d "
 				 "widget_peer_channel=%d widget_installed=%d transition=%d "
 				 "restored=%d passed=%d.\n",
-				 migrationChatOpened, migrationOpenPeerMatches,
-				 migrationLinksReady, migrationHistoryUnchangedAfterFlush,
+				 migrationSourceHistoryReady, migrationChatOpened,
+				 migrationOpenPeerMatches, migrationLinksReady,
+				 migrationHistoryUnchangedAfterFlush,
 				 migrationNotificationConsumerEntered, migrationCallbackReached,
 				 migrationCallbackPeerMatched, migrationHandlerEntered,
 				 migrationWidgetSwitchedToChannel, migrationSwitchedToChannel,
