@@ -3410,7 +3410,7 @@ void HistoryWidget::subscribePeerUpdates() {
 				}
 				if (flags & PeerUpdateFlag::Migration) {
 					const auto peer = _peer;
-					crl::on_main(this, [=] {
+					QTimer::singleShot(0, this, [=] {
 						if (_peer == peer) {
 							handlePeerMigration();
 						}
