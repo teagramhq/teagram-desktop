@@ -13754,9 +13754,9 @@ void AccumulateMainThreadWorkEstimate(qint64 &aggregateNanoseconds,
 			std::vector<Core::UiStallWatchdog::StallEvidence>{
 				mixedDisplayLockStall});
 	const auto windowEndingBetweenPings = MainThreadWorkInterval{
-		.startedAtSteadyNanoseconds = 4'000'000'000,
 		.durationNanoseconds = 60'000'000,
 		.mainThreadWorkNanoseconds = 21'272'000,
+		.startedAtSteadyNanoseconds = 4'000'000'000,
 	};
 	const auto windowEndingBetweenPingsSchedulerSamples = SchedulerTraceWindow{
 		.trace = u"RRRR"_q,
