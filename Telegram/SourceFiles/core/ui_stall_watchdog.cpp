@@ -1032,7 +1032,7 @@ void UiStallWatchdog::run() {
 					StallEvidenceHistory.erase(StallEvidenceHistory.begin());
 				}
 			}
-			enqueueReport([this, startedAt, postedAtSteadyNanoseconds,
+			enqueueReport([this, startedAt, postedAtSteadyNanoseconds, current,
 						   schedulerTraceText, completedDurationMilliseconds,
 						   rawStack, reportedStack = formattedStack] {
 				const auto stack
