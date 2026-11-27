@@ -15246,8 +15246,8 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 	// preloads pending to fail later inside a measured chat switch.
 	firstHistory->markLoadedAtTop();
 	secondHistory->markLoadedAtTop();
-	// The blank histories are complete too. Without the top marker, selecting
-	// one enters firstLoadMessages() from the measured showHistory path.
+	// The blank histories are complete too. The top marker lets loadMessages()
+	// return before requesting an older slice during the measured selection.
 	emptyFirstHistory->markLoadedAtTop();
 	emptySecondHistory->markLoadedAtTop();
 	const auto makeUiHistory = [&](ChatId id, int messageId) {
