@@ -15246,6 +15246,10 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 	// preloads pending to fail later inside a measured chat switch.
 	firstHistory->markLoadedAtTop();
 	secondHistory->markLoadedAtTop();
+	// The blank histories are complete too. Without the top marker, selecting
+	// one enters firstLoadMessages() from the measured showHistory path.
+	emptyFirstHistory->markLoadedAtTop();
+	emptySecondHistory->markLoadedAtTop();
 	const auto makeUiHistory = [&](ChatId id, int messageId) {
 		data.processChats(MTP_vector<MTPChat>({MTP_chat(
 			MTP_flags(MTPDchat::Flags()), MTP_long(id.bare),
@@ -15277,6 +15281,10 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		  && secondHistory->isReadyFor(ShowAtUnreadMsgId);
 	result.syntheticHistoriesReady
 		= emptyFirstHistory->isEmpty() && emptySecondHistory->isEmpty()
+		  && emptyFirstHistory->loadedAtTop()
+		  && emptyFirstHistory->loadedAtBottom()
+		  && emptySecondHistory->loadedAtTop()
+		  && emptySecondHistory->loadedAtBottom()
 		  && emptyFirstHistory->isReadyFor(ShowAtUnreadMsgId)
 		  && emptySecondHistory->isReadyFor(ShowAtUnreadMsgId);
 	result.peerScopedUpdateRouting

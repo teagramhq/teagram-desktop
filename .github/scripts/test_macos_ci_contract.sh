@@ -1095,8 +1095,8 @@ require_step_field "$mac_workflow" build-macos "$regression_step" '.if' \
   "\${{ !cancelled() && steps.build.outcome == 'success' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.label.name == 'macos-build')) }}"
 regression_timeout_minutes="$(step_field "$mac_workflow" build-macos \
   "$regression_step" '.timeout-minutes')"
-[[ "$regression_timeout_minutes" == 20 ]] \
-  || contract_fail 'Full chat info session regression must retain its existing 20-minute timeout.'
+[[ "$regression_timeout_minutes" == 30 ]] \
+  || contract_fail 'Full chat info session timeout must cover dSYM generation and replay.'
 require_step_script "$mac_workflow" build-macos "$regression_step" \
   'exec > >(tee "$diagnostics/harness.log") 2>&1' \
   'RUNNER_EXTERNAL_ACTIVATION_HOME="$HOME"' \
