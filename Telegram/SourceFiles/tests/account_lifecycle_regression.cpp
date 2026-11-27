@@ -14270,12 +14270,14 @@ void AccumulateMainThreadWorkEstimate(qint64 &aggregateNanoseconds,
 		int index = 1;
 		int firstFailed = 0;
 
-		FixtureChecks &operator&&(bool passed) {
+		template <typename Value>
+		FixtureChecks &operator&&(const Value &passed) {
+			const auto value = static_cast<bool>(passed);
 			++index;
-			if (!passed && !firstFailed) {
+			if (!value && !firstFailed) {
 				firstFailed = index;
 			}
-			allPassed = allPassed && passed;
+			allPassed = allPassed && value;
 			return *this;
 		}
 	};
