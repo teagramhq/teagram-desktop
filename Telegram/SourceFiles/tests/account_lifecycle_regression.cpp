@@ -13165,6 +13165,25 @@ void AccumulateMainThreadWorkEstimate(qint64 &aggregateNanoseconds,
 	}
 }
 
+// Evaluates every operand of a `&&` chain, so an early failure does not hide
+// later checks. A member template cannot live in a function-local class.
+struct FixtureChecks {
+	bool allPassed = true;
+	int index = 1;
+	int firstFailed = 0;
+
+	template <typename Value>
+	FixtureChecks &operator&&(const Value &passed) {
+		const auto value = static_cast<bool>(passed);
+		++index;
+		if (!value && !firstFailed) {
+			firstFailed = index;
+		}
+		allPassed = allPassed && value;
+		return *this;
+	}
+};
+
 [[nodiscard]] bool MainThreadBlockedWorkBudgetRegressionPasses() {
 	const auto coveredOffsets = [](qint64 duration) {
 		auto result = SchedulerSampleOffsetsForDuration(duration);
@@ -14265,22 +14284,6 @@ void AccumulateMainThreadWorkEstimate(qint64 &aggregateNanoseconds,
 	AccumulateMainThreadWorkEstimate(callbackEstimate, -1);
 	AccumulateMainThreadWorkEstimate(callbackEstimate, 12'000'000);
 	// Evaluate every fixture, so an early failure does not hide later checks.
-	struct FixtureChecks {
-		bool allPassed = true;
-		int index = 1;
-		int firstFailed = 0;
-
-		template <typename Value>
-		FixtureChecks &operator&&(const Value &passed) {
-			const auto value = static_cast<bool>(passed);
-			++index;
-			if (!value && !firstFailed) {
-				firstFailed = index;
-			}
-			allPassed = allPassed && value;
-			return *this;
-		}
-	};
 	auto checks = FixtureChecks{(gap25.blockedNanoseconds == 0)};
 	if (!checks.allPassed) {
 		checks.firstFailed = 1;
