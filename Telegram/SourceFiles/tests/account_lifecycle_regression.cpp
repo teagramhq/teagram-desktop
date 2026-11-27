@@ -13741,29 +13741,35 @@ void AccumulateMainThreadWorkEstimate(qint64 &aggregateNanoseconds,
 		1'000'000'000);
 	const auto handlerTailCpuWindow = SchedulerTraceForInterval(
 		MainThreadWorkInterval{
-			.durationNanoseconds = 10'000'000,
+			.durationNanoseconds = 16'000'000,
 			.startedAtSteadyNanoseconds = 2'000'000'000,
 			.mainThreadCpuStartNanoseconds = 100'000'000,
-			.mainThreadCpuEndNanoseconds = 104'000'000,
+			.mainThreadCpuEndNanoseconds = 102'000'000,
 		},
 		std::vector<Core::UiStallWatchdog::SchedulerSampleEvidence>{
+			{.sampledAtSteadyNanoseconds = 2'002'000'000,
+			 .state = 'R',
+			 .mainThreadCpuNanoseconds = 101'000'000},
 			{.sampledAtSteadyNanoseconds = 2'008'000'000,
+			 .state = 'R',
+			 .mainThreadCpuNanoseconds = 101'000'000},
+			{.sampledAtSteadyNanoseconds = 2'010'000'000,
 			 .state = 'W',
-			 .mainThreadCpuNanoseconds = 102'000'000},
-			{.sampledAtSteadyNanoseconds = 2'011'000'000,
+			 .mainThreadCpuNanoseconds = 101'000'000},
+			{.sampledAtSteadyNanoseconds = 2'017'000'000,
 			 .state = 'U',
-			 .mainThreadCpuNanoseconds = 104'000'000},
+			 .mainThreadCpuNanoseconds = 102'000'000},
 		});
 	const auto handlerTailCpuEstimate
-		= EstimateMainThreadWork(4'000'000, 10'000'000, handlerTailCpuWindow);
+		= EstimateMainThreadWork(2'000'000, 16'000'000, handlerTailCpuWindow);
 	const auto handlerTailCpuAssessment = AssessMainThreadWorkBudget(
-		handlerTailCpuEstimate, 4'000'000, 11'000'000);
+		handlerTailCpuEstimate, 2'000'000, 10'500'000);
 	auto handlerTailCpuWindowWithoutEnd = handlerTailCpuWindow;
 	handlerTailCpuWindowWithoutEnd.mainThreadCpuEndNanoseconds = -1;
 	const auto handlerTailCpuEstimateWithoutEnd = EstimateMainThreadWork(
-		4'000'000, 10'000'000, handlerTailCpuWindowWithoutEnd);
+		2'000'000, 16'000'000, handlerTailCpuWindowWithoutEnd);
 	const auto handlerTailCpuAssessmentWithoutEnd = AssessMainThreadWorkBudget(
-		handlerTailCpuEstimateWithoutEnd, 4'000'000, 11'000'000);
+		handlerTailCpuEstimateWithoutEnd, 2'000'000, 10'500'000);
 	auto waitingBeforeSamples = bracketedSamples;
 	waitingBeforeSamples.front().state = 'W';
 	const auto waitingBefore
@@ -14652,13 +14658,14 @@ void AccumulateMainThreadWorkEstimate(qint64 &aggregateNanoseconds,
 			&& leadingBoundaryCpuWithinBudget
 			&& leadingBoundaryCpuRun.WithinBudget()
 			&& !handlerTailCpuWindow.capturePending
-			&& (handlerTailCpuEstimate.blockedNanoseconds == 6'000'000)
+			&& (handlerTailCpuWindow.trace == u"RRW"_q)
+			&& (handlerTailCpuEstimate.blockedNanoseconds == 8'000'000)
 			&& (handlerTailCpuEstimate.estimatedWorkNanoseconds == 10'000'000)
 			&& handlerTailCpuAssessment.withinBudget
 			&& (handlerTailCpuEstimateWithoutEnd.blockedNanoseconds
-				== 8'000'000)
+				== 9'000'000)
 			&& (handlerTailCpuEstimateWithoutEnd.estimatedWorkNanoseconds
-				== 12'000'000)
+				== 11'000'000)
 			&& !handlerTailCpuAssessmentWithoutEnd.withinBudget
 		   && (delayedCpuAccountingEstimate.blockedNanoseconds == 5'000'000)
 		   && (delayedCpuAccountingEstimate.estimatedWorkNanoseconds
