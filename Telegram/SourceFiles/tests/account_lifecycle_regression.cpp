@@ -17060,10 +17060,18 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		= StartupWatchdogStallEvidenceRegressionPasses();
 	std::fprintf(
 		stderr,
-		"Chat switch gate checks: scale_rebuilt=%d transitions_settled=%d "
+		"Chat switch gate checks: completed=%d timed_out=%d "
+		"cached_documents=%d expected_cached_documents=%d "
+		"hydration_cpu_clock=%d hydration_process_cpu_clock=%d "
+		"chat_switch_cpu_clock=%d chat_switch_process_cpu_clock=%d "
+		"scale_rebuilt=%d transitions_settled=%d "
 		"initial_selection_within_budget=%d switch_work_within_budget=%d "
 		"startup_budget=%d blocked_work_fixtures=%d "
 		"startup_watchdog_fixtures=%d.\n",
+		completed, timedOut, result.cachedDocuments,
+		(kReactionCount / 2 + 1) * kDocumentsPerReaction,
+		hydrationCpuClockAvailable, hydrationProcessCpuClockAvailable,
+		chatSwitchCpuClockAvailable, chatSwitchProcessCpuClockAvailable,
 		result.historyScaleInvalidationRebuilt,
 		result.chatSwitchTransitionsSettled,
 		result.initialHistorySelectionWithinBudget,
