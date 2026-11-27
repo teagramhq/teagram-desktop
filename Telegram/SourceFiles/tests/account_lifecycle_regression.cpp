@@ -14017,6 +14017,9 @@ struct FixtureChecks {
 			.schedulerSampleOffsetsNanoseconds = partialPingSchedulerOffsets,
 			.schedulerTraceComplete = true,
 	};
+	// Keep this ack pending: its next ping is due before the window ends.
+	auto overduePartialPingAcknowledgement = partialPingAcknowledgement;
+	overduePartialPingAcknowledgement.pingIntervalNanoseconds = 5'000'000;
 	auto partialPingStall = corroboratingStall;
 	partialPingStall.startedAt
 		= corroboratedStartupGap.startedAt.addMSecs(-2).toString(
@@ -14038,7 +14041,7 @@ struct FixtureChecks {
 	const auto partialPingAcknowledgementWindow = SchedulerTraceForInterval(
 		corroboratedStartupGap,
 		std::vector<Core::UiStallWatchdog::PingAcknowledgementEvidence>{
-			partialPingAcknowledgement,
+			overduePartialPingAcknowledgement,
 		});
 	const auto partialPingStallWindow
 		= SchedulerTraceForInterval(corroboratedStartupGap, partialPingStall);
