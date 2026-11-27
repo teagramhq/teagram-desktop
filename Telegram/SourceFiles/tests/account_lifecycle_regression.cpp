@@ -14264,7 +14264,26 @@ void AccumulateMainThreadWorkEstimate(qint64 &aggregateNanoseconds,
 	AccumulateMainThreadWorkEstimate(callbackEstimate, 20'000'000);
 	AccumulateMainThreadWorkEstimate(callbackEstimate, -1);
 	AccumulateMainThreadWorkEstimate(callbackEstimate, 12'000'000);
-	return (gap25.blockedNanoseconds == 0)
+	// Evaluate every fixture, so an early failure does not hide later checks.
+	struct FixtureChecks {
+		bool allPassed = true;
+		int index = 1;
+		int firstFailed = 0;
+
+		FixtureChecks &operator&&(bool passed) {
+			++index;
+			if (!passed && !firstFailed) {
+				firstFailed = index;
+			}
+			allPassed = allPassed && passed;
+			return *this;
+		}
+	};
+	auto checks = FixtureChecks{(gap25.blockedNanoseconds == 0)};
+	if (!checks.allPassed) {
+		checks.firstFailed = 1;
+	}
+	const auto &allChecksPassed = checks
 		   && (gap25.estimatedWorkNanoseconds == 0)
 		   && (gap26.blockedNanoseconds == -1)
 		   && (gap26.estimatedWorkNanoseconds == 104'000'000)
@@ -14702,7 +14721,12 @@ void AccumulateMainThreadWorkEstimate(qint64 &aggregateNanoseconds,
 			   50'000'000)
 		   && (callbackEstimate == -1)
 		   && !MainThreadEstimatedWorkWithinBudget(callbackEstimate,
-												   50'000'000);
+													   50'000'000);
+	if (!allChecksPassed.allPassed) {
+		std::fprintf(stderr, "Blocked-work fixture failed: assertion=%d.\n",
+					 allChecksPassed.firstFailed);
+	}
+	return allChecksPassed.allPassed;
 }
 
 [[maybe_unused, nodiscard]] bool
@@ -14817,6 +14841,7 @@ struct CacheChatSwitchRegressionResult final {
 	bool historyChatModeInvalidationRebuilt = false;
 	bool chatSwitchComposeUiReused = false;
 	bool translateBarReused = false;
+	bool translateBarRetainedAcrossSwitches = true;
 	bool translateBarTracksCurrentHistory = false;
 	bool openPeerMigrationRebind = false;
 	bool historyChatModeInitiallyWide = false;
@@ -15375,7 +15400,17 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 				  .count();
 		const auto mainThreadBefore = MainThreadCpuTimeNanoseconds();
 		const auto processBefore = ProcessCpuTimeNanoseconds();
+		const auto translateBarBefore
+			= historyWidget->translateBarForRegressionTest();
 		controller->showPeerHistory(history);
+		const auto translateBarAfter
+			= historyWidget->translateBarForRegressionTest();
+		if (index > 0) {
+			result.translateBarRetainedAcrossSwitches
+				= result.translateBarRetainedAcrossSwitches
+				  && translateBarBefore
+				  && (translateBarAfter == translateBarBefore);
+		}
 		checkTranslateBar(history);
 		const auto wallDurationNanoseconds = timer.nsecsElapsed();
 		const auto mainThreadAfter = MainThreadCpuTimeNanoseconds();
@@ -17047,9 +17082,10 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 	std::fprintf(
 		stderr,
 		"Chat switch translation bar reuse: first_bound=%d second_bound=%d "
-		"returned_bound=%d reused=%d.\n",
+		"returned_bound=%d navigation_reuse=%d reused=%d.\n",
 		translateBarBoundToFirstHistory, sameTranslateBarOnSecondHistory,
-		sameTranslateBarOnReturn, result.translateBarReused);
+		sameTranslateBarOnReturn, result.translateBarRetainedAcrossSwitches,
+		result.translateBarReused);
 	std::fprintf(stderr, "Group call bar deferred button: passed=%d.\n",
 				 groupCallBarDeferred);
 	std::fprintf(stderr, "Contact status deferred request text: passed=%d.\n",
@@ -17120,6 +17156,7 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 			  kMaxChatSwitchNanoseconds)
 		  && result.attachMenuCacheBounded && result.chatSwitchComposeUiReused
 		  && result.translateBarReused
+		  && result.translateBarRetainedAcrossSwitches
 		  && result.translateBarTracksCurrentHistory
 		  && result.openPeerMigrationRebind
 		  && result.fieldAutocompleteSuggestionsReady
