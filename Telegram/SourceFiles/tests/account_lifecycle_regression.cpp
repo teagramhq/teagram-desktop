@@ -14499,8 +14499,9 @@ struct FixtureChecks {
 		   && uncapturedWindow.capturePending
 		   && pendingFirstAccessTimeoutSamples.capturePending
 		   && (pendingFirstAccessTimeoutSamples.trace == u"WWWWWWW"_q)
-		   && (pendingFirstAccessTimeoutSamples.sampleOffsetsNanoseconds.back()
-			   == 60'000'000)
+		   && (!pendingFirstAccessTimeoutSamples.sampleOffsetsNanoseconds.empty()
+			   && (pendingFirstAccessTimeoutSamples.sampleOffsetsNanoseconds.back()
+				   == 60'000'000))
 		   && !pendingFirstAccessAssessment.schedulerEvidenceAvailable
 		   && (pendingFirstAccessAssessment.workNanoseconds == 90'000'000)
 		   && !pendingFirstAccessAssessment.withinBudget
@@ -14511,8 +14512,9 @@ struct FixtureChecks {
 		   && !pendingFirstAccessRun.WithinBudget()
 		   && pendingAcknowledgementWindow.capturePending
 		   && (pendingAcknowledgementWindow.trace == u"WWWWWWW"_q)
-		   && (pendingAcknowledgementWindow.sampleOffsetsNanoseconds.back()
-			   == 60'000'000)
+		   && (!pendingAcknowledgementWindow.sampleOffsetsNanoseconds.empty()
+			   && (pendingAcknowledgementWindow.sampleOffsetsNanoseconds.back()
+				   == 60'000'000))
 		   && pendingStartupWork.schedulerSamples.capturePending
 		   && (pendingStartupWork.schedulerSamples.trace == u"WWWWWWW"_q)
 		   && (pendingStartupAssessment.workNanoseconds == 110'000'000)
@@ -16992,17 +16994,27 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		firstHistory->translateOfferFrom(offeredTranslationLanguage);
 		translationPhraseShown = WaitForRegressionCondition(
 			[&] {
-				return returnedHistoryTranslateBar
-					->shouldBeShownForRegressionTest();
+				const auto current
+					= historyWidget->translateBarForRegressionTest();
+				return current
+					   && (current->historyForRegressionTest()
+						   == firstHistory.get())
+					   && current->shouldBeShownForRegressionTest();
 			},
 			1500);
+		const auto translateBarAfterPhraseWait
+			= historyWidget->translateBarForRegressionTest();
+		translationPhraseShown
+			= translationPhraseShown && translateBarAfterPhraseWait
+			  && (translateBarAfterPhraseWait->historyForRegressionTest()
+				  == firstHistory.get());
 		if (translationPhraseShown) {
-			returnedHistoryTranslateBar->finishAnimating();
+			translateBarAfterPhraseWait->finishAnimating();
 			visibleBeforeClose
-				= !returnedHistoryTranslateBar->hiddenForRegressionTest()
-				  && (returnedHistoryTranslateBar->height() > 0);
+				= !translateBarAfterPhraseWait->hiddenForRegressionTest()
+				  && (translateBarAfterPhraseWait->height() > 0);
 			firstHistory->translateTo(offeredTranslationLanguage);
-			returnedHistoryTranslateBar->setOverridenToForRegressionTest(
+			translateBarAfterPhraseWait->setOverridenToForRegressionTest(
 				LanguageId());
 			translatedHistoryReady
 				= (firstHistory->translatedTo() == offeredTranslationLanguage);
