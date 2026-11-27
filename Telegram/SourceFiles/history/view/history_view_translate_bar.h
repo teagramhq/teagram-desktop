@@ -46,9 +46,6 @@ public:
 
 #ifdef TDESKTOP_LIFECYCLE_REGRESSION
 	[[nodiscard]] bool shouldBeShownForRegressionTest() const;
-	[[nodiscard]] bool forceHiddenForRegressionTest() const {
-		return _forceHidden;
-	}
 	[[nodiscard]] bool hiddenForRegressionTest() const {
 		return _wrap.isHidden();
 	}

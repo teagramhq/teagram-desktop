@@ -16931,14 +16931,24 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 								&& sameTranslateBarOnSecondHistory
 								&& sameTranslateBarOnReturn;
 	const auto offeredTranslationLanguage = LanguageId::FromName(u"French"_q);
+	auto &translationSettings = Core::App().settings();
+	const auto originalTranslateTo = translationSettings.translateTo();
+	const auto germanLanguage = LanguageId::FromName(u"German"_q);
+	const auto spanishLanguage = LanguageId::FromName(u"Spanish"_q);
+	const auto closedTargetLanguage = (originalTranslateTo != germanLanguage)
+										  ? germanLanguage
+										  : spanishLanguage;
 	auto translationPhraseShown = false;
 	auto visibleBeforeClose = false;
 	auto closed = false;
-	auto hiddenOnClose = false;
+	auto barDestroyedOnClose = false;
+	auto translatedHistoryReady = false;
+	auto noTranslateToWhileClosed = false;
 	auto reopened = false;
+	auto reopenedBarCreated = false;
 	auto visibleOnReopen = false;
 	if (translateBar && firstHistoryReturnedForTranslateBar
-		&& offeredTranslationLanguage.known()) {
+		&& offeredTranslationLanguage.known() && closedTargetLanguage.known()) {
 		firstHistory->peer->setTranslationDisabled(false);
 		firstHistory->translateOfferFrom(offeredTranslationLanguage);
 		translationPhraseShown = WaitForRegressionCondition(
@@ -16946,9 +16956,12 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 			1500);
 		if (translationPhraseShown) {
 			translateBar->finishAnimating();
-			visibleBeforeClose = !translateBar->forceHiddenForRegressionTest()
-								 && !translateBar->hiddenForRegressionTest()
+			visibleBeforeClose = !translateBar->hiddenForRegressionTest()
 								 && (translateBar->height() > 0);
+			firstHistory->translateTo(offeredTranslationLanguage);
+			translateBar->setOverridenToForRegressionTest(LanguageId());
+			translatedHistoryReady
+				= (firstHistory->translatedTo() == offeredTranslationLanguage);
 			controller->clearSectionStack();
 			closed = WaitForRegressionCondition(
 				[&] {
@@ -16957,33 +16970,46 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 								  ->historyTransitionFinishedForRegressionTest();
 				},
 				1500);
-			translateBar->finishAnimating();
-			hiddenOnClose = translateBar->forceHiddenForRegressionTest()
-							&& translateBar->hiddenForRegressionTest();
+			barDestroyedOnClose
+				= closed && !historyWidget->translateBarForRegressionTest();
+			const auto translatedBeforeClosedPreference
+				= firstHistory->translatedTo();
+			translationSettings.setTranslateTo(closedTargetLanguage);
+			QCoreApplication::processEvents();
+			noTranslateToWhileClosed = (firstHistory->translatedTo()
+										== translatedBeforeClosedPreference);
+			translationSettings.setTranslateTo(originalTranslateTo);
 			reopened = showHistoryForTranslateBar(firstHistory);
-			translateBar->finishAnimating();
-			visibleOnReopen = reopened
-							  && (historyWidget->translateBarForRegressionTest()
-								  == translateBar)
-							  && (translateBar->historyForRegressionTest()
-								  == firstHistory.get())
-							  && translateBar->shouldBeShownForRegressionTest()
-							  && !translateBar->forceHiddenForRegressionTest()
-							  && !translateBar->hiddenForRegressionTest()
-							  && (translateBar->height() > 0);
-			result.translateBarClosedReopened = visibleBeforeClose && closed
-												&& hiddenOnClose
-												&& visibleOnReopen;
+			const auto reopenedBar
+				= historyWidget->translateBarForRegressionTest();
+			if (reopenedBar) {
+				reopenedBar->finishAnimating();
+				reopenedBarCreated = (reopenedBar->historyForRegressionTest()
+									  == firstHistory.get());
+				visibleOnReopen
+					= reopened && reopenedBarCreated
+					  && reopenedBar->shouldBeShownForRegressionTest()
+					  && !reopenedBar->hiddenForRegressionTest()
+					  && (reopenedBar->height() > 0);
+			}
+			result.translateBarClosedReopened
+				= visibleBeforeClose && translatedHistoryReady && closed
+				  && barDestroyedOnClose && noTranslateToWhileClosed && reopened
+				  && visibleOnReopen;
 		}
 	}
 	std::fprintf(
 		stderr,
 		"Translation bar close/reopen: bar_ready=%d first_history_returned=%d "
-		"language_ready=%d phrase_shown=%d visible_before_close=%d "
-		"closed=%d hidden_on_close=%d reopened=%d visible_on_reopen=%d.\n",
+		"language_ready=%d closed_target_ready=%d phrase_shown=%d "
+		"visible_before_close=%d translated_history_ready=%d closed=%d "
+		"bar_destroyed=%d no_translate_while_closed=%d reopened=%d "
+		"reopened_bar_created=%d visible_on_reopen=%d.\n",
 		bool(translateBar), firstHistoryReturnedForTranslateBar,
-		offeredTranslationLanguage.known(), translationPhraseShown,
-		visibleBeforeClose, closed, hiddenOnClose, reopened, visibleOnReopen);
+		offeredTranslationLanguage.known(), closedTargetLanguage.known(),
+		translationPhraseShown, visibleBeforeClose, translatedHistoryReady,
+		closed, barDestroyedOnClose, noTranslateToWhileClosed, reopened,
+		reopenedBarCreated, visibleOnReopen);
 	const auto historyBeforeMigration = historyWidget->history();
 	const auto migrationChatId = ChatId(1'050'057);
 	const auto migrationChannelId = ChannelId(1'050'058);

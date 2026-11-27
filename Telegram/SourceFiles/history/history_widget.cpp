@@ -2991,7 +2991,7 @@ void HistoryWidget::showHistory(
 		_sponsoredMessageBar = nullptr;
 		_pinnedBar = nullptr;
 		if (!peerId && _translateBar) {
-			_translateBar->hide();
+			_translateBar = nullptr;
 		}
 		_pinnedTracker = nullptr;
 		_groupCallBar = nullptr;
