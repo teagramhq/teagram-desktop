@@ -14845,6 +14845,7 @@ struct CacheChatSwitchRegressionResult final {
 	bool historyChatModeInvalidationRebuilt = false;
 	bool chatSwitchComposeUiReused = false;
 	bool translateBarReused = false;
+	bool translateBarClosedReopened = false;
 	bool translateBarRetainedAcrossSwitches = true;
 	bool translateBarTracksCurrentHistory = false;
 	bool openPeerMigrationRebind = false;
@@ -16929,6 +16930,60 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 	result.translateBarReused = translateBarBoundToFirstHistory
 								&& sameTranslateBarOnSecondHistory
 								&& sameTranslateBarOnReturn;
+	const auto offeredTranslationLanguage = LanguageId::FromName(u"French"_q);
+	auto translationPhraseShown = false;
+	auto visibleBeforeClose = false;
+	auto closed = false;
+	auto hiddenOnClose = false;
+	auto reopened = false;
+	auto visibleOnReopen = false;
+	if (translateBar && firstHistoryReturnedForTranslateBar
+		&& offeredTranslationLanguage.known()) {
+		firstHistory->peer->setTranslationDisabled(false);
+		firstHistory->translateOfferFrom(offeredTranslationLanguage);
+		translationPhraseShown = WaitForRegressionCondition(
+			[&] { return translateBar->shouldBeShownForRegressionTest(); },
+			1500);
+		if (translationPhraseShown) {
+			translateBar->finishAnimating();
+			visibleBeforeClose = !translateBar->forceHiddenForRegressionTest()
+								 && !translateBar->hiddenForRegressionTest()
+								 && (translateBar->height() > 0);
+			controller->clearSectionStack();
+			closed = WaitForRegressionCondition(
+				[&] {
+					return !historyWidget->history()
+						   && historyWidget
+								  ->historyTransitionFinishedForRegressionTest();
+				},
+				1500);
+			translateBar->finishAnimating();
+			hiddenOnClose = translateBar->forceHiddenForRegressionTest()
+							&& translateBar->hiddenForRegressionTest();
+			reopened = showHistoryForTranslateBar(firstHistory);
+			translateBar->finishAnimating();
+			visibleOnReopen = reopened
+							  && (historyWidget->translateBarForRegressionTest()
+								  == translateBar)
+							  && (translateBar->historyForRegressionTest()
+								  == firstHistory.get())
+							  && translateBar->shouldBeShownForRegressionTest()
+							  && !translateBar->forceHiddenForRegressionTest()
+							  && !translateBar->hiddenForRegressionTest()
+							  && (translateBar->height() > 0);
+			result.translateBarClosedReopened = visibleBeforeClose && closed
+												&& hiddenOnClose
+												&& visibleOnReopen;
+		}
+	}
+	std::fprintf(
+		stderr,
+		"Translation bar close/reopen: bar_ready=%d first_history_returned=%d "
+		"language_ready=%d phrase_shown=%d visible_before_close=%d "
+		"closed=%d hidden_on_close=%d reopened=%d visible_on_reopen=%d.\n",
+		bool(translateBar), firstHistoryReturnedForTranslateBar,
+		offeredTranslationLanguage.known(), translationPhraseShown,
+		visibleBeforeClose, closed, hiddenOnClose, reopened, visibleOnReopen);
 	const auto historyBeforeMigration = historyWidget->history();
 	const auto migrationChatId = ChatId(1'050'057);
 	const auto migrationChannelId = ChannelId(1'050'058);
@@ -17086,10 +17141,11 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 	std::fprintf(
 		stderr,
 		"Chat switch translation bar reuse: first_bound=%d second_bound=%d "
-		"returned_bound=%d navigation_reuse=%d reused=%d.\n",
+		"returned_bound=%d navigation_reuse=%d reused=%d "
+		"closed_reopened=%d.\n",
 		translateBarBoundToFirstHistory, sameTranslateBarOnSecondHistory,
 		sameTranslateBarOnReturn, result.translateBarRetainedAcrossSwitches,
-		result.translateBarReused);
+		result.translateBarReused, result.translateBarClosedReopened);
 	std::fprintf(stderr, "Group call bar deferred button: passed=%d.\n",
 				 groupCallBarDeferred);
 	std::fprintf(stderr, "Contact status deferred request text: passed=%d.\n",
@@ -17159,7 +17215,7 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 			  result.attachMenuUncachedPeerEstimatedWorkNanoseconds,
 			  kMaxChatSwitchNanoseconds)
 		  && result.attachMenuCacheBounded && result.chatSwitchComposeUiReused
-		  && result.translateBarReused
+		  && result.translateBarReused && result.translateBarClosedReopened
 		  && result.translateBarRetainedAcrossSwitches
 		  && result.translateBarTracksCurrentHistory
 		  && result.openPeerMigrationRebind

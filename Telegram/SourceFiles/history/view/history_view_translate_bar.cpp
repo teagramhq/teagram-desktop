@@ -295,6 +295,7 @@ void TranslateBar::updateShadowGeometry(QRect wrapGeometry) {
 
 void TranslateBar::setHistory(not_null<History *> history) {
 	if (_history == history) {
+		show();
 		return;
 	}
 	_menu = nullptr;

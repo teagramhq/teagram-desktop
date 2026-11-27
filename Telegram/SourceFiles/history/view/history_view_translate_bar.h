@@ -46,6 +46,12 @@ public:
 
 #ifdef TDESKTOP_LIFECYCLE_REGRESSION
 	[[nodiscard]] bool shouldBeShownForRegressionTest() const;
+	[[nodiscard]] bool forceHiddenForRegressionTest() const {
+		return _forceHidden;
+	}
+	[[nodiscard]] bool hiddenForRegressionTest() const {
+		return _wrap.isHidden();
+	}
 	[[nodiscard]] bool controlsCreatedForRegressionTest() const;
 	[[nodiscard]] int contentWidthForRegressionTest() const;
 	[[nodiscard]] History *historyForRegressionTest() const { return _history; }
