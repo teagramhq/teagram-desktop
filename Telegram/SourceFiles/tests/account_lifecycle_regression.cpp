@@ -11930,6 +11930,7 @@ struct MainThreadWorkInterval final {
 	qint64 processWorkNanoseconds = -1;
 	QString label;
 	qint64 startedAtSteadyNanoseconds = -1;
+	qint64 mainThreadCpuStartNanoseconds = -1;
 	qint64 mainThreadCpuEndNanoseconds = -1;
 };
 
@@ -12191,6 +12192,7 @@ struct SchedulerTraceWindow final {
 	bool capturePending = false;
 	std::optional<SchedulerBoundarySample> before;
 	std::optional<SchedulerBoundarySample> after;
+	qint64 mainThreadCpuStartNanoseconds = -1;
 	qint64 mainThreadCpuEndNanoseconds = -1;
 };
 
@@ -12266,6 +12268,8 @@ MarkSchedulerTraceCapturePending(SchedulerTraceWindow samples) {
 			  [](const auto &a, const auto &b) { return a.offset < b.offset; });
 	auto result = SchedulerTraceWindow();
 	result.mainThreadCpuEndNanoseconds = interval.mainThreadCpuEndNanoseconds;
+	result.mainThreadCpuStartNanoseconds
+		= interval.mainThreadCpuStartNanoseconds;
 	result.trace.reserve(qsizetype(samples.size()));
 	result.sampleOffsetsNanoseconds.reserve(samples.size());
 	result.sampleMainThreadCpuNanoseconds.reserve(samples.size());
@@ -12297,6 +12301,8 @@ MarkSchedulerTraceCapturePending(SchedulerTraceWindow samples) {
 	const auto windowEnd = start + interval.durationNanoseconds;
 	auto result = SchedulerTraceWindow();
 	result.mainThreadCpuEndNanoseconds = interval.mainThreadCpuEndNanoseconds;
+	result.mainThreadCpuStartNanoseconds
+		= interval.mainThreadCpuStartNanoseconds;
 	struct TraceSample final {
 		qint64 offset = 0;
 		QChar state;
@@ -12803,6 +12809,7 @@ struct MainThreadWorkBudgetAssessment final {
 	const std::optional<SchedulerBoundarySample> &before = std::nullopt,
 	const std::optional<SchedulerBoundarySample> &after = std::nullopt,
 	const std::vector<qint64> *sampleMainThreadCpuNanoseconds = nullptr,
+	qint64 mainThreadCpuStartNanoseconds = -1,
 	qint64 mainThreadCpuEndNanoseconds = -1) {
 	if (wallNanoseconds < 0) {
 		return {};
@@ -12897,6 +12904,7 @@ struct MainThreadWorkBudgetAssessment final {
 		if (gap > kMaximumSampleGapNanoseconds) {
 			return incompleteEstimate;
 		}
+		// Avoid counting measured CPU in the leading gap as blocked work too.
 		if (!hasInWindowSample && gap && before) {
 			if ((before->distanceNanoseconds < 0)
 				|| (before->distanceNanoseconds
@@ -12905,9 +12913,13 @@ struct MainThreadWorkBudgetAssessment final {
 					&& (before->state != 'U'))) {
 				return incompleteEstimate;
 			}
-			addBlockedGap(gap, (before->state != 'R') || (state != u'R'), 0);
+			addBlockedGap(gap, (before->state != 'R') || (state != u'R'),
+						  cpuDelta(mainThreadCpuStartNanoseconds,
+								   sampleCpuNanoseconds, gap));
 		} else if (!hasInWindowSample) {
-			addBlockedGap(gap, true, 0);
+			addBlockedGap(gap, true,
+						  cpuDelta(mainThreadCpuStartNanoseconds,
+								   sampleCpuNanoseconds, gap));
 		} else {
 			addBlockedGap(gap, (previousState != u'R') || (state != u'R'),
 						  cpuDeltaKnownInsideGap(previousCpuNanoseconds,
@@ -12964,6 +12976,7 @@ EstimateMainThreadWork(qint64 mainThreadCpuNanoseconds, qint64 wallNanoseconds,
 		schedulerSamples.sampleOffsetsNanoseconds, schedulerSamples.before,
 		schedulerSamples.after,
 		&schedulerSamples.sampleMainThreadCpuNanoseconds,
+		schedulerSamples.mainThreadCpuStartNanoseconds,
 		schedulerSamples.mainThreadCpuEndNanoseconds);
 }
 
@@ -13679,6 +13692,53 @@ void AccumulateMainThreadWorkEstimate(qint64 &aggregateNanoseconds,
 	const auto bracketedEstimate = EstimateMainThreadWork(
 		45'000'000, bracketedWindow.durationNanoseconds, bracketed.trace,
 		bracketed.sampleOffsetsNanoseconds, bracketed.before, bracketed.after);
+	const auto leadingBoundaryCpuWindow = SchedulerTraceForInterval(
+		MainThreadWorkInterval{
+			.durationNanoseconds = 65'000'000,
+			.startedAtSteadyNanoseconds = 1'000'000'000,
+			.mainThreadCpuStartNanoseconds = 100'000'000,
+			.mainThreadCpuEndNanoseconds = 138'000'000,
+		},
+		std::vector<Core::UiStallWatchdog::SchedulerSampleEvidence>{
+			{.sampledAtSteadyNanoseconds = 999'829'708,
+			 .state = 'W',
+			 .mainThreadCpuNanoseconds = 100'000'000},
+			{.sampledAtSteadyNanoseconds = 1'012'127'125,
+			 .state = 'R',
+			 .mainThreadCpuNanoseconds = 108'000'000},
+			{.sampledAtSteadyNanoseconds = 1'020'992'875,
+			 .state = 'R',
+			 .mainThreadCpuNanoseconds = 113'000'000},
+			{.sampledAtSteadyNanoseconds = 1'022'170'375,
+			 .state = 'R',
+			 .mainThreadCpuNanoseconds = 114'000'000},
+			{.sampledAtSteadyNanoseconds = 1'031'526'416,
+			 .state = 'R',
+			 .mainThreadCpuNanoseconds = 119'000'000},
+			{.sampledAtSteadyNanoseconds = 1'043'445'875,
+			 .state = 'R',
+			 .mainThreadCpuNanoseconds = 126'000'000},
+			{.sampledAtSteadyNanoseconds = 1'049'532'458,
+			 .state = 'R',
+			 .mainThreadCpuNanoseconds = 130'000'000},
+			{.sampledAtSteadyNanoseconds = 1'055'929'166,
+			 .state = 'R',
+			 .mainThreadCpuNanoseconds = 135'000'000},
+			{.sampledAtSteadyNanoseconds = 1'064'231'833,
+			 .state = 'R',
+			 .mainThreadCpuNanoseconds = 137'000'000},
+			{.sampledAtSteadyNanoseconds = 1'074'315'416,
+			 .state = 'U',
+			 .mainThreadCpuNanoseconds = 138'000'000},
+		});
+	const auto leadingBoundaryCpuEstimate = EstimateMainThreadWork(
+		38'000'000, 65'000'000, leadingBoundaryCpuWindow);
+	const auto leadingBoundaryCpuAssessment = AssessMainThreadWorkBudget(
+		leadingBoundaryCpuEstimate, 38'000'000, kMaxChatSwitchNanoseconds);
+	auto leadingBoundaryCpuRun = MainThreadWorkBudgetRun();
+	const auto leadingBoundaryCpuWithinBudget = leadingBoundaryCpuRun.Observe(
+		leadingBoundaryCpuAssessment, 65'000'000, kMaxChatSwitchNanoseconds,
+		1'000'000'000);
 	auto waitingBeforeSamples = bracketedSamples;
 	waitingBeforeSamples.front().state = 'W';
 	const auto waitingBefore
@@ -14556,6 +14616,16 @@ void AccumulateMainThreadWorkEstimate(qint64 &aggregateNanoseconds,
 			   kMaxChatSwitchNanoseconds)
 		   && (cpuOverlapEstimate.blockedNanoseconds == 35'000'000)
 		   && (cpuOverlapEstimate.estimatedWorkNanoseconds == 75'000'000)
+			&& !leadingBoundaryCpuWindow.capturePending
+			&& (leadingBoundaryCpuWindow.before
+				&& (leadingBoundaryCpuWindow.before->state == 'W'))
+			&& (leadingBoundaryCpuEstimate.blockedNanoseconds == 4'895'292)
+			&& (leadingBoundaryCpuEstimate.estimatedWorkNanoseconds
+				== 42'895'292)
+			&& leadingBoundaryCpuAssessment.schedulerEvidenceAvailable
+			&& leadingBoundaryCpuAssessment.withinBudget
+			&& leadingBoundaryCpuWithinBudget
+			&& leadingBoundaryCpuRun.WithinBudget()
 		   && (delayedCpuAccountingEstimate.blockedNanoseconds == 5'000'000)
 		   && (delayedCpuAccountingEstimate.estimatedWorkNanoseconds
 			   == 53'000'000)
@@ -15248,14 +15318,14 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		}
 		const auto peerId = qint64(history->peer->id.value);
 		const auto startedAt = QDateTime::currentDateTime();
-		const auto mainThreadBefore = MainThreadCpuTimeNanoseconds();
-		const auto processBefore = ProcessCpuTimeNanoseconds();
 		auto timer = QElapsedTimer();
 		timer.start();
 		const auto startedAtSteadyNanoseconds
 			= std::chrono::duration_cast<std::chrono::nanoseconds>(
 				  std::chrono::steady_clock::now().time_since_epoch())
 				  .count();
+		const auto mainThreadBefore = MainThreadCpuTimeNanoseconds();
+		const auto processBefore = ProcessCpuTimeNanoseconds();
 		controller->showPeerHistory(history);
 		checkTranslateBar(history);
 		const auto wallDurationNanoseconds = timer.nsecsElapsed();
@@ -15312,6 +15382,7 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 			processWorkNanoseconds,
 			label,
 			startedAtSteadyNanoseconds,
+			mainThreadBefore.value_or(-1),
 			mainThreadAfter.value_or(-1),
 		};
 		chatSwitchWindows.push_back(interval);
