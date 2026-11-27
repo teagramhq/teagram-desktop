@@ -13739,6 +13739,31 @@ void AccumulateMainThreadWorkEstimate(qint64 &aggregateNanoseconds,
 	const auto leadingBoundaryCpuWithinBudget = leadingBoundaryCpuRun.Observe(
 		leadingBoundaryCpuAssessment, 65'000'000, kMaxChatSwitchNanoseconds,
 		1'000'000'000);
+	const auto handlerTailCpuWindow = SchedulerTraceForInterval(
+		MainThreadWorkInterval{
+			.durationNanoseconds = 10'000'000,
+			.startedAtSteadyNanoseconds = 2'000'000'000,
+			.mainThreadCpuStartNanoseconds = 100'000'000,
+			.mainThreadCpuEndNanoseconds = 104'000'000,
+		},
+		std::vector<Core::UiStallWatchdog::SchedulerSampleEvidence>{
+			{.sampledAtSteadyNanoseconds = 2'008'000'000,
+			 .state = 'W',
+			 .mainThreadCpuNanoseconds = 102'000'000},
+			{.sampledAtSteadyNanoseconds = 2'011'000'000,
+			 .state = 'U',
+			 .mainThreadCpuNanoseconds = 104'000'000},
+		});
+	const auto handlerTailCpuEstimate
+		= EstimateMainThreadWork(4'000'000, 10'000'000, handlerTailCpuWindow);
+	const auto handlerTailCpuAssessment = AssessMainThreadWorkBudget(
+		handlerTailCpuEstimate, 4'000'000, 11'000'000);
+	auto handlerTailCpuWindowWithoutEnd = handlerTailCpuWindow;
+	handlerTailCpuWindowWithoutEnd.mainThreadCpuEndNanoseconds = -1;
+	const auto handlerTailCpuEstimateWithoutEnd = EstimateMainThreadWork(
+		4'000'000, 10'000'000, handlerTailCpuWindowWithoutEnd);
+	const auto handlerTailCpuAssessmentWithoutEnd = AssessMainThreadWorkBudget(
+		handlerTailCpuEstimateWithoutEnd, 4'000'000, 11'000'000);
 	auto waitingBeforeSamples = bracketedSamples;
 	waitingBeforeSamples.front().state = 'W';
 	const auto waitingBefore
@@ -14626,6 +14651,15 @@ void AccumulateMainThreadWorkEstimate(qint64 &aggregateNanoseconds,
 			&& leadingBoundaryCpuAssessment.withinBudget
 			&& leadingBoundaryCpuWithinBudget
 			&& leadingBoundaryCpuRun.WithinBudget()
+			&& !handlerTailCpuWindow.capturePending
+			&& (handlerTailCpuEstimate.blockedNanoseconds == 6'000'000)
+			&& (handlerTailCpuEstimate.estimatedWorkNanoseconds == 10'000'000)
+			&& handlerTailCpuAssessment.withinBudget
+			&& (handlerTailCpuEstimateWithoutEnd.blockedNanoseconds
+				== 8'000'000)
+			&& (handlerTailCpuEstimateWithoutEnd.estimatedWorkNanoseconds
+				== 12'000'000)
+			&& !handlerTailCpuAssessmentWithoutEnd.withinBudget
 		   && (delayedCpuAccountingEstimate.blockedNanoseconds == 5'000'000)
 		   && (delayedCpuAccountingEstimate.estimatedWorkNanoseconds
 			   == 53'000'000)
@@ -17086,6 +17120,7 @@ struct FirstDialogsHandlerRegressionResult final {
 	bool handlerWithinBudget = false;
 	bool handlerCpuOnlyWithinBudget = false;
 	bool handlerRunnerNoiseEligible = false;
+	bool handlerCpuIntervalCountersCaptured = false;
 	bool responseParsed = false;
 	bool passed = false;
 };
@@ -17213,14 +17248,22 @@ RunFirstDialogsHandlerLatencyRegression(
 			qint64(0), *handlerMainThreadAfter - *handlerMainThreadBefore);
 	}
 	const auto handlerInterval = MainThreadWorkInterval{
-		handlerStartedAt,
-		result.handlerNanoseconds,
-		result.handlerMainThreadCpuNanoseconds,
-		-1,
-		u"messages.getDialogs response handler"_q,
-		handlerStartedAtSteadyNanoseconds,
-		handlerMainThreadAfter.value_or(-1),
+		.startedAt = handlerStartedAt,
+		.durationNanoseconds = result.handlerNanoseconds,
+		.mainThreadWorkNanoseconds = result.handlerMainThreadCpuNanoseconds,
+		.processWorkNanoseconds = -1,
+		.label = u"messages.getDialogs response handler"_q,
+		.startedAtSteadyNanoseconds = handlerStartedAtSteadyNanoseconds,
+		.mainThreadCpuStartNanoseconds = handlerMainThreadBefore.value_or(-1),
+		.mainThreadCpuEndNanoseconds = handlerMainThreadAfter.value_or(-1),
 	};
+	result.handlerCpuIntervalCountersCaptured
+		= handlerMainThreadBefore.has_value()
+		  && handlerMainThreadAfter.has_value()
+		  && (handlerInterval.mainThreadCpuStartNanoseconds
+			  == *handlerMainThreadBefore)
+		  && (handlerInterval.mainThreadCpuEndNanoseconds
+			  == *handlerMainThreadAfter);
 	auto handlerSchedulerTimeline
 		= Core::UiStallWatchdog::RecentSchedulerSamplesForTesting();
 	const auto handlerCaptureSettled = [&] {
@@ -17317,6 +17360,7 @@ RunFirstDialogsHandlerLatencyRegression(
 		  && (result.processedMessages == kMessageCount)
 		  && (result.processedDocuments == kMessageCount)
 		  && (result.cacheWalks == 2)
+		  && result.handlerCpuIntervalCountersCaptured
 		  && (result.handlerWithinBudget || result.handlerRunnerNoiseEligible);
 	return result;
 }
@@ -18066,6 +18110,7 @@ void RunAuthenticatedCacheSymlinkCases(
 					"main_thread_cpu_ns=%lld blocked_estimate_ns=%lld "
 					"estimated_work_ns=%lld trace=%s "
 					"within_budget=%d cpu_only_within_budget=%d "
+					"cpu_interval_counters_captured=%d "
 					"runner_noise_eligible=%d under_50ms=%d.\n",
 					dialogsHandler.requests, dialogsHandler.responseParsed,
 					dialogsHandler.processedChats,
@@ -18086,6 +18131,7 @@ void RunAuthenticatedCacheSymlinkCases(
 							   .constData()),
 					dialogsHandler.handlerWithinBudget,
 					dialogsHandler.handlerCpuOnlyWithinBudget,
+					dialogsHandler.handlerCpuIntervalCountersCaptured,
 					dialogsHandler.handlerRunnerNoiseEligible,
 					dialogsHandler.handlerNanoseconds < kMaxHandlerNanoseconds);
 				auto &app = Core::App();
