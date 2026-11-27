@@ -14282,6 +14282,18 @@ struct FixtureChecks {
 	AccumulateMainThreadWorkEstimate(callbackEstimate, 20'000'000);
 	AccumulateMainThreadWorkEstimate(callbackEstimate, -1);
 	AccumulateMainThreadWorkEstimate(callbackEstimate, 12'000'000);
+	const auto boundarySampleMatches
+		= [](const std::optional<SchedulerBoundarySample> &sample) {
+			  if (!sample.has_value()) {
+				  return false;
+			  }
+			  return (sample->state == 'R')
+					 && (sample->distanceNanoseconds == 1'000'000);
+		  };
+	const auto partialPingStartupBeforeSampleMatches
+		= boundarySampleMatches(partialPingStartupWork.schedulerSamples.before);
+	const auto partialPingStartupAfterSampleMatches
+		= boundarySampleMatches(partialPingStartupWork.schedulerSamples.after);
 	// Evaluate every fixture, so an early failure does not hide later checks.
 	auto checks = FixtureChecks{(gap25.blockedNanoseconds == 0)};
 	if (!checks.allPassed) {
@@ -14457,16 +14469,8 @@ struct FixtureChecks {
 				   })
 			   == 0)
 		   && !partialPingStartupWork.schedulerSamples.capturePending
-		   && partialPingStartupWork.schedulerSamples.before
-		   && (partialPingStartupWork.schedulerSamples.before->state == 'R')
-		   && (partialPingStartupWork.schedulerSamples.before
-				   ->distanceNanoseconds
-			   == 1'000'000)
-		   && partialPingStartupWork.schedulerSamples.after
-		   && (partialPingStartupWork.schedulerSamples.after->state == 'R')
-		   && (partialPingStartupWork.schedulerSamples.after
-				   ->distanceNanoseconds
-			   == 1'000'000)
+		   && partialPingStartupBeforeSampleMatches
+		   && partialPingStartupAfterSampleMatches
 		   && (partialPingStartupWork.estimate.estimatedWorkNanoseconds
 			   == 23'495'000)
 		   && MainThreadEstimatedWorkWithinBudget(
@@ -15276,6 +15280,10 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 	// preloads pending to fail later inside a measured chat switch.
 	firstHistory->markLoadedAtTop();
 	secondHistory->markLoadedAtTop();
+	// Supply a completed newest slice too, so selecting these unread histories
+	// never starts a first-load request against the paused regression session.
+	firstHistory->addNewerSlice(QVector<MTPMessage>());
+	secondHistory->addNewerSlice(QVector<MTPMessage>());
 	// The blank histories are complete too. The top marker lets loadMessages()
 	// return before requesting an older slice during the measured selection.
 	emptyFirstHistory->markLoadedAtTop();
@@ -15305,6 +15313,7 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		  && HasExpectedParticipants(data.chat(ChatId(1054)), UserId(1))
 		  && HasExpectedParticipants(data.chat(ChatId(1055)), UserId(1))
 		  && firstHistory->loadedAtTop() && secondHistory->loadedAtTop()
+		  && firstHistory->loadedAtBottom() && secondHistory->loadedAtBottom()
 		  && (firstHistory->unreadCount() == 7)
 		  && (secondHistory->unreadCount() == 6)
 		  && firstHistory->isReadyFor(ShowAtUnreadMsgId)
@@ -15327,6 +15336,20 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		return result;
 	}
 	result.translateBarTracksCurrentHistory = true;
+	const auto translateBarLifetimeToken = [](auto *bar) {
+		return bar ? bar->lifetimeTokenForRegressionTest()
+				   : std::weak_ptr<const int>();
+	};
+	const auto sameTranslateBarLifetime
+		= [](const std::weak_ptr<const int> &expected,
+			 HistoryView::TranslateBar *current) {
+			  const auto expectedToken = expected.lock();
+			  if (!expectedToken || !current) {
+				  return false;
+			  }
+			  return current->lifetimeTokenForRegressionTest().lock()
+					 == expectedToken;
+		  };
 	const auto checkTranslateBar = [&](not_null<History *> history) {
 		const auto current = historyWidget->translateBarForRegressionTest();
 		if (!current) {
@@ -15407,14 +15430,16 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		const auto processBefore = ProcessCpuTimeNanoseconds();
 		const auto translateBarBefore
 			= historyWidget->translateBarForRegressionTest();
+		const auto translateBarBeforeLifetime
+			= translateBarLifetimeToken(translateBarBefore);
 		controller->showPeerHistory(history);
 		const auto translateBarAfter
 			= historyWidget->translateBarForRegressionTest();
 		if (index > 0) {
 			result.translateBarRetainedAcrossSwitches
 				= result.translateBarRetainedAcrossSwitches
-				  && translateBarBefore
-				  && (translateBarAfter == translateBarBefore);
+				  && sameTranslateBarLifetime(translateBarBeforeLifetime,
+											  translateBarAfter);
 		}
 		checkTranslateBar(history);
 		const auto wallDurationNanoseconds = timer.nsecsElapsed();
@@ -16913,21 +16938,34 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		= showHistoryForTranslateBar(firstHistory);
 	const auto translateBar = historyWidget->translateBarForRegressionTest();
 	const auto translateBarExisted = (translateBar != nullptr);
+	const auto translateBarLifetime = translateBarLifetimeToken(translateBar);
 	const auto translateBarBoundToFirstHistory
 		= translateBar && firstHistoryShownForTranslateBar
 		  && (translateBar->historyForRegressionTest() == firstHistory.get());
 	const auto secondHistoryShownForTranslateBar
 		= showHistoryForTranslateBar(secondHistory);
+	const auto secondHistoryTranslateBar
+		= historyWidget->translateBarForRegressionTest();
+	const auto secondHistoryTranslateBarBound
+		= secondHistoryShownForTranslateBar && secondHistoryTranslateBar
+		  && (secondHistoryTranslateBar->historyForRegressionTest()
+			  == secondHistory.get());
 	const auto sameTranslateBarOnSecondHistory
-		= (historyWidget->translateBarForRegressionTest() == translateBar)
-		  && secondHistoryShownForTranslateBar && translateBar
-		  && (translateBar->historyForRegressionTest() == secondHistory.get());
+		= secondHistoryTranslateBarBound
+		  && sameTranslateBarLifetime(translateBarLifetime,
+									  secondHistoryTranslateBar);
 	const auto firstHistoryReturnedForTranslateBar
 		= showHistoryForTranslateBar(firstHistory);
+	const auto returnedHistoryTranslateBar
+		= historyWidget->translateBarForRegressionTest();
+	const auto returnedHistoryTranslateBarBound
+		= firstHistoryReturnedForTranslateBar && returnedHistoryTranslateBar
+		  && (returnedHistoryTranslateBar->historyForRegressionTest()
+			  == firstHistory.get());
 	const auto sameTranslateBarOnReturn
-		= (historyWidget->translateBarForRegressionTest() == translateBar)
-		  && firstHistoryReturnedForTranslateBar && translateBar
-		  && (translateBar->historyForRegressionTest() == firstHistory.get());
+		= returnedHistoryTranslateBarBound
+		  && sameTranslateBarLifetime(translateBarLifetime,
+									  returnedHistoryTranslateBar);
 	result.translateBarReused = translateBarBoundToFirstHistory
 								&& sameTranslateBarOnSecondHistory
 								&& sameTranslateBarOnReturn;
@@ -16948,19 +16986,24 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 	auto reopened = false;
 	auto reopenedBarCreated = false;
 	auto visibleOnReopen = false;
-	if (translateBar && firstHistoryReturnedForTranslateBar
+	if (returnedHistoryTranslateBar && firstHistoryReturnedForTranslateBar
 		&& offeredTranslationLanguage.known() && closedTargetLanguage.known()) {
 		firstHistory->peer->setTranslationDisabled(false);
 		firstHistory->translateOfferFrom(offeredTranslationLanguage);
 		translationPhraseShown = WaitForRegressionCondition(
-			[&] { return translateBar->shouldBeShownForRegressionTest(); },
+			[&] {
+				return returnedHistoryTranslateBar
+					->shouldBeShownForRegressionTest();
+			},
 			1500);
 		if (translationPhraseShown) {
-			translateBar->finishAnimating();
-			visibleBeforeClose = !translateBar->hiddenForRegressionTest()
-								 && (translateBar->height() > 0);
+			returnedHistoryTranslateBar->finishAnimating();
+			visibleBeforeClose
+				= !returnedHistoryTranslateBar->hiddenForRegressionTest()
+				  && (returnedHistoryTranslateBar->height() > 0);
 			firstHistory->translateTo(offeredTranslationLanguage);
-			translateBar->setOverridenToForRegressionTest(LanguageId());
+			returnedHistoryTranslateBar->setOverridenToForRegressionTest(
+				LanguageId());
 			translatedHistoryReady
 				= (firstHistory->translatedTo() == offeredTranslationLanguage);
 			controller->clearSectionStack();

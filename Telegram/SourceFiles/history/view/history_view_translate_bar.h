@@ -10,6 +10,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/wrap/slide_wrap.h"
 #include "spellcheck/spellcheck_types.h"
 
+#include <memory>
 #include <vector>
 
 class History;
@@ -59,6 +60,10 @@ public:
 	[[nodiscard]] int translateToCallsForRegressionTest() const {
 		return _translateToCallsForRegression;
 	}
+	[[nodiscard]] std::weak_ptr<const int>
+	lifetimeTokenForRegressionTest() const {
+		return _regressionLifetimeToken;
+	}
 	void clickForRegressionTest();
 #endif
 
@@ -106,6 +111,8 @@ private:
 	bool _forceHidden = false;
 #ifdef TDESKTOP_LIFECYCLE_REGRESSION
 	int _translateToCallsForRegression = 0;
+	std::shared_ptr<const int> _regressionLifetimeToken
+		= std::make_shared<const int>(0);
 #endif
 };
 
