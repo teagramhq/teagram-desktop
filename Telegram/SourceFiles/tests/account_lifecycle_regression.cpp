@@ -16912,6 +16912,7 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 	const auto firstHistoryShownForTranslateBar
 		= showHistoryForTranslateBar(firstHistory);
 	const auto translateBar = historyWidget->translateBarForRegressionTest();
+	const auto translateBarExisted = (translateBar != nullptr);
 	const auto translateBarBoundToFirstHistory
 		= translateBar && firstHistoryShownForTranslateBar
 		  && (translateBar->historyForRegressionTest() == firstHistory.get());
@@ -17005,7 +17006,7 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		"visible_before_close=%d translated_history_ready=%d closed=%d "
 		"bar_destroyed=%d no_translate_while_closed=%d reopened=%d "
 		"reopened_bar_created=%d visible_on_reopen=%d.\n",
-		bool(translateBar), firstHistoryReturnedForTranslateBar,
+		translateBarExisted, firstHistoryReturnedForTranslateBar,
 		offeredTranslationLanguage.known(), closedTargetLanguage.known(),
 		translationPhraseShown, visibleBeforeClose, translatedHistoryReady,
 		closed, barDestroyedOnClose, noTranslateToWhileClosed, reopened,
