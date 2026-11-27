@@ -13172,8 +13172,7 @@ struct FixtureChecks {
 	int index = 1;
 	int firstFailed = 0;
 
-	template <typename Value>
-	FixtureChecks &operator&&(const Value &passed) {
+	template <typename Value> FixtureChecks &operator&&(const Value &passed) {
 		const auto value = static_cast<bool>(passed);
 		++index;
 		if (!value && !firstFailed) {
