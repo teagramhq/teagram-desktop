@@ -16233,6 +16233,18 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 	result.historyScaleInvalidationRebuilt
 		= firstUiHistoryLaidOut && secondUiHistoryShown && firstUiHistoryResized
 		  && (originalHistoryLayoutScale != regressionScale);
+	std::fprintf(
+		stderr,
+		"History scale invalidation: first_laid_out=%d second_shown=%d "
+		"first_resized=%d original_scale_changed=%d "
+		"layout_scale_matches=%d full_resize_count_before=%d "
+		"full_resize_count_after=%d rebuilt=%d.\n",
+		firstUiHistoryLaidOut, secondUiHistoryShown, firstUiHistoryResized,
+		originalHistoryLayoutScale != regressionScale,
+		firstUiHistory->layoutScaleForRegressionTest() == regressionScale,
+		originalHistoryFullResizeCount,
+		firstUiHistory->layoutFullResizeCountForRegressionTest(),
+		result.historyScaleInvalidationRebuilt);
 	style::SetScale(originalScale);
 	controller->showPeerHistory(secondUiHistory);
 	QCoreApplication::processEvents();
@@ -17042,6 +17054,22 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 				 groupCallBarDeferred);
 	std::fprintf(stderr, "Contact status deferred request text: passed=%d.\n",
 				 contactStatusRequestText);
+	const auto blockedWorkBudgetRegressionPassed
+		= MainThreadBlockedWorkBudgetRegressionPasses();
+	const auto startupWatchdogRegressionPassed
+		= StartupWatchdogStallEvidenceRegressionPasses();
+	std::fprintf(
+		stderr,
+		"Chat switch gate checks: scale_rebuilt=%d transitions_settled=%d "
+		"initial_selection_within_budget=%d switch_work_within_budget=%d "
+		"startup_budget=%d blocked_work_fixtures=%d "
+		"startup_watchdog_fixtures=%d.\n",
+		result.historyScaleInvalidationRebuilt,
+		result.chatSwitchTransitionsSettled,
+		result.initialHistorySelectionWithinBudget,
+		result.chatSwitchWorkWithinBudget,
+		startupTimingBudgetRun.WithinBudget(),
+		blockedWorkBudgetRegressionPassed, startupWatchdogRegressionPassed);
 	result.passed
 		= completed && !timedOut && (result.reactions == kReactionCount)
 		  && (result.attachMenuBotCount >= 20)
@@ -17106,8 +17134,8 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		  && (result.maxRecurringChatSwitchEstimatedWorkNanoseconds >= 0)
 		  && (result.maxRecurringChatSwitchEstimatedWorkNanoseconds
 			  < kMaxChatSwitchNanoseconds)
-		  && MainThreadBlockedWorkBudgetRegressionPasses()
-		  && StartupWatchdogStallEvidenceRegressionPasses();
+		  && blockedWorkBudgetRegressionPassed
+		  && startupWatchdogRegressionPassed;
 	regressionSettings.setTabbedSelectorSectionEnabled(
 		originalTabbedSelectorSectionEnabled);
 	regressionSettings.setThirdSectionInfoEnabled(
