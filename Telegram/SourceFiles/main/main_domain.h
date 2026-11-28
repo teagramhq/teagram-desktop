@@ -72,7 +72,8 @@ public:
 	[[nodiscard]] not_null<Main::Account*> add(MTP::Environment environment);
 	void maybeActivate(not_null<Main::Account*> account);
 	void activate(not_null<Main::Account*> account);
-	void addActivated(MTP::Environment environment, bool newWindow = false,
+	// Returns false when no account slot can be activated.
+	bool addActivated(MTP::Environment environment, bool newWindow = false,
 					  QString signupInviteSecret = {});
 
 	// Drops session-less accounts that have no window open for them,

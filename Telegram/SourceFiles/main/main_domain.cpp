@@ -6,6 +6,7 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "main/main_domain.h"
+#include "main/main_domain_policy.h"
 
 #include "core/application.h"
 #include "core/core_settings.h"
@@ -325,7 +326,7 @@ not_null<Main::Account*> Domain::add(MTP::Environment environment) {
 	return account;
 }
 
-void Domain::addActivated(MTP::Environment environment, bool newWindow,
+bool Domain::addActivated(MTP::Environment environment, bool newWindow,
 						  QString signupInviteSecret) {
 	const auto added = [&](not_null<Main::Account *> account) {
 		if (!signupInviteSecret.isEmpty()) {
@@ -342,15 +343,25 @@ void Domain::addActivated(MTP::Environment environment, bool newWindow,
 	};
 	if (accounts().size() < maxAccounts()) {
 		added(add(environment));
+		return true;
 	} else {
 		for (auto &[index, account] : accounts()) {
-			if (!account->sessionExists()
-				&& account->mtp().environment() == environment) {
+			const auto sameEnvironment
+				= account->mtp().environment() == environment;
+			const auto &config = account->mtp().config();
+			const auto canReuse
+				= signupInviteSecret.isEmpty()
+					  ? (!account->sessionExists() && sameEnvironment)
+					  : details::CanReuseForSignupInvite(
+							account->sessionExists(), sameEnvironment,
+							config.hasCustomServer(), config.blocked());
+			if (canReuse) {
 				added(account.get());
-				break;
+				return true;
 			}
 		}
 	}
+	return false;
 }
 
 void Domain::watchSession(not_null<Account*> account) {

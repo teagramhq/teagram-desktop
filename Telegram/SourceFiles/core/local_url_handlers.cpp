@@ -1802,8 +1802,15 @@ bool TryOpenFragmentLinkV1(const QString &url, const QVariant &context) {
 			= controller ? &controller->session().account()
 						 : Core::App().domain().maybeLastOrSomeAuthedAccount();
 		if (account) {
-			Core::App().domain().addActivated(account->mtp().environment(),
-											  false, secret);
+			if (!Core::App().domain().addActivated(account->mtp().environment(),
+												   false, secret)) {
+				const auto message = tr::lng_accounts_limit_title(tr::now);
+				if (controller) {
+					controller->showToast(message);
+				} else {
+					Ui::Toast::Show(message);
+				}
+			}
 		} else if (primary) {
 			if (!primary->widget()->setSignupInviteSecret(secret)) {
 				primary->account().setPendingSignupInviteSecret(secret);

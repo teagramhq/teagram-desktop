@@ -156,6 +156,7 @@ PRIVATE
     tests/unit/intro_turnstile_tests.cpp
     tests/unit/intro_username_validation_tests.cpp
     tests/unit/local_url_conversion_tests.cpp
+    tests/unit/main_domain_policy_tests.cpp
     tests/unit/fragment_link_v1_tests.cpp
     tests/unit/media_clip_check_streaming_tests.cpp
     tests/unit/sticker_import_tests.cpp
