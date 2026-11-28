@@ -104,6 +104,7 @@ struct Data {
 	QString signupNameError;
 	bool signupInviteError = false;
 	QString signupInviteSecret;
+	QString signupInviteOrigin;
 
 	rpl::event_stream<> updated;
 
@@ -153,7 +154,7 @@ public:
 	void showAnimated(QPixmap oldContentCache, bool back = false);
 
 	void setInnerFocus();
-	void setSignupInviteSecret(QString secret);
+	void setSignupInviteSecret(QString secret, QString discoveryOrigin);
 
 #ifdef TDESKTOP_LIFECYCLE_REGRESSION
 	// Test-only entry point that uses the same history/animation wiring as

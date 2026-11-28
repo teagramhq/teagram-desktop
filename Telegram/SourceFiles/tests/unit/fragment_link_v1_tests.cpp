@@ -24,6 +24,7 @@ using Core::FragmentLinkV1::CanOpenOnDefaultServer;
 using Core::FragmentLinkV1::Decode;
 using Core::FragmentLinkV1::DecodeUrl;
 using Core::FragmentLinkV1::Encode;
+using Core::FragmentLinkV1::IsV1UrlCandidate;
 using Core::FragmentLinkV1::Link;
 using Core::FragmentLinkV1::LinkForPath;
 using Core::FragmentLinkV1::Type;
@@ -124,14 +125,12 @@ TEST_CASE(FragmentLinkV1UrlGateRejectsMalformedAndHostedUrls) {
 		  == UrlStatus::NotV1);
 }
 
-TEST_CASE(FragmentLinkV1DefaultServerProfileOpenSmoke) {
-	const auto decoded = DecodeUrl(u"https://web.teagram.io/#~QQHDpNc"_q);
-	CHECK(decoded.status == UrlStatus::Valid);
-	if (decoded.status == UrlStatus::Valid) {
-		CHECK(CanOpenOnDefaultServer(decoded.link));
-		CHECK(decoded.link.type == Type::Profile);
-		CHECK_EQ(decoded.link.username, u"alice"_q);
-	}
+TEST_CASE(FragmentLinkV1InvalidHiddenLinkCandidateIsIntercepted) {
+	const auto url = u"https://web.teagram.io/alice#~invalid"_q;
+	CHECK(DecodeUrl(url).status == UrlStatus::Invalid);
+	CHECK(IsV1UrlCandidate(url));
+	CHECK(!IsV1UrlCandidate(
+		u"https://web.teagram.io/turnstile.html?token=abc"_q));
 }
 
 TEST_CASE(FragmentLinkV1BuildsSupportedInternalPathsSmoke) {

@@ -50,8 +50,12 @@ struct UrlResult {
 
 [[nodiscard]] std::optional<Link> Decode(const QString &fragment);
 [[nodiscard]] UrlResult DecodeUrl(const QString &url);
+[[nodiscard]] bool IsV1UrlCandidate(const QString &url);
 [[nodiscard]] std::optional<QString> Encode(const Link &link);
 [[nodiscard]] bool CanOpenOnDefaultServer(const Link &link);
+[[nodiscard]] std::optional<Type> AccountDispatchForClick(
+	const Link &link,
+	bool authenticatedDefaultServerOrigin);
 [[nodiscard]] QString LinkForPath(const QString &path,
 								  const QString &internalLinksDomain);
 

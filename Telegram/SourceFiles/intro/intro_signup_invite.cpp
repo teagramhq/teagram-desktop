@@ -16,6 +16,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "logs.h"
 #include "main/main_account.h"
 #include "main/main_app_config.h"
+#include "mtproto/mtproto_dc_options.h"
 #include "mtproto/mtproto_response.h"
 #include "ui/text/format_values.h"
 #include "ui/widgets/fields/input_field.h"
@@ -106,6 +107,16 @@ void InviteWidget::showInviteError(const QString &text, bool select) {
 
 void InviteWidget::submit() {
 	if (_sentRequest) {
+		return;
+	}
+	if (!getData()->signupInviteOrigin.isEmpty()
+		&& !MTP::IsDefaultTeagramServerForOrigin(
+			getData()->signupInviteOrigin,
+			account().mtp().config().customServer())) {
+		getData()->signupInviteSecret.clear();
+		getData()->signupInviteOrigin.clear();
+		_invite->setText(QString());
+		showInviteError(tr::lng_server_feature_unavailable(tr::now), false);
 		return;
 	}
 	const auto input = _invite->getLastText();

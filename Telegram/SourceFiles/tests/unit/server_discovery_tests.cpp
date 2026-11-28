@@ -7,6 +7,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "tests/unit/unit_test.h"
 
+#include "core/fragment_link_v1.h"
 #include "intro/intro_server_discovery.h"
 #include "lang/lang_keys.h"
 #include "mtproto/mtproto_dc_options.h"
@@ -40,6 +41,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <unistd.h>
 #endif
 
+#include <memory>
 #include <utility>
 
 namespace Lang::details {
@@ -1667,6 +1669,56 @@ TEST_CASE(PublicDiscoveryUsesTeagramdClientPath) {
 	const auto selection = CheckServerSelection(u"server.example.com"_q);
 	CHECK_EQ(PublicDiscoveryUrl(selection),
 			 u"https://server.example.com/.well-known/teagramd/client"_q);
+}
+
+TEST_CASE(SignupInviteBindingRejectsEnrollmentAtAnotherOrigin) {
+	auto pin = CustomServer();
+	pin.key = std::make_shared<details::RSAPublicKey>(TestKey());
+	pin.discoveryPolicy = ServerDiscoveryPolicy::PublicHttps;
+	pin.serverSelection = "server.teagram.io";
+	pin.discoveryOrigin
+		= "https://server.teagram.io/.well-known/teagramd/client";
+	const auto expected = DefaultTeagramServerDiscoveryOrigin();
+	CHECK(IsDefaultTeagramServer(pin));
+	CHECK(IsDefaultTeagramServerForOrigin(expected, pin));
+	pin.discoveryOrigin
+		= "https://server.teagram.io/.well-known/telegramd/client";
+	CHECK(IsDefaultTeagramServerForOrigin(expected, pin));
+	pin.discoveryOrigin = "https://server.teagram.io/.well-known/other";
+	CHECK(!IsDefaultTeagramServerForOrigin(expected, pin));
+
+	const auto other = CheckServerSelection(u"other.example.com"_q);
+	pin.serverSelection = other.normalizedSelection.toStdString();
+	pin.discoveryOrigin = PublicDiscoveryUrl(other).toStdString();
+	CHECK(!IsDefaultTeagramServer(pin));
+	CHECK(!IsDefaultTeagramServerForOrigin(expected, pin));
+}
+
+TEST_CASE(FragmentLinkV1DefaultOriginProfileClickDispatchSmoke) {
+	auto pin = CustomServer();
+	pin.key = std::make_shared<details::RSAPublicKey>(TestKey());
+	pin.discoveryPolicy = ServerDiscoveryPolicy::PublicHttps;
+	pin.serverSelection = "server.teagram.io";
+	pin.discoveryOrigin = DefaultTeagramServerDiscoveryOrigin().toStdString();
+	const auto decoded = Core::FragmentLinkV1::DecodeUrl(
+		u"https://web.teagram.io/#~QQHDpNc"_q);
+	CHECK(decoded.status == Core::FragmentLinkV1::UrlStatus::Valid);
+	if (decoded.status == Core::FragmentLinkV1::UrlStatus::Valid) {
+		const auto dispatch = Core::FragmentLinkV1::AccountDispatchForClick(
+			decoded.link,
+			IsDefaultTeagramServer(pin));
+		CHECK(dispatch.has_value());
+		if (dispatch) {
+			CHECK(*dispatch == Core::FragmentLinkV1::Type::Profile);
+		}
+		CHECK_EQ(decoded.link.username, u"alice"_q);
+		const auto other = CheckServerSelection(u"other.example.com"_q);
+		pin.serverSelection = other.normalizedSelection.toStdString();
+		pin.discoveryOrigin = PublicDiscoveryUrl(other).toStdString();
+		CHECK(!Core::FragmentLinkV1::AccountDispatchForClick(
+			decoded.link,
+			IsDefaultTeagramServer(pin)).has_value());
+	}
 }
 
 TEST_CASE(PublicDiscoveryRefreshRetainsTheStoredOriginPath) {

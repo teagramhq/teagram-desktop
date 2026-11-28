@@ -49,6 +49,11 @@ class Session;
 class SessionSettings;
 class AppConfig;
 
+struct PendingSignupInvite {
+	QString secret;
+	QString discoveryOrigin;
+};
+
 class Account final : public base::has_weak_ptr {
 public:
 	Account(not_null<Domain*> domain, const QString &dataName, int index);
@@ -145,8 +150,8 @@ public:
 
 	void setHandleLoginCode(Fn<void(QString)> callback);
 	void handleLoginCode(const QString &code) const;
-	void setPendingSignupInviteSecret(QString secret);
-	[[nodiscard]] QString takePendingSignupInviteSecret();
+	void setPendingSignupInvite(PendingSignupInvite invite);
+	[[nodiscard]] PendingSignupInvite takePendingSignupInvite();
 
 #ifdef TDESKTOP_UNIT_TESTS
 	[[nodiscard]] static QString storageBasePathForTest(
@@ -238,7 +243,7 @@ private:
 	rpl::variable<Session*> _sessionValue;
 
 	Fn<void(QString)> _handleLoginCode = nullptr;
-	QString _pendingSignupInviteSecret;
+	PendingSignupInvite _pendingSignupInvite;
 
 	UserId _sessionUserId = 0;
 	QByteArray _sessionUserSerialized;

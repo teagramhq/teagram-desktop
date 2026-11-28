@@ -1167,12 +1167,12 @@ void Account::handleLoginCode(const QString &code) const {
 	}
 }
 
-void Account::setPendingSignupInviteSecret(QString secret) {
-	_pendingSignupInviteSecret = std::move(secret);
+void Account::setPendingSignupInvite(PendingSignupInvite invite) {
+	_pendingSignupInvite = std::move(invite);
 }
 
-QString Account::takePendingSignupInviteSecret() {
-	return base::take(_pendingSignupInviteSecret);
+PendingSignupInvite Account::takePendingSignupInvite() {
+	return base::take(_pendingSignupInvite);
 }
 
 MTP::ServerEndpointRefreshEligibility

@@ -327,10 +327,14 @@ not_null<Main::Account*> Domain::add(MTP::Environment environment) {
 }
 
 bool Domain::addActivated(MTP::Environment environment, bool newWindow,
-						  QString signupInviteSecret) {
+						  QString signupInviteSecret,
+						  QString signupInviteOrigin) {
 	const auto added = [&](not_null<Main::Account *> account) {
 		if (!signupInviteSecret.isEmpty()) {
-			account->setPendingSignupInviteSecret(signupInviteSecret);
+			account->setPendingSignupInvite({
+				.secret = signupInviteSecret,
+				.discoveryOrigin = signupInviteOrigin,
+			});
 		}
 		if (newWindow) {
 			Core::App().ensureSeparateWindowFor(account);
@@ -359,10 +363,11 @@ bool Domain::addActivated(MTP::Environment environment, bool newWindow,
 		for (const auto &item : list) {
 			const auto account = item.account.get();
 			const auto &config = account->mtp().config();
+			const auto pin = config.customServer();
 			slots.push_back({
 				.hasSession = account->sessionExists(),
 				.sameEnvironment = account->mtp().environment() == environment,
-				.hasCustomServer = config.hasCustomServer(),
+				.defaultServer = MTP::IsDefaultTeagramServer(pin),
 				.blocked = config.blocked(),
 			});
 		}

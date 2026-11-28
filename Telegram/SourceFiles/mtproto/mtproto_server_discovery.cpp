@@ -989,6 +989,10 @@ bool IsPublicDiscoveryOrigin(const ServerSelectionCheck &selection,
 	return origin == PublicDiscoveryUrl(selection) || origin == legacy;
 }
 
+QString DefaultTeagramServerDiscoveryOrigin() {
+	return PublicDiscoveryUrl(CheckServerSelection(u"server.teagram.io"_q));
+}
+
 void ConfigurePublicDiscoveryRequest(QNetworkRequest &request) {
 	request.setRawHeader("User-Agent", QByteArrayLiteral("-"));
 	request.setRawHeader("Accept-Encoding", QByteArrayLiteral("identity"));

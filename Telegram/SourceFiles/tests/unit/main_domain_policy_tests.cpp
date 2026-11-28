@@ -16,8 +16,8 @@ TEST_CASE(SignupInviteSlotSelectionSkipsSessionedAccounts) {
 	using Main::details::SignupInviteSlot;
 
 	const auto slots = std::vector<SignupInviteSlot>{
-		{.hasSession = true, .sameEnvironment = true},
-		{.sameEnvironment = true},
+		{.hasSession = true, .sameEnvironment = true, .defaultServer = true},
+		{.sameEnvironment = true, .defaultServer = true},
 	};
 	const auto selected = SelectSignupInviteSlot(slots);
 	CHECK(selected.has_value());
@@ -31,28 +31,34 @@ TEST_CASE(SignupInviteSlotSelectionFailsWhenAllSlotsAreUnavailable) {
 	using Main::details::SignupInviteSlot;
 
 	const auto slots = std::vector<SignupInviteSlot>{
-		{.hasSession = true, .sameEnvironment = true},
-		{.hasSession = true, .sameEnvironment = true},
+		{.hasSession = true, .sameEnvironment = true, .defaultServer = true},
+		{.sameEnvironment = true, .defaultServer = false},
 	};
 	CHECK(!SelectSignupInviteSlot(slots).has_value());
 }
 
-TEST_CASE(SignupInviteSlotSelectionRejectsWrongEnvironmentAndPinnedSlots) {
+TEST_CASE(SignupInviteSlotSelectionRequiresAnUnsessionedDefaultOriginSlot) {
 	using Main::details::SelectSignupInviteSlot;
 	using Main::details::SignupInviteSlot;
 
 	const auto slots = std::vector<SignupInviteSlot>{
-		{.sameEnvironment = false},
-		{.sameEnvironment = true, .hasCustomServer = true},
-		{.sameEnvironment = true, .blocked = true},
+		{.sameEnvironment = false, .defaultServer = true},
+		{.sameEnvironment = true, .defaultServer = false},
+		{.sameEnvironment = true, .defaultServer = true, .blocked = true},
+		{.sameEnvironment = true, .defaultServer = true},
 	};
-	CHECK(!SelectSignupInviteSlot(slots).has_value());
+	const auto selected = SelectSignupInviteSlot(slots);
+	CHECK(selected.has_value());
+	if (selected) {
+		CHECK(*selected == 3U);
+	}
 }
 
-TEST_CASE(SignupInviteCannotBeRetainedOnCustomServerIntro) {
+TEST_CASE(SignupInviteMayBeRetainedOnlyBeforeEnrollmentOrOnDefaultOrigin) {
 	using Main::details::CanReceiveDefaultServerSignupInvite;
 
-	CHECK(CanReceiveDefaultServerSignupInvite(false, false));
-	CHECK(!CanReceiveDefaultServerSignupInvite(true, false));
-	CHECK(!CanReceiveDefaultServerSignupInvite(false, true));
+	CHECK(CanReceiveDefaultServerSignupInvite(false, false, false));
+	CHECK(CanReceiveDefaultServerSignupInvite(true, true, false));
+	CHECK(!CanReceiveDefaultServerSignupInvite(true, false, false));
+	CHECK(!CanReceiveDefaultServerSignupInvite(false, false, true));
 }

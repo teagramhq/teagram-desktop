@@ -112,7 +112,9 @@ Widget::Widget(
 	controller->setDefaultFloatPlayerDelegate(floatPlayerDelegate());
 
 	getData()->country = ComputeNewAccountCountry();
-	getData()->signupInviteSecret = _account->takePendingSignupInviteSecret();
+	const auto pendingInvite = _account->takePendingSignupInvite();
+	getData()->signupInviteSecret = pendingInvite.secret;
+	getData()->signupInviteOrigin = pendingInvite.discoveryOrigin;
 
 	_account->mtpValue(
 	) | rpl::on_next([=](not_null<MTP::Instance*> instance) {
@@ -410,8 +412,9 @@ void Widget::setInnerFocus() {
 	}
 }
 
-void Widget::setSignupInviteSecret(QString secret) {
+void Widget::setSignupInviteSecret(QString secret, QString discoveryOrigin) {
 	_data.signupInviteSecret = std::move(secret);
+	_data.signupInviteOrigin = std::move(discoveryOrigin);
 	if (const auto invite = dynamic_cast<details::InviteWidget *>(getStep())) {
 		invite->setInviteSecret(_data.signupInviteSecret);
 	} else if (dynamic_cast<details::SignUpNameWidget *>(getStep())) {

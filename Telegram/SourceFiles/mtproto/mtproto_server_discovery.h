@@ -126,6 +126,7 @@ NormalizePublicWebSocketEndpoint(const QString &endpoint,
 [[nodiscard]] bool
 IsPublicDiscoveryOrigin(const ServerSelectionCheck &selection,
 						const QString &origin);
+[[nodiscard]] QString DefaultTeagramServerDiscoveryOrigin();
 
 // Apply the network policy to every public discovery request, including
 // retries. Cookies are intentionally managed by the application, not Qt.

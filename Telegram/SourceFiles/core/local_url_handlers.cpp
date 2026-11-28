@@ -54,6 +54,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "media/view/media_view_open_common.h"
 #include "window/window_session_controller.h"
 #include "window/window_session_controller_link_info.h"
+#include "mtproto/mtproto_dc_options.h"
 #include "window/window_controller.h"
 #include "window/window_peer_menu.h"
 #include "window/themes/window_theme_editor_box.h" // GenerateSlug.
@@ -1787,12 +1788,13 @@ bool TryOpenFragmentLinkV1(const QString &url, const QVariant &context) {
 	}
 	if (decoded->type == FragmentLinkV1::Type::SignUpInvite) {
 		const auto secret = QString::fromLatin1(decoded->secret.toHex());
+		const auto origin = MTP::DefaultTeagramServerDiscoveryOrigin();
 		const auto account
 			= controller ? &controller->session().account()
 						 : Core::App().domain().maybeLastOrSomeAuthedAccount();
 		if (account) {
 			if (!Core::App().domain().addActivated(account->mtp().environment(),
-												   false, secret)) {
+											   false, secret, origin)) {
 				const auto message = tr::lng_accounts_limit_title(tr::now);
 				if (controller) {
 					controller->showToast(message);
@@ -1802,13 +1804,19 @@ bool TryOpenFragmentLinkV1(const QString &url, const QVariant &context) {
 			}
 		} else if (primary) {
 			const auto &config = primary->account().mtp().config();
+			const auto pin = config.customServer();
 			if (!Main::details::CanReceiveDefaultServerSignupInvite(
-					config.hasCustomServer(), config.blocked())) {
+					config.hasCustomServer(),
+					MTP::IsDefaultTeagramServer(pin),
+					config.blocked())) {
 				Ui::Toast::Show(tr::lng_server_feature_unavailable(tr::now));
 				return true;
 			}
-			if (!primary->widget()->setSignupInviteSecret(secret)) {
-				primary->account().setPendingSignupInviteSecret(secret);
+			if (!primary->widget()->setSignupInviteSecret(secret, origin)) {
+				primary->account().setPendingSignupInvite({
+					.secret = secret,
+					.discoveryOrigin = origin,
+				});
 			}
 		}
 		return true;
@@ -1816,19 +1824,22 @@ bool TryOpenFragmentLinkV1(const QString &url, const QVariant &context) {
 	if (!controller) {
 		return true;
 	}
-	if (decoded->host.isEmpty()
-		&& controller->session().mtp().config().hasCustomServer()) {
+	const auto dispatch = FragmentLinkV1::AccountDispatchForClick(
+		*decoded,
+		MTP::IsDefaultTeagramServer(
+			controller->session().mtp().config().customServer()));
+	if (!dispatch) {
 		controller->showFeatureUnavailableOnServerToast();
 		return true;
 	}
 	const auto messageId = MsgId(static_cast<qint64>(decoded->messageId));
 	const auto clickFromMessageId = click.itemId;
-	switch (decoded->type) {
+	switch (*dispatch) {
 	case FragmentLinkV1::Type::Profile:
 	case FragmentLinkV1::Type::PublicMessage:
 		controller->showPeerByLink(Window::PeerByLinkInfo{
 			.usernameOrId = decoded->username,
-			.messageId = (decoded->type == FragmentLinkV1::Type::Profile)
+			.messageId = (*dispatch == FragmentLinkV1::Type::Profile)
 							 ? ShowAtUnreadMsgId
 							 : messageId,
 			.clickFromMessageId = clickFromMessageId,
@@ -1858,7 +1869,7 @@ bool TryOpenFragmentLinkV1(const QString &url, const QVariant &context) {
 		controller->show(Box<StickerSetBox>(
 			controller->uiShow(),
 			StickerSetIdentifier{.shortName = decoded->shortName},
-			(decoded->type == FragmentLinkV1::Type::EmojiSet)
+			(*dispatch == FragmentLinkV1::Type::EmojiSet)
 				? Data::StickersType::Emoji
 				: Data::StickersType::Stickers));
 		controller->window().activate();

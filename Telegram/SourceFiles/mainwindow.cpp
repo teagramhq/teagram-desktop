@@ -313,11 +313,13 @@ void MainWindow::setupIntro(
 	fixOrder();
 }
 
-bool MainWindow::setSignupInviteSecret(const QString &secret) {
+bool MainWindow::setSignupInviteSecret(
+		const QString &secret,
+		const QString &discoveryOrigin) {
 	if (!_intro) {
 		return false;
 	}
-	_intro->setSignupInviteSecret(secret);
+	_intro->setSignupInviteSecret(secret, discoveryOrigin);
 	return true;
 }
 

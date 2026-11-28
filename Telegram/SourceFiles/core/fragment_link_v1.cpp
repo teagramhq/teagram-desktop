@@ -655,7 +655,31 @@ UrlResult DecodeUrl(const QString &url) {
 				   : UrlResult{UrlStatus::Invalid, {}};
 }
 
+bool IsV1UrlCandidate(const QString &url) {
+	return DecodeUrl(url).status != UrlStatus::NotV1;
+}
+
 bool CanOpenOnDefaultServer(const Link &link) { return link.host.isEmpty(); }
+
+std::optional<Type> AccountDispatchForClick(
+		const Link &link,
+		bool authenticatedDefaultServerOrigin) {
+	if (!authenticatedDefaultServerOrigin || !CanOpenOnDefaultServer(link)) {
+		return std::nullopt;
+	}
+	switch (link.type) {
+	case Type::Profile:
+	case Type::PublicMessage:
+	case Type::PrivateChannelMessage:
+	case Type::JoinChat:
+	case Type::StickerSet:
+	case Type::EmojiSet:
+		return link.type;
+	case Type::SignUpInvite:
+		return std::nullopt;
+	}
+	return std::nullopt;
+}
 
 QString LinkForPath(const QString &path, const QString &internalLinksDomain) {
 	if (internalLinksDomain != kDefaultLinkDomain) {

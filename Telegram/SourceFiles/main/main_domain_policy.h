@@ -16,13 +16,16 @@ namespace Main::details {
 struct SignupInviteSlot {
 	bool hasSession = false;
 	bool sameEnvironment = false;
-	bool hasCustomServer = false;
+	bool defaultServer = false;
 	bool blocked = false;
 };
 
 [[nodiscard]] constexpr bool
-CanReceiveDefaultServerSignupInvite(bool hasCustomServer, bool blocked) {
-	return !hasCustomServer && !blocked;
+CanReceiveDefaultServerSignupInvite(
+	bool hasCustomServer,
+	bool defaultServer,
+	bool blocked) {
+	return !blocked && (!hasCustomServer || defaultServer);
 }
 
 [[nodiscard]] inline std::optional<std::size_t>
@@ -30,8 +33,7 @@ SelectSignupInviteSlot(const std::vector<SignupInviteSlot> &slots) {
 	for (auto i = std::size_t(0); i != slots.size(); ++i) {
 		const auto &slot = slots[i];
 		if (!slot.hasSession && slot.sameEnvironment
-			&& CanReceiveDefaultServerSignupInvite(slot.hasCustomServer,
-												   slot.blocked)) {
+			&& slot.defaultServer && !slot.blocked) {
 			return i;
 		}
 	}
