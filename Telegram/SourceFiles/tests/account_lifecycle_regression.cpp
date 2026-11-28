@@ -18611,7 +18611,8 @@ void RunAuthenticatedCacheSymlinkCases(
 				if (watchdogCoverage.watchdogId != 0) {
 					startupWatchdogId = watchdogCoverage.watchdogId;
 				}
-										budgetAssessment, gap.durationNanoseconds, 100'000'000,
+				const auto withinBudget = timingBudgetRun.Observe(
+					budgetAssessment, gap.durationNanoseconds, 100'000'000,
 					gap.startedAtSteadyNanoseconds);
 				const auto runnerNoiseEligible
 					= MainThreadWorkBudgetIsUntracedWallOverrun(
