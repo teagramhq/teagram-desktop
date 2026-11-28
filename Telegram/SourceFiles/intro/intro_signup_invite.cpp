@@ -16,6 +16,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "logs.h"
 #include "main/main_account.h"
 #include "main/main_app_config.h"
+#include "mtproto/mtproto_config.h"
 #include "mtproto/mtproto_dc_options.h"
 #include "mtproto/mtproto_response.h"
 #include "ui/text/format_values.h"
