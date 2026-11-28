@@ -7,13 +7,29 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #pragma once
 
+#include <cstddef>
+#include <optional>
+#include <vector>
+
 namespace Main::details {
 
-[[nodiscard]] constexpr bool CanReuseForSignupInvite(bool sessionExists,
-													 bool sameEnvironment,
-													 bool hasCustomServer,
-													 bool blocked) {
-	return !sessionExists && sameEnvironment && !hasCustomServer && !blocked;
+struct SignupInviteSlot {
+	bool hasSession = false;
+	bool sameEnvironment = false;
+	bool hasCustomServer = false;
+	bool blocked = false;
+};
+
+[[nodiscard]] inline std::optional<std::size_t>
+SelectSignupInviteSlot(const std::vector<SignupInviteSlot> &slots) {
+	for (auto i = std::size_t(0); i != slots.size(); ++i) {
+		const auto &slot = slots[i];
+		if (!slot.hasSession && slot.sameEnvironment && !slot.hasCustomServer
+			&& !slot.blocked) {
+			return i;
+		}
+	}
+	return std::nullopt;
 }
 
 } // namespace Main::details

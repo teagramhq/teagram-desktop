@@ -37,7 +37,19 @@ struct Link {
 	friend bool operator==(const Link &, const Link &) = default;
 };
 
+enum class UrlStatus {
+	NotV1,
+	Invalid,
+	Valid,
+};
+
+struct UrlResult {
+	UrlStatus status = UrlStatus::NotV1;
+	Link link;
+};
+
 [[nodiscard]] std::optional<Link> Decode(const QString &fragment);
+[[nodiscard]] UrlResult DecodeUrl(const QString &url);
 [[nodiscard]] std::optional<QString> Encode(const Link &link);
 [[nodiscard]] bool CanOpenOnDefaultServer(const Link &link);
 [[nodiscard]] QString LinkForPath(const QString &path,

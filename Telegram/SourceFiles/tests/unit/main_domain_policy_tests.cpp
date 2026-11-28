@@ -9,12 +9,42 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "main/main_domain_policy.h"
 
-TEST_CASE(SignupInviteReuseRequiresDefaultServerAccountSlot) {
-	using Main::details::CanReuseForSignupInvite;
+#include <vector>
 
-	CHECK(CanReuseForSignupInvite(false, true, false, false));
-	CHECK(!CanReuseForSignupInvite(false, true, true, false));
-	CHECK(!CanReuseForSignupInvite(false, true, false, true));
-	CHECK(!CanReuseForSignupInvite(true, true, false, false));
-	CHECK(!CanReuseForSignupInvite(false, false, false, false));
+TEST_CASE(SignupInviteSlotSelectionSkipsSessionedAccounts) {
+	using Main::details::SelectSignupInviteSlot;
+	using Main::details::SignupInviteSlot;
+
+	const auto slots = std::vector<SignupInviteSlot>{
+		{.hasSession = true, .sameEnvironment = true},
+		{.sameEnvironment = true},
+	};
+	const auto selected = SelectSignupInviteSlot(slots);
+	CHECK(selected.has_value());
+	if (selected) {
+		CHECK(*selected == 1U);
+	}
+}
+
+TEST_CASE(SignupInviteSlotSelectionFailsWhenAllSlotsAreUnavailable) {
+	using Main::details::SelectSignupInviteSlot;
+	using Main::details::SignupInviteSlot;
+
+	const auto slots = std::vector<SignupInviteSlot>{
+		{.hasSession = true, .sameEnvironment = true},
+		{.hasSession = true, .sameEnvironment = true},
+	};
+	CHECK(!SelectSignupInviteSlot(slots).has_value());
+}
+
+TEST_CASE(SignupInviteSlotSelectionRejectsWrongEnvironmentAndPinnedSlots) {
+	using Main::details::SelectSignupInviteSlot;
+	using Main::details::SignupInviteSlot;
+
+	const auto slots = std::vector<SignupInviteSlot>{
+		{.sameEnvironment = false},
+		{.sameEnvironment = true, .hasCustomServer = true},
+		{.sameEnvironment = true, .blocked = true},
+	};
+	CHECK(!SelectSignupInviteSlot(slots).has_value());
 }

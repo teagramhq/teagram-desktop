@@ -85,8 +85,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include <QtGui/QGuiApplication>
 
-#include <QtCore/QUrl>
-
 namespace Core {
 namespace {
 
@@ -1769,25 +1767,15 @@ bool ResolveOAuth(
 } // namespace
 
 bool TryOpenFragmentLinkV1(const QString &url, const QVariant &context) {
-	const auto parsed = QUrl(url, QUrl::TolerantMode);
-	if (parsed.host().compare(u"web.teagram.io"_q, Qt::CaseInsensitive) != 0) {
+	const auto urlResult = FragmentLinkV1::DecodeUrl(url);
+	if (urlResult.status == FragmentLinkV1::UrlStatus::NotV1) {
 		return false;
 	}
-	const auto fragmentStart = url.indexOf(QChar(u'#'));
-	if (fragmentStart < 0 || !url.mid(fragmentStart).startsWith(u"#~"_q)) {
-		return false;
-	}
-	const auto fragment = url.mid(fragmentStart);
-	if (!parsed.isValid()
-		|| parsed.scheme().compare(u"https"_q, Qt::CaseInsensitive) != 0
-		|| (parsed.port(-1) != -1 && parsed.port(-1) != 443)
-		|| !parsed.userName().isEmpty() || !parsed.password().isEmpty()
-		|| (parsed.path() != QString() && parsed.path() != u"/"_q)
-		|| parsed.hasQuery()) {
+	if (urlResult.status == FragmentLinkV1::UrlStatus::Invalid) {
 		return true;
 	}
-	const auto decoded = FragmentLinkV1::Decode(fragment);
-	if (!decoded || !FragmentLinkV1::CanOpenOnDefaultServer(*decoded)) {
+	const auto decoded = &urlResult.link;
+	if (!FragmentLinkV1::CanOpenOnDefaultServer(*decoded)) {
 		return true;
 	}
 	const auto click = context.value<ClickHandlerContext>();
@@ -1815,15 +1803,15 @@ bool TryOpenFragmentLinkV1(const QString &url, const QVariant &context) {
 			if (!primary->widget()->setSignupInviteSecret(secret)) {
 				primary->account().setPendingSignupInviteSecret(secret);
 			}
-		} else if (controller) {
-			if (!controller->window().widget()->setSignupInviteSecret(secret)) {
-				controller->window().account().setPendingSignupInviteSecret(
-					secret);
-			}
 		}
 		return true;
 	}
 	if (!controller) {
+		return true;
+	}
+	if (decoded->host.isEmpty()
+		&& controller->session().mtp().config().hasCustomServer()) {
+		controller->showFeatureUnavailableOnServerToast();
 		return true;
 	}
 	const auto messageId = MsgId(static_cast<qint64>(decoded->messageId));

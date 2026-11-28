@@ -633,6 +633,28 @@ std::optional<Link> Decode(const QString &fragment) {
 	return result;
 }
 
+UrlResult DecodeUrl(const QString &url) {
+	const auto parsed = QUrl(url, QUrl::TolerantMode);
+	if (parsed.host().compare(u"web.teagram.io"_q, Qt::CaseInsensitive) != 0) {
+		return {};
+	}
+	const auto fragmentStart = url.indexOf(QChar(u'#'));
+	if (fragmentStart < 0 || !url.mid(fragmentStart).startsWith(u"#~"_q)) {
+		return {};
+	}
+	if (!parsed.isValid()
+		|| parsed.scheme().compare(u"https"_q, Qt::CaseInsensitive) != 0
+		|| (parsed.port(-1) != -1 && parsed.port(-1) != 443)
+		|| !parsed.userName().isEmpty() || !parsed.password().isEmpty()
+		|| (parsed.path() != QString() && parsed.path() != u"/"_q)
+		|| parsed.hasQuery()) {
+		return {UrlStatus::Invalid, {}};
+	}
+	const auto decoded = Decode(url.mid(fragmentStart));
+	return decoded ? UrlResult{UrlStatus::Valid, *decoded}
+				   : UrlResult{UrlStatus::Invalid, {}};
+}
+
 bool CanOpenOnDefaultServer(const Link &link) { return link.host.isEmpty(); }
 
 QString LinkForPath(const QString &path, const QString &internalLinksDomain) {

@@ -344,21 +344,31 @@ bool Domain::addActivated(MTP::Environment environment, bool newWindow,
 	if (accounts().size() < maxAccounts()) {
 		added(add(environment));
 		return true;
-	} else {
+	} else if (signupInviteSecret.isEmpty()) {
 		for (auto &[index, account] : accounts()) {
-			const auto sameEnvironment
-				= account->mtp().environment() == environment;
-			const auto &config = account->mtp().config();
-			const auto canReuse
-				= signupInviteSecret.isEmpty()
-					  ? (!account->sessionExists() && sameEnvironment)
-					  : details::CanReuseForSignupInvite(
-							account->sessionExists(), sameEnvironment,
-							config.hasCustomServer(), config.blocked());
-			if (canReuse) {
+			if (!account->sessionExists()
+				&& account->mtp().environment() == environment) {
 				added(account.get());
 				return true;
 			}
+		}
+	} else {
+		const auto &list = accounts();
+		auto slots = std::vector<details::SignupInviteSlot>();
+		slots.reserve(list.size());
+		for (const auto &item : list) {
+			const auto account = item.account.get();
+			const auto &config = account->mtp().config();
+			slots.push_back({
+				.hasSession = account->sessionExists(),
+				.sameEnvironment = account->mtp().environment() == environment,
+				.hasCustomServer = config.hasCustomServer(),
+				.blocked = config.blocked(),
+			});
+		}
+		if (const auto selected = details::SelectSignupInviteSlot(slots)) {
+			added(list[*selected].account.get());
+			return true;
 		}
 	}
 	return false;

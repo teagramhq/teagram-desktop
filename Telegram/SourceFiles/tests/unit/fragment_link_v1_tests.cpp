@@ -22,10 +22,12 @@ namespace {
 
 using Core::FragmentLinkV1::CanOpenOnDefaultServer;
 using Core::FragmentLinkV1::Decode;
+using Core::FragmentLinkV1::DecodeUrl;
 using Core::FragmentLinkV1::Encode;
 using Core::FragmentLinkV1::Link;
 using Core::FragmentLinkV1::LinkForPath;
 using Core::FragmentLinkV1::Type;
+using Core::FragmentLinkV1::UrlStatus;
 
 [[nodiscard]] Link ExpectedLink(const QJsonObject &input) {
 	auto result = Link();
@@ -101,6 +103,35 @@ TEST_CASE(FragmentLinkV1RejectsHostedLinksForOpening) {
 	}
 	CHECK(sawDefault);
 	CHECK(sawHosted);
+}
+
+TEST_CASE(FragmentLinkV1UrlGateRejectsMalformedAndHostedUrls) {
+	const auto invalid = std::vector<QString>{
+		u"http://web.teagram.io/#~QQHDpNc"_q,
+		u"https://web.teagram.io:8443/#~QQHDpNc"_q,
+		u"https://user@web.teagram.io/#~QQHDpNc"_q,
+		u"https://web.teagram.io/path#~QQHDpNc"_q,
+		u"https://web.teagram.io/?q#~QQHDpNc"_q,
+	};
+	for (const auto &url : invalid) {
+		CHECK(DecodeUrl(url).status == UrlStatus::Invalid);
+	}
+	CHECK(DecodeUrl(u"https://web.teagram.io.example.com/#~QQHDpNc"_q).status
+		  == UrlStatus::NotV1);
+	CHECK(DecodeUrl(u"https://web.teagram.io/#alice"_q).status
+		  == UrlStatus::NotV1);
+	CHECK(DecodeUrl(u"https://web.teagram.io/turnstile.html?token=abc"_q).status
+		  == UrlStatus::NotV1);
+}
+
+TEST_CASE(FragmentLinkV1DefaultServerProfileOpenSmoke) {
+	const auto decoded = DecodeUrl(u"https://web.teagram.io/#~QQHDpNc"_q);
+	CHECK(decoded.status == UrlStatus::Valid);
+	if (decoded.status == UrlStatus::Valid) {
+		CHECK(CanOpenOnDefaultServer(decoded.link));
+		CHECK(decoded.link.type == Type::Profile);
+		CHECK_EQ(decoded.link.username, u"alice"_q);
+	}
 }
 
 TEST_CASE(FragmentLinkV1BuildsSupportedInternalPathsSmoke) {
