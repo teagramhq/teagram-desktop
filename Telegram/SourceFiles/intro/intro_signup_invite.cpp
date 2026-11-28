@@ -62,11 +62,20 @@ QWidget *InviteWidget::firstTabWidget() const { return _invite.data(); }
 void InviteWidget::activate() {
 	Step::activate();
 	_invite->show();
+	if (!getData()->signupInviteSecret.isEmpty()
+		&& !_inviteSecretApplied) {
+		setInviteSecret(getData()->signupInviteSecret);
+	}
 	_invite->setFocusFast();
 	if (getData()->signupInviteError) {
 		getData()->signupInviteError = false;
 		showInviteError(tr::lng_intro_signup_invite_unusable(tr::now), true);
 	}
+}
+
+void InviteWidget::setInviteSecret(const QString &secret) {
+	_invite->setText(secret);
+	_inviteSecretApplied = true;
 }
 
 void InviteWidget::setInnerFocus() { _invite->setFocusFast(); }

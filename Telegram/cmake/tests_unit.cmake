@@ -104,6 +104,7 @@ PRIVATE
     core/teagram_update_state.cpp
     core/teagram_update_download.cpp
     core/local_url_conversion.cpp
+    core/fragment_link_v1.cpp
     core/sticker_import.cpp
     core/telegram_sticker_import.cpp
     api/api_telegram_sticker_pack.cpp
@@ -155,6 +156,7 @@ PRIVATE
     tests/unit/intro_turnstile_tests.cpp
     tests/unit/intro_username_validation_tests.cpp
     tests/unit/local_url_conversion_tests.cpp
+    tests/unit/fragment_link_v1_tests.cpp
     tests/unit/media_clip_check_streaming_tests.cpp
     tests/unit/sticker_import_tests.cpp
     tests/unit/url_scheme_policy_tests.cpp

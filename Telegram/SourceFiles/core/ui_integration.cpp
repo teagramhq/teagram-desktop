@@ -478,6 +478,9 @@ std::shared_ptr<ClickHandler> UiIntegration::createLinkHandler(
 bool UiIntegration::handleUrlClick(
 		const QString &url,
 		const QVariant &context) {
+	if (Core::TryOpenFragmentLinkV1(url, context)) {
+		return true;
+	}
 	const auto originController = context.value<ClickHandlerContext>()
 		.sessionWindow.get();
 	const auto local = Core::TryConvertUrlToLocal(

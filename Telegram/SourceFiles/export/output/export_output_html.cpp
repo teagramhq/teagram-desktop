@@ -8,6 +8,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "export/output/export_output_html.h"
 #include "export/output/export_output_string.h"
 
+#include "core/fragment_link_v1.h"
 #include "core/utils.h"
 #include "countries/countries_instance.h"
 #include "export/data/export_data_types.h"
@@ -261,8 +262,9 @@ QByteArray FormatText(
 		case Type::Unknown: return text;
 		case Type::Mention:
 			return "<a href=\""
-				+ internalLinksDomain.toUtf8()
-				+ text.mid(1)
+				+ Core::FragmentLinkV1::LinkForPath(
+					QString::fromUtf8(text.mid(1)),
+					internalLinksDomain).toUtf8()
 				+ "\">" + text + "</a>";
 		case Type::Hashtag: return "<a href=\"\" "
 			"onclick=\"return ShowHashtag("
@@ -865,7 +867,9 @@ std::optional<QByteArray> SafeMentionHref(
 			return std::nullopt;
 		}
 	}
-	return SafeHttpHref(internalLinksDomain.toUtf8() + username);
+	return SafeHttpHref(Core::FragmentLinkV1::LinkForPath(
+		QString::fromLatin1(username),
+		internalLinksDomain).toUtf8());
 }
 
 bool IsAsciiWord(
@@ -1651,7 +1655,9 @@ QByteArray RichHtmlRenderer::renderChannel(
 			*channel.username,
 			kRichUsernameMinLength,
 			kRichUsernameMaxLength)) {
-		const auto target = _internalLinksDomain.toUtf8() + *channel.username;
+		const auto target = Core::FragmentLinkV1::LinkForPath(
+			QString::fromLatin1(*channel.username),
+			_internalLinksDomain).toUtf8();
 		if (const auto href = SafeHttpHref(target)) {
 			media.link = QString::fromUtf8(*href);
 		}

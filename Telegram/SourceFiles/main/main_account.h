@@ -145,6 +145,8 @@ public:
 
 	void setHandleLoginCode(Fn<void(QString)> callback);
 	void handleLoginCode(const QString &code) const;
+	void setPendingSignupInviteSecret(QString secret);
+	[[nodiscard]] QString takePendingSignupInviteSecret();
 
 #ifdef TDESKTOP_UNIT_TESTS
 	[[nodiscard]] static QString storageBasePathForTest(
@@ -236,6 +238,7 @@ private:
 	rpl::variable<Session*> _sessionValue;
 
 	Fn<void(QString)> _handleLoginCode = nullptr;
+	QString _pendingSignupInviteSecret;
 
 	UserId _sessionUserId = 0;
 	QByteArray _sessionUserSerialized;

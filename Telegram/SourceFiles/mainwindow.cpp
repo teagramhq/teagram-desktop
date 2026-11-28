@@ -313,6 +313,14 @@ void MainWindow::setupIntro(
 	fixOrder();
 }
 
+bool MainWindow::setSignupInviteSecret(const QString &secret) {
+	if (!_intro) {
+		return false;
+	}
+	_intro->setSignupInviteSecret(secret);
+	return true;
+}
+
 void MainWindow::setupMain(
 		MsgId singlePeerShowAtMsgId,
 		QPixmap oldContentCache) {

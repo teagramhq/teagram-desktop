@@ -62,6 +62,7 @@ public:
 		Intro::EnterPoint point,
 		Main::Account *accountBeforeIntro,
 		QPixmap oldContentCache);
+	[[nodiscard]] bool setSignupInviteSecret(const QString &secret);
 	void setupMain(MsgId singlePeerShowAtMsgId, QPixmap oldContentCache);
 
 	void showSettings();

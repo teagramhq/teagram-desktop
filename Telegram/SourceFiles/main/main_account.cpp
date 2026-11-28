@@ -1167,6 +1167,14 @@ void Account::handleLoginCode(const QString &code) const {
 	}
 }
 
+void Account::setPendingSignupInviteSecret(QString secret) {
+	_pendingSignupInviteSecret = std::move(secret);
+}
+
+QString Account::takePendingSignupInviteSecret() {
+	return base::take(_pendingSignupInviteSecret);
+}
+
 MTP::ServerEndpointRefreshEligibility
 Account::serverEndpointRefreshEligibility(const MTP::CustomServer &pin) const {
 	if (!sessionExists() || !_mtp) {

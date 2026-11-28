@@ -12,6 +12,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "intro/intro_server.h"
 #include "intro/intro_code.h"
 #include "intro/intro_signup_name.h"
+#include "intro/intro_signup_invite.h"
 #include "intro/intro_signup_terms.h"
 #include "intro/intro_password_check.h"
 #include "lang/lang_keys.h"
@@ -111,6 +112,7 @@ Widget::Widget(
 	controller->setDefaultFloatPlayerDelegate(floatPlayerDelegate());
 
 	getData()->country = ComputeNewAccountCountry();
+	getData()->signupInviteSecret = _account->takePendingSignupInviteSecret();
 
 	_account->mtpValue(
 	) | rpl::on_next([=](not_null<MTP::Instance*> instance) {
@@ -405,6 +407,18 @@ void Widget::setInnerFocus() {
 		setFocus();
 	} else {
 		getStep()->setInnerFocus();
+	}
+}
+
+void Widget::setSignupInviteSecret(QString secret) {
+	_data.signupInviteSecret = std::move(secret);
+	if (const auto invite = dynamic_cast<details::InviteWidget*>(getStep())) {
+		invite->setInviteSecret(_data.signupInviteSecret);
+	} else if (dynamic_cast<details::SignUpNameWidget*>(getStep())) {
+		moveToStep(
+			new details::InviteWidget(this, _account, getData()),
+			details::StackAction::Forward,
+			details::Animate::Forward);
 	}
 }
 

@@ -57,6 +57,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "support/support_helper.h"
 #include "lang/lang_keys.h"
 #include "core/application.h"
+#include "core/fragment_link_v1.h"
 #include "ui/text/text_utilities.h"
 #include "ui/layers/generic_box.h"
 #include "styles/style_layers.h"
@@ -531,8 +532,13 @@ TextWithEntities Session::createInternalLink(
 
 TextWithEntities Session::createInternalLinkFull(
 		TextWithEntities query) const {
-	return TextWithEntities::Simple(ValidatedInternalLinksDomain(this))
-		.append(std::move(query));
+	const auto domain = ValidatedInternalLinksDomain(this);
+	if (query.entities.empty()) {
+		return TextWithEntities::Simple(Core::FragmentLinkV1::LinkForPath(
+			query.text,
+			domain));
+	}
+	return TextWithEntities::Simple(domain).append(std::move(query));
 }
 
 bool Session::supportMode() const {

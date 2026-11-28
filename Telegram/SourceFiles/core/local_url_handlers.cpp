@@ -8,6 +8,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/local_url_handlers.h"
 
 #include "core/deep_links/deep_links_router.h"
+#include "core/fragment_link_v1.h"
 #include "api/api_confirm_phone.h"
 #include "api/api_chat_filters.h"
 #include "api/api_chat_invite.h"
@@ -63,12 +64,14 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "settings/sections/settings_premium.h"
 #include "storage/storage_account.h"
 #include "mainwidget.h"
+#include "mainwindow.h"
 #include "main/main_account.h"
 #include "main/main_app_config.h"
 #include "main/main_domain.h"
 #include "main/main_session.h"
 #include "main/main_session_settings.h"
 #include "mtproto/mtproto_config.h"
+#include "intro/intro_widget.h"
 #include "info/info_controller.h"
 #include "info/info_memento.h"
 #include "info/profile/info_profile_values.h"
@@ -81,6 +84,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "styles/style_chat_helpers.h"
 
 #include <QtGui/QGuiApplication>
+
+#include <QtCore/QUrl>
 
 namespace Core {
 namespace {
@@ -1762,6 +1767,110 @@ bool ResolveOAuth(
 }
 
 } // namespace
+
+bool TryOpenFragmentLinkV1(
+		const QString &url,
+		const QVariant &context) {
+	const auto parsed = QUrl(url, QUrl::TolerantMode);
+	if (parsed.host().compare(u"web.teagram.io"_q, Qt::CaseInsensitive) != 0) {
+		return false;
+	}
+	const auto fragmentStart = url.indexOf(QChar(u'#'));
+	if (fragmentStart < 0
+		|| !url.mid(fragmentStart).startsWith(u"#~"_q)) {
+		return false;
+	}
+	const auto fragment = url.mid(fragmentStart);
+	if (!parsed.isValid()
+		|| parsed.scheme().compare(u"https"_q, Qt::CaseInsensitive) != 0
+		|| (parsed.port(-1) != -1 && parsed.port(-1) != 443)
+		|| !parsed.userName().isEmpty()
+		|| !parsed.password().isEmpty()
+		|| (parsed.path() != QString() && parsed.path() != u"/"_q)
+		|| parsed.hasQuery()) {
+		return true;
+	}
+	const auto decoded = FragmentLinkV1::Decode(fragment);
+	if (!decoded || !FragmentLinkV1::CanOpenOnDefaultServer(*decoded)) {
+		return true;
+	}
+	const auto click = context.value<ClickHandlerContext>();
+	auto controller = click.sessionWindow.get();
+	auto primary = Core::App().activePrimaryWindow();
+	if (!controller && primary) {
+		controller = primary->sessionController();
+	}
+	if (decoded->type == FragmentLinkV1::Type::SignUpInvite) {
+		const auto secret = QString::fromLatin1(decoded->secret.toHex());
+		const auto account = controller
+			? &controller->session().account()
+			: Core::App().domain().maybeLastOrSomeAuthedAccount();
+		if (account) {
+			Core::App().domain().addActivated(
+				account->mtp().environment(),
+				false,
+				secret);
+		} else if (primary) {
+			if (!primary->widget()->setSignupInviteSecret(secret)) {
+				primary->account().setPendingSignupInviteSecret(secret);
+			}
+		} else if (controller) {
+			controller->window().account().setPendingSignupInviteSecret(secret);
+			controller->window().widget()->setSignupInviteSecret(secret);
+		}
+		return true;
+	}
+	if (!controller) {
+		return true;
+	}
+	const auto messageId = MsgId(static_cast<qint64>(decoded->messageId));
+	const auto clickFromMessageId = click.itemId;
+	switch (decoded->type) {
+	case FragmentLinkV1::Type::Profile:
+	case FragmentLinkV1::Type::PublicMessage:
+		controller->showPeerByLink(Window::PeerByLinkInfo{
+			.usernameOrId = decoded->username,
+			.messageId = (decoded->type == FragmentLinkV1::Type::Profile)
+				? ShowAtUnreadMsgId
+				: messageId,
+			.clickFromMessageId = clickFromMessageId,
+			.clickFromBotWebviewContext = click.botWebviewContext,
+		});
+		controller->window().activate();
+		return true;
+	case FragmentLinkV1::Type::PrivateChannelMessage:
+		controller->showPeerByLink(Window::PeerByLinkInfo{
+			.usernameOrId = ChannelId(BareId(decoded->channelId)),
+			.messageId = messageId,
+			.clickFromMessageId = clickFromMessageId,
+			.clickFromBotWebviewContext = click.botWebviewContext,
+		});
+		controller->window().activate();
+		return true;
+	case FragmentLinkV1::Type::JoinChat:
+		Api::CheckChatInvite(
+			controller,
+			QString::fromLatin1(decoded->hash.toBase64(
+				QByteArray::Base64UrlEncoding | QByteArray::OmitTrailingEquals)));
+		controller->window().activate();
+		return true;
+	case FragmentLinkV1::Type::StickerSet:
+	case FragmentLinkV1::Type::EmojiSet:
+		Core::App().hideMediaView();
+		controller->show(
+			Box<StickerSetBox>(
+				controller->uiShow(),
+				StickerSetIdentifier{ .shortName = decoded->shortName },
+				(decoded->type == FragmentLinkV1::Type::EmojiSet)
+					? Data::StickersType::Emoji
+					: Data::StickersType::Stickers));
+		controller->window().activate();
+		return true;
+	case FragmentLinkV1::Type::SignUpInvite:
+		break;
+	}
+	return true;
+}
 
 bool TryRouterForLocalUrl(
 		Window::SessionController *controller,

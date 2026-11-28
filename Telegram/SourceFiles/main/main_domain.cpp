@@ -325,8 +325,14 @@ not_null<Main::Account*> Domain::add(MTP::Environment environment) {
 	return account;
 }
 
-void Domain::addActivated(MTP::Environment environment, bool newWindow) {
+void Domain::addActivated(
+		MTP::Environment environment,
+		bool newWindow,
+		QString signupInviteSecret) {
 	const auto added = [&](not_null<Main::Account*> account) {
+		if (!signupInviteSecret.isEmpty()) {
+			account->setPendingSignupInviteSecret(signupInviteSecret);
+		}
 		if (newWindow) {
 			Core::App().ensureSeparateWindowFor(account);
 		} else if (const auto window = Core::App().separateWindowFor(
