@@ -20,12 +20,18 @@ struct SignupInviteSlot {
 	bool blocked = false;
 };
 
+[[nodiscard]] constexpr bool
+CanReceiveDefaultServerSignupInvite(bool hasCustomServer, bool blocked) {
+	return !hasCustomServer && !blocked;
+}
+
 [[nodiscard]] inline std::optional<std::size_t>
 SelectSignupInviteSlot(const std::vector<SignupInviteSlot> &slots) {
 	for (auto i = std::size_t(0); i != slots.size(); ++i) {
 		const auto &slot = slots[i];
-		if (!slot.hasSession && slot.sameEnvironment && !slot.hasCustomServer
-			&& !slot.blocked) {
+		if (!slot.hasSession && slot.sameEnvironment
+			&& CanReceiveDefaultServerSignupInvite(slot.hasCustomServer,
+												   slot.blocked)) {
 			return i;
 		}
 	}

@@ -48,3 +48,11 @@ TEST_CASE(SignupInviteSlotSelectionRejectsWrongEnvironmentAndPinnedSlots) {
 	};
 	CHECK(!SelectSignupInviteSlot(slots).has_value());
 }
+
+TEST_CASE(SignupInviteCannotBeRetainedOnCustomServerIntro) {
+	using Main::details::CanReceiveDefaultServerSignupInvite;
+
+	CHECK(CanReceiveDefaultServerSignupInvite(false, false));
+	CHECK(!CanReceiveDefaultServerSignupInvite(true, false));
+	CHECK(!CanReceiveDefaultServerSignupInvite(false, true));
+}

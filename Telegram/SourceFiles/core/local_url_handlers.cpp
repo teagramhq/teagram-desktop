@@ -68,6 +68,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "main/main_account.h"
 #include "main/main_app_config.h"
 #include "main/main_domain.h"
+#include "main/main_domain_policy.h"
 #include "main/main_session.h"
 #include "main/main_session_settings.h"
 #include "mtproto/mtproto_config.h"
@@ -1800,6 +1801,12 @@ bool TryOpenFragmentLinkV1(const QString &url, const QVariant &context) {
 				}
 			}
 		} else if (primary) {
+			const auto &config = primary->account().mtp().config();
+			if (!Main::details::CanReceiveDefaultServerSignupInvite(
+					config.hasCustomServer(), config.blocked())) {
+				Ui::Toast::Show(tr::lng_server_feature_unavailable(tr::now));
+				return true;
+			}
 			if (!primary->widget()->setSignupInviteSecret(secret)) {
 				primary->account().setPendingSignupInviteSecret(secret);
 			}
