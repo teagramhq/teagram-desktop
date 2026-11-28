@@ -7066,6 +7066,14 @@ bool HistoryWidget::historyTransitionFinishedForRegressionTest() const {
 	return !_showAnimation;
 }
 
+int HistoryWidget::requestsBarHeightForRegressionTest() const {
+	return _requestsBar ? _requestsBar->height() : 0;
+}
+
+bool HistoryWidget::requestsBarShownForRegressionTest() const {
+	return _requestsBar && _requestsBar->isShown();
+}
+
 int HistoryWidget::tabbedPanelBuildCountForRegressionTest() const {
 	return _tabbedPanelBuildCountForRegressionTest;
 }

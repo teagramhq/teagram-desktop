@@ -14873,7 +14873,8 @@ struct CacheChatSwitchRegressionResult final {
 	bool syntheticHistoriesReady = false;
 	bool peerScopedUpdateRouting = false;
 	bool requestsBarDeferredForEmptyPeer = false;
-	bool requestsBarCreatedAfterPendingUpdate = false;
+	bool requestsBarVisibleAfterPendingUpdate = false;
+	bool requestsBarHiddenAfterPendingCountCleared = false;
 	bool attachMenuCacheReused = false;
 	bool attachMenuInvalidationRebuilt = false;
 	bool attachMenuBuildDeferredUntilHover = false;
@@ -16939,21 +16940,41 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 	result.requestsBarDeferredForEmptyPeer
 		= requestsBarHistoryShown
 		  && !historyWidget->requestsBarCreatedForRegressionTest();
-	data.chat(ChatId(1058))
-		->setPendingRequestsCount(1, std::vector<UserId>{UserId(1)});
-	result.requestsBarCreatedAfterPendingUpdate = WaitForRegressionCondition(
+	const auto requestsBarPeer = data.chat(ChatId(1058));
+	requestsBarPeer->setPendingRequestsCount(1, std::vector<UserId>{UserId(1)});
+	result.requestsBarVisibleAfterPendingUpdate = WaitForRegressionCondition(
 		[&] {
+			const auto visibleHeight
+				= historyWidget->requestsBarHeightForRegressionTest();
 			return (historyWidget->history() == requestsBarHistory.get())
-				   && historyWidget->requestsBarCreatedForRegressionTest();
+				   && historyWidget
+						  ->historyTransitionFinishedForRegressionTest()
+				   && historyWidget->requestsBarCreatedForRegressionTest()
+				   && historyWidget->requestsBarShownForRegressionTest()
+				   && (visibleHeight > 0);
 		},
 		1000);
-	data.chat(ChatId(1058))->setPendingRequestsCount(0, std::vector<UserId>());
-	QCoreApplication::processEvents();
+	requestsBarPeer->setPendingRequestsCount(0, std::vector<UserId>());
+	result.requestsBarHiddenAfterPendingCountCleared
+		= WaitForRegressionCondition(
+			[&] {
+				const auto hiddenHeight
+					= historyWidget->requestsBarHeightForRegressionTest();
+				return (historyWidget->history() == requestsBarHistory.get())
+					   && historyWidget
+							  ->historyTransitionFinishedForRegressionTest()
+					   && historyWidget->requestsBarCreatedForRegressionTest()
+					   && !historyWidget->requestsBarShownForRegressionTest()
+					   && (hiddenHeight == 0);
+			},
+			1000);
 	std::fprintf(stderr,
 				 "Requests bar deferred creation: empty_peer_deferred=%d "
-				 "created_after_pending_update=%d.\n",
+				 "visible_after_pending_update=%d "
+				 "hidden_after_pending_count_cleared=%d.\n",
 				 result.requestsBarDeferredForEmptyPeer,
-				 result.requestsBarCreatedAfterPendingUpdate);
+				 result.requestsBarVisibleAfterPendingUpdate,
+				 result.requestsBarHiddenAfterPendingCountCleared);
 	const auto groupCallBarDeferred
 		= GroupCallBarDeferredButtonRegressionPasses();
 	const auto contactStatusRequestText
@@ -17306,7 +17327,8 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		"chat_switch_cpu_clock=%d chat_switch_process_cpu_clock=%d "
 		"scale_rebuilt=%d transitions_settled=%d "
 		"requests_bar_empty_deferred=%d "
-		"requests_bar_created_after_pending_update=%d "
+		"requests_bar_visible_after_pending_update=%d "
+		"requests_bar_hidden_after_pending_count_cleared=%d "
 		"initial_selection_within_budget=%d switch_work_within_budget=%d "
 		"startup_budget=%d blocked_work_fixtures=%d "
 		"startup_watchdog_fixtures=%d.\n",
@@ -17317,7 +17339,8 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		result.historyScaleInvalidationRebuilt,
 		result.chatSwitchTransitionsSettled,
 		result.requestsBarDeferredForEmptyPeer,
-		result.requestsBarCreatedAfterPendingUpdate,
+		result.requestsBarVisibleAfterPendingUpdate,
+		result.requestsBarHiddenAfterPendingCountCleared,
 		result.initialHistorySelectionWithinBudget,
 		result.chatSwitchWorkWithinBudget,
 		startupTimingBudgetRun.WithinBudget(),
@@ -17331,7 +17354,8 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		  && result.dialogHistoriesReady && result.syntheticHistoriesReady
 		  && result.peerScopedUpdateRouting
 		  && result.requestsBarDeferredForEmptyPeer
-		  && result.requestsBarCreatedAfterPendingUpdate
+		  && result.requestsBarVisibleAfterPendingUpdate
+		  && result.requestsBarHiddenAfterPendingCountCleared
 		  && (result.cachedDocuments
 			  == (kReactionCount / 2 + 1) * kDocumentsPerReaction)
 		  && result.historyScaleInvalidationRebuilt
@@ -18561,8 +18585,8 @@ void RunAuthenticatedCacheSymlinkCases(
 					"synthetic_histories_ready=%d "
 					"peer_scoped_update_routing=%d "
 					"requests_bar_empty_deferred=%d "
-					"requests_bar_created_after_pending_update="
-					"%d "
+					"requests_bar_visible_after_pending_update=%d "
+					"requests_bar_hidden_after_pending_count_cleared=%d "
 					"max_stall_ns=%lld within_budgets=%d.\n",
 					chatSwitch.reactions, chatSwitch.hydratedDocuments,
 					chatSwitch.chatSwitches, chatSwitch.attachMenuBotCount,
@@ -18635,7 +18659,8 @@ void RunAuthenticatedCacheSymlinkCases(
 					chatSwitch.syntheticHistoriesReady,
 					chatSwitch.peerScopedUpdateRouting,
 					chatSwitch.requestsBarDeferredForEmptyPeer,
-					chatSwitch.requestsBarCreatedAfterPendingUpdate,
+					chatSwitch.requestsBarVisibleAfterPendingUpdate,
+					chatSwitch.requestsBarHiddenAfterPendingCountCleared,
 					static_cast<long long>(chatSwitch.maxStallNanoseconds),
 					chatSwitch.passed);
 				std::fprintf(

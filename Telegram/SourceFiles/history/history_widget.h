@@ -340,6 +340,8 @@ public:
 	[[nodiscard]] bool requestsBarCreatedForRegressionTest() const {
 		return bool(_requestsBar);
 	}
+	[[nodiscard]] bool requestsBarShownForRegressionTest() const;
+	[[nodiscard]] int requestsBarHeightForRegressionTest() const;
 	void hideFieldAutocompleteForRegressionTest();
 	void sendForRegressionTest(Api::SendOptions options);
 	void chooseReactionForRegressionTest(FullMsgId context,

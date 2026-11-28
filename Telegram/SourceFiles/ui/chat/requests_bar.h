@@ -38,6 +38,7 @@ public:
 
 	void show();
 	void hide();
+	[[nodiscard]] bool isShown() const;
 	void raise();
 	void finishAnimating();
 
