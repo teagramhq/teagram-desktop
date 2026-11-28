@@ -662,9 +662,8 @@ bool IsV1UrlCandidate(const QString &url) {
 
 bool CanOpenOnDefaultServer(const Link &link) { return link.host.isEmpty(); }
 
-std::optional<Type>
-AccountDispatchForClick(const Link &link,
-						const MTP::CustomServer &server) {
+std::optional<Type> AccountDispatchForClick(const Link &link,
+											const MTP::CustomServer &server) {
 	if (!MTP::IsDefaultTeagramServer(server) || !CanOpenOnDefaultServer(link)) {
 		return std::nullopt;
 	}

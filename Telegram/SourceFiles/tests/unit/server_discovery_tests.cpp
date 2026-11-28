@@ -1700,7 +1700,7 @@ TEST_CASE(PublicDiscoveryOriginBindingComparesExpectedAndPinnedOrigins) {
 	const auto selection = CheckServerSelection(u"server.teagram.io"_q);
 	const auto expected = PublicDiscoveryUrl(selection);
 	const auto legacy = u"https://server.teagram.io/"
-						 u".well-known/telegramd/client"_q;
+						u".well-known/telegramd/client"_q;
 	CHECK(SamePublicDiscoveryOrigin(expected, legacy));
 	const auto other = CheckServerSelection(u"other.example.com"_q);
 	CHECK(!SamePublicDiscoveryOrigin(expected, PublicDiscoveryUrl(other)));
@@ -1716,8 +1716,8 @@ TEST_CASE(FragmentLinkV1DefaultOriginProfileClickDispatchSmoke) {
 		u"https://web.teagram.io/#~QQHDpNc"_q);
 	CHECK(decoded.status == Core::FragmentLinkV1::UrlStatus::Valid);
 	if (decoded.status == Core::FragmentLinkV1::UrlStatus::Valid) {
-		const auto dispatch = Core::FragmentLinkV1::AccountDispatchForClick(
-			decoded.link, pin);
+		const auto dispatch
+			= Core::FragmentLinkV1::AccountDispatchForClick(decoded.link, pin);
 		CHECK(dispatch.has_value());
 		if (dispatch) {
 			CHECK(*dispatch == Core::FragmentLinkV1::Type::Profile);
@@ -1726,8 +1726,7 @@ TEST_CASE(FragmentLinkV1DefaultOriginProfileClickDispatchSmoke) {
 		const auto other = CheckServerSelection(u"other.example.com"_q);
 		pin.serverSelection = other.normalizedSelection.toStdString();
 		pin.discoveryOrigin = PublicDiscoveryUrl(other).toStdString();
-		CHECK(!Core::FragmentLinkV1::AccountDispatchForClick(
-				   decoded.link, pin)
+		CHECK(!Core::FragmentLinkV1::AccountDispatchForClick(decoded.link, pin)
 				   .has_value());
 	}
 }

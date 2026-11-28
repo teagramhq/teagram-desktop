@@ -990,7 +990,7 @@ bool IsPublicDiscoveryOrigin(const ServerSelectionCheck &selection,
 }
 
 bool SamePublicDiscoveryOrigin(const QString &expectedOrigin,
-							  const QString &pinnedOrigin) {
+							   const QString &pinnedOrigin) {
 	const auto expected = QUrl(expectedOrigin);
 	const auto pinned = QUrl(pinnedOrigin);
 	return expected.isValid() && pinned.isValid()
