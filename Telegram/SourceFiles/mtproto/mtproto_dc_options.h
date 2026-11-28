@@ -48,9 +48,9 @@ struct CustomServer {
 };
 
 [[nodiscard]] bool IsDefaultTeagramServer(const CustomServer &server);
-[[nodiscard]] bool IsDefaultTeagramServerForOrigin(
-	const QString &expectedOrigin,
-	const CustomServer &server);
+[[nodiscard]] bool
+IsDefaultTeagramServerForOrigin(const QString &expectedOrigin,
+								const CustomServer &server);
 
 enum class CustomServerEndpointRefreshIdentityFailure {
 	None,

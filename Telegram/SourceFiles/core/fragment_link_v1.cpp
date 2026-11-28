@@ -661,9 +661,9 @@ bool IsV1UrlCandidate(const QString &url) {
 
 bool CanOpenOnDefaultServer(const Link &link) { return link.host.isEmpty(); }
 
-std::optional<Type> AccountDispatchForClick(
-		const Link &link,
-		bool authenticatedDefaultServerOrigin) {
+std::optional<Type>
+AccountDispatchForClick(const Link &link,
+						bool authenticatedDefaultServerOrigin) {
 	if (!authenticatedDefaultServerOrigin || !CanOpenOnDefaultServer(link)) {
 		return std::nullopt;
 	}

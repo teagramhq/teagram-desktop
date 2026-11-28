@@ -246,28 +246,24 @@ t6N/byY9Nw9p21Og3AoXSL2q/2IJ1WRUhebgAdGVMlV1fkuOQoEzR7EdpqtQD9Cs\n\
 
 bool IsDefaultTeagramServer(const CustomServer &server) {
 	return IsDefaultTeagramServerForOrigin(
-		DefaultTeagramServerDiscoveryOrigin(),
-		server);
+		DefaultTeagramServerDiscoveryOrigin(), server);
 }
 
-bool IsDefaultTeagramServerForOrigin(
-		const QString &expectedOrigin,
-		const CustomServer &server) {
+bool IsDefaultTeagramServerForOrigin(const QString &expectedOrigin,
+									 const CustomServer &server) {
 	if (!server.key || !server.key->valid()) {
 		return false;
 	}
 	const auto expected = CheckServerSelection(u"server.teagram.io"_q);
-	const auto selection = CheckServerSelection(
-		QString::fromStdString(server.serverSelection));
-	return expected.valid()
-		&& selection.valid()
-		&& server.discoveryPolicy == ServerDiscoveryPolicy::PublicHttps
-		&& selection.policy == server.discoveryPolicy
-		&& selection.normalizedSelection == expected.normalizedSelection
-		&& IsPublicDiscoveryOrigin(expected, expectedOrigin)
-		&& IsPublicDiscoveryOrigin(
-			selection,
-			QString::fromStdString(server.discoveryOrigin));
+	const auto selection
+		= CheckServerSelection(QString::fromStdString(server.serverSelection));
+	return expected.valid() && selection.valid()
+		   && server.discoveryPolicy == ServerDiscoveryPolicy::PublicHttps
+		   && selection.policy == server.discoveryPolicy
+		   && selection.normalizedSelection == expected.normalizedSelection
+		   && IsPublicDiscoveryOrigin(expected, expectedOrigin)
+		   && IsPublicDiscoveryOrigin(
+			   selection, QString::fromStdString(server.discoveryOrigin));
 }
 
 bool SameCustomServerEndpoint(const CustomServer &left,

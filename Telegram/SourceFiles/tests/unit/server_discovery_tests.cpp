@@ -1705,8 +1705,7 @@ TEST_CASE(FragmentLinkV1DefaultOriginProfileClickDispatchSmoke) {
 	CHECK(decoded.status == Core::FragmentLinkV1::UrlStatus::Valid);
 	if (decoded.status == Core::FragmentLinkV1::UrlStatus::Valid) {
 		const auto dispatch = Core::FragmentLinkV1::AccountDispatchForClick(
-			decoded.link,
-			IsDefaultTeagramServer(pin));
+			decoded.link, IsDefaultTeagramServer(pin));
 		CHECK(dispatch.has_value());
 		if (dispatch) {
 			CHECK(*dispatch == Core::FragmentLinkV1::Type::Profile);
@@ -1716,8 +1715,8 @@ TEST_CASE(FragmentLinkV1DefaultOriginProfileClickDispatchSmoke) {
 		pin.serverSelection = other.normalizedSelection.toStdString();
 		pin.discoveryOrigin = PublicDiscoveryUrl(other).toStdString();
 		CHECK(!Core::FragmentLinkV1::AccountDispatchForClick(
-			decoded.link,
-			IsDefaultTeagramServer(pin)).has_value());
+				   decoded.link, IsDefaultTeagramServer(pin))
+				   .has_value());
 	}
 }
 

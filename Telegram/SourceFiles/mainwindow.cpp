@@ -313,9 +313,8 @@ void MainWindow::setupIntro(
 	fixOrder();
 }
 
-bool MainWindow::setSignupInviteSecret(
-		const QString &secret,
-		const QString &discoveryOrigin) {
+bool MainWindow::setSignupInviteSecret(const QString &secret,
+									   const QString &discoveryOrigin) {
 	if (!_intro) {
 		return false;
 	}

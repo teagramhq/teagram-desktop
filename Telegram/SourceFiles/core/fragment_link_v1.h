@@ -53,9 +53,9 @@ struct UrlResult {
 [[nodiscard]] bool IsV1UrlCandidate(const QString &url);
 [[nodiscard]] std::optional<QString> Encode(const Link &link);
 [[nodiscard]] bool CanOpenOnDefaultServer(const Link &link);
-[[nodiscard]] std::optional<Type> AccountDispatchForClick(
-	const Link &link,
-	bool authenticatedDefaultServerOrigin);
+[[nodiscard]] std::optional<Type>
+AccountDispatchForClick(const Link &link,
+						bool authenticatedDefaultServerOrigin);
 [[nodiscard]] QString LinkForPath(const QString &path,
 								  const QString &internalLinksDomain);
 

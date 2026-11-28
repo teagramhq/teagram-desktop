@@ -21,10 +21,8 @@ struct SignupInviteSlot {
 };
 
 [[nodiscard]] constexpr bool
-CanReceiveDefaultServerSignupInvite(
-	bool hasCustomServer,
-	bool defaultServer,
-	bool blocked) {
+CanReceiveDefaultServerSignupInvite(bool hasCustomServer, bool defaultServer,
+									bool blocked) {
 	return !blocked && (!hasCustomServer || defaultServer);
 }
 
@@ -32,8 +30,8 @@ CanReceiveDefaultServerSignupInvite(
 SelectSignupInviteSlot(const std::vector<SignupInviteSlot> &slots) {
 	for (auto i = std::size_t(0); i != slots.size(); ++i) {
 		const auto &slot = slots[i];
-		if (!slot.hasSession && slot.sameEnvironment
-			&& slot.defaultServer && !slot.blocked) {
+		if (!slot.hasSession && slot.sameEnvironment && slot.defaultServer
+			&& !slot.blocked) {
 			return i;
 		}
 	}

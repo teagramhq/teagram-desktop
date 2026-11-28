@@ -1794,7 +1794,7 @@ bool TryOpenFragmentLinkV1(const QString &url, const QVariant &context) {
 						 : Core::App().domain().maybeLastOrSomeAuthedAccount();
 		if (account) {
 			if (!Core::App().domain().addActivated(account->mtp().environment(),
-											   false, secret, origin)) {
+												   false, secret, origin)) {
 				const auto message = tr::lng_accounts_limit_title(tr::now);
 				if (controller) {
 					controller->showToast(message);
@@ -1806,8 +1806,7 @@ bool TryOpenFragmentLinkV1(const QString &url, const QVariant &context) {
 			const auto &config = primary->account().mtp().config();
 			const auto pin = config.customServer();
 			if (!Main::details::CanReceiveDefaultServerSignupInvite(
-					config.hasCustomServer(),
-					MTP::IsDefaultTeagramServer(pin),
+					config.hasCustomServer(), MTP::IsDefaultTeagramServer(pin),
 					config.blocked())) {
 				Ui::Toast::Show(tr::lng_server_feature_unavailable(tr::now));
 				return true;
@@ -1825,9 +1824,8 @@ bool TryOpenFragmentLinkV1(const QString &url, const QVariant &context) {
 		return true;
 	}
 	const auto dispatch = FragmentLinkV1::AccountDispatchForClick(
-		*decoded,
-		MTP::IsDefaultTeagramServer(
-			controller->session().mtp().config().customServer()));
+		*decoded, MTP::IsDefaultTeagramServer(
+					  controller->session().mtp().config().customServer()));
 	if (!dispatch) {
 		controller->showFeatureUnavailableOnServerToast();
 		return true;
