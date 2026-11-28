@@ -18279,13 +18279,32 @@ void RunAuthenticatedCacheSymlinkCases(
 					= gap.durationNanoseconds >= 100'000'000;
 				if (schedulerCaptureRequired
 					&& !budgetAssessment.schedulerEvidenceAvailable) {
+					auto offsets = QStringList();
+					for (const auto offset :
+						 schedulerSamples.sampleOffsetsNanoseconds) {
+						offsets.push_back(QString::number(offset));
+					}
+					auto maximumSampleGapNanoseconds = qint64(0);
+					for (auto i = std::size_t(1);
+						 i < schedulerSamples.sampleOffsetsNanoseconds.size();
+						 ++i) {
+						maximumSampleGapNanoseconds = std::max(
+							maximumSampleGapNanoseconds,
+							schedulerSamples.sampleOffsetsNanoseconds[i]
+								- schedulerSamples
+									  .sampleOffsetsNanoseconds[i - 1]);
+					}
+					const auto offsetsText = offsets.join(u',').toLatin1();
 					std::fprintf(
 						stderr,
 						"HARNESS ERROR: startup scheduler trace unavailable: "
 						"started_at=%s window_start_steady_ns=%lld "
 						"wall_ns=%lld main_thread_cpu_ns=%lld "
 						"budget_ns=100000000 runner_noise_eligible=%d "
-						"runner_noise_cpu_limit_ns=%lld.\n",
+						"runner_noise_cpu_limit_ns=%lld trace=%s "
+						"offsets_ns=%s max_sample_gap_ns=%lld "
+						"before=%c before_distance_ns=%lld "
+						"after=%c after_distance_ns=%lld.\n",
 						gap.startedAt.toString(Qt::ISODateWithMs)
 							.toUtf8()
 							.constData(),
@@ -18294,7 +18313,21 @@ void RunAuthenticatedCacheSymlinkCases(
 						static_cast<long long>(gap.mainThreadWorkNanoseconds),
 						runnerNoiseEligible,
 						static_cast<long long>(
-							kMaxUntracedRunnerNoiseMainThreadCpuNanoseconds));
+							kMaxUntracedRunnerNoiseMainThreadCpuNanoseconds),
+						trace.toLatin1().constData(), offsetsText.constData(),
+						static_cast<long long>(maximumSampleGapNanoseconds),
+						schedulerSamples.before ? schedulerSamples.before->state
+												: '-',
+						static_cast<long long>(
+							schedulerSamples.before
+								? schedulerSamples.before->distanceNanoseconds
+								: -1),
+						schedulerSamples.after ? schedulerSamples.after->state
+											   : '-',
+						static_cast<long long>(
+							schedulerSamples.after
+								? schedulerSamples.after->distanceNanoseconds
+								: -1));
 				}
 				const auto gapStartedAtUtf8
 					= gap.startedAt.toString(Qt::ISODateWithMs).toUtf8();
