@@ -1690,7 +1690,7 @@ for cache in cache media_cache; do
 done
 local first_dialogs_handler_evidence
 first_dialogs_handler_evidence="$(grep -E \
-	'^First messages\.getDialogs handler latency regression: seeded_directories=125 seeded_files=169 requests=1 parsed=1 chats=2 dialogs=1 messages=73 documents=73 cache_walks=2 max_handler_ns=[0-9]+ main_thread_cpu_ns=-?[0-9]+ blocked_estimate_ns=-?[0-9]+ estimated_work_ns=[0-9]+ trace=([[:alpha:]?]+|none) within_budget=[01] cpu_only_within_budget=[01] runner_noise_eligible=[01] under_50ms=[01]\.$' \
+	'^First messages\.getDialogs handler latency regression: seeded_directories=125 seeded_files=169 requests=1 parsed=1 chats=2 dialogs=1 messages=73 documents=73 cache_walks=2 max_handler_ns=[0-9]+ main_thread_cpu_ns=-?[0-9]+ blocked_estimate_ns=-?[0-9]+ estimated_work_ns=[0-9]+ trace=([[:alpha:]?]+|none) within_budget=[01] cpu_only_within_budget=[01] cpu_interval_counters_captured=[01] runner_noise_eligible=[01] under_50ms=[01]\.$' \
 	"$AUTH_LOG" || true)"
 if [[ -z "$first_dialogs_handler_evidence" ]]; then
 	cat "$AUTH_LOG" >&2
