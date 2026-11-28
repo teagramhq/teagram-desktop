@@ -477,7 +477,7 @@ std::optional<QString> Encode(const Link &link) {
 		}
 		fields.push_back(EncodeText(link.username));
 		break;
-	case Type::PublicMessage:
+	case Type::PublicMessage: {
 		if (!IsUsername(link.username)) {
 			return std::nullopt;
 		}
@@ -487,8 +487,8 @@ std::optional<QString> Encode(const Link &link) {
 			return std::nullopt;
 		}
 		fields.push_back(messageId);
-		break;
-	case Type::PrivateChannelMessage:
+	} break;
+	case Type::PrivateChannelMessage: {
 		const auto channelId = EncodeId(link.channelId);
 		if (channelId.isEmpty()) {
 			return std::nullopt;
@@ -499,7 +499,7 @@ std::optional<QString> Encode(const Link &link) {
 			return std::nullopt;
 		}
 		fields.push_back(messageId);
-		break;
+	} break;
 	case Type::JoinChat:
 		if (link.hash.isEmpty()) {
 			return std::nullopt;

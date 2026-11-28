@@ -1809,8 +1809,10 @@ bool TryOpenFragmentLinkV1(const QString &url, const QVariant &context) {
 				primary->account().setPendingSignupInviteSecret(secret);
 			}
 		} else if (controller) {
-			controller->window().account().setPendingSignupInviteSecret(secret);
-			controller->window().widget()->setSignupInviteSecret(secret);
+			if (!controller->window().widget()->setSignupInviteSecret(secret)) {
+				controller->window().account().setPendingSignupInviteSecret(
+					secret);
+			}
 		}
 		return true;
 	}
