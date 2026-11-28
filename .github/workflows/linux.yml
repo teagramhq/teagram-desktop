@@ -606,6 +606,23 @@ jobs:
               exit 1
             fi
 
+            if selected_output=$("$test_unit" --case FragmentLinkV1DefaultOriginProfileClickDispatchSmoke 2>&1); then
+              printf "%s\n" "$selected_output"
+            else
+              TEST_STATUS=$?
+              printf "%s\n" "$selected_output"
+              exit "$TEST_STATUS"
+            fi
+            case_runs=$(printf "%s\n" "$selected_output" | sed -n "/^run  /p")
+            if test "$case_runs" != "run  FragmentLinkV1DefaultOriginProfileClickDispatchSmoke"; then
+              echo "--case did not run exactly FragmentLinkV1DefaultOriginProfileClickDispatchSmoke."
+              exit 1
+            fi
+            if ! printf "%s\n" "$selected_output" | grep -Fqx "1 case(s), 0 failed, 0 failed check(s)."; then
+              echo "Fragment link default-origin profile click smoke did not report one passing case."
+              exit 1
+            fi
+
             if selected_output=$("$test_unit" --case StickerImportConsentZipShareInstallSmoke 2>&1); then
               printf "%s\n" "$selected_output"
             else

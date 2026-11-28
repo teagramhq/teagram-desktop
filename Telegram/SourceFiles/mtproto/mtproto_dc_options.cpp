@@ -244,6 +244,29 @@ t6N/byY9Nw9p21Og3AoXSL2q/2IJ1WRUhebgAdGVMlV1fkuOQoEzR7EdpqtQD9Cs\n\
 
 } // namespace
 
+bool IsDefaultTeagramServer(const CustomServer &server) {
+	return IsDefaultTeagramServerForOrigin(
+		DefaultTeagramServerDiscoveryOrigin(), server);
+}
+
+bool IsDefaultTeagramServerForOrigin(const QString &expectedOrigin,
+									 const CustomServer &server) {
+	if (!server.key || !server.key->valid()) {
+		return false;
+	}
+	const auto expected = CheckServerSelection(u"server.teagram.io"_q);
+	const auto selection
+		= CheckServerSelection(QString::fromStdString(server.serverSelection));
+	const auto pinnedOrigin = QString::fromStdString(server.discoveryOrigin);
+	return expected.valid() && selection.valid()
+		   && server.discoveryPolicy == ServerDiscoveryPolicy::PublicHttps
+		   && selection.policy == server.discoveryPolicy
+		   && selection.normalizedSelection == expected.normalizedSelection
+		   && IsPublicDiscoveryOrigin(expected, expectedOrigin)
+		   && IsPublicDiscoveryOrigin(selection, pinnedOrigin)
+		   && SamePublicDiscoveryOrigin(expectedOrigin, pinnedOrigin);
+}
+
 bool SameCustomServerEndpoint(const CustomServer &left,
 							  const CustomServer &right) {
 	return left.hostname == right.hostname && left.ip == right.ip

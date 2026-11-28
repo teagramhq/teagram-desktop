@@ -418,7 +418,8 @@ void UsernameWidget::signInDone(const MTPauth_Authorization &result) {
 		const auto inviteMode = account().appConfig().get<QString>(
 									u"registration_mode"_q, QString())
 								== u"invite"_q;
-		if (ShouldStartInviteStep(inviteMode, getData()->signupInviteError)) {
+		if (ShouldStartInviteStep(inviteMode, getData()->signupInviteError,
+								  !getData()->signupInviteSecret.isEmpty())) {
 			goNext<InviteWidget>();
 		} else {
 			goNext<SignUpNameWidget>();

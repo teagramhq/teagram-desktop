@@ -989,6 +989,19 @@ bool IsPublicDiscoveryOrigin(const ServerSelectionCheck &selection,
 	return origin == PublicDiscoveryUrl(selection) || origin == legacy;
 }
 
+bool SamePublicDiscoveryOrigin(const QString &expectedOrigin,
+							   const QString &pinnedOrigin) {
+	const auto expected = QUrl(expectedOrigin);
+	const auto pinned = QUrl(pinnedOrigin);
+	return expected.isValid() && pinned.isValid()
+		   && !expected.origin().isEmpty()
+		   && expected.origin() == pinned.origin();
+}
+
+QString DefaultTeagramServerDiscoveryOrigin() {
+	return PublicDiscoveryUrl(CheckServerSelection(u"server.teagram.io"_q));
+}
+
 void ConfigurePublicDiscoveryRequest(QNetworkRequest &request) {
 	request.setRawHeader("User-Agent", QByteArrayLiteral("-"));
 	request.setRawHeader("Accept-Encoding", QByteArrayLiteral("identity"));

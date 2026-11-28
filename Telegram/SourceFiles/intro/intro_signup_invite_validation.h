@@ -20,7 +20,8 @@ enum class InviteSignInFailure {
 };
 
 [[nodiscard]] QString NormalizeInviteSecret(const QString &input);
-[[nodiscard]] bool ShouldStartInviteStep(bool inviteMode, bool inviteRejected);
+[[nodiscard]] bool ShouldStartInviteStep(bool inviteMode, bool inviteRejected,
+										 bool inviteProvided = false);
 [[nodiscard]] InviteSignInFailure
 ClassifyInviteSignInFailure(const QString &type, bool floodError);
 

@@ -16,6 +16,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "logs.h"
 #include "main/main_account.h"
 #include "main/main_app_config.h"
+#include "mtproto/mtproto_config.h"
+#include "mtproto/mtproto_dc_options.h"
 #include "mtproto/mtproto_response.h"
 #include "ui/text/format_values.h"
 #include "ui/widgets/fields/input_field.h"
@@ -62,11 +64,19 @@ QWidget *InviteWidget::firstTabWidget() const { return _invite.data(); }
 void InviteWidget::activate() {
 	Step::activate();
 	_invite->show();
+	if (!getData()->signupInviteSecret.isEmpty() && !_inviteSecretApplied) {
+		setInviteSecret(getData()->signupInviteSecret);
+	}
 	_invite->setFocusFast();
 	if (getData()->signupInviteError) {
 		getData()->signupInviteError = false;
 		showInviteError(tr::lng_intro_signup_invite_unusable(tr::now), true);
 	}
+}
+
+void InviteWidget::setInviteSecret(const QString &secret) {
+	_invite->setText(secret);
+	_inviteSecretApplied = true;
 }
 
 void InviteWidget::setInnerFocus() { _invite->setFocusFast(); }
@@ -98,6 +108,16 @@ void InviteWidget::showInviteError(const QString &text, bool select) {
 
 void InviteWidget::submit() {
 	if (_sentRequest) {
+		return;
+	}
+	if (!getData()->signupInviteOrigin.isEmpty()
+		&& !MTP::IsDefaultTeagramServerForOrigin(
+			getData()->signupInviteOrigin,
+			account().mtp().config().customServer())) {
+		getData()->signupInviteSecret.clear();
+		getData()->signupInviteOrigin.clear();
+		_invite->setText(QString());
+		showInviteError(tr::lng_server_feature_unavailable(tr::now), false);
 		return;
 	}
 	const auto input = _invite->getLastText();

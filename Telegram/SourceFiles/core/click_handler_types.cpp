@@ -11,6 +11,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "lang/lang_keys.h"
 #include "chat_helpers/bot_command.h"
 #include "core/application.h"
+#include "core/fragment_link_v1.h"
 #include "core/mac_protected_path_runtime.h"
 #include "core/local_url_handlers.h"
 #include "core/file_utilities.h"
@@ -285,6 +286,10 @@ void HiddenUrlClickHandler::Open(QString url, QVariant context) {
 		url = external;
 	}
 	const auto originController = my.sessionWindow.get();
+	if (Core::FragmentLinkV1::IsV1UrlCandidate(url)
+		&& Core::TryOpenFragmentLinkV1(url, context)) {
+		return;
+	}
 	url = Core::TryConvertUrlToLocal(
 		url,
 		originController ? &originController->session() : nullptr);

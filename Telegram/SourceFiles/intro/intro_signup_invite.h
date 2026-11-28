@@ -23,6 +23,7 @@ class InviteWidget final : public Step {
 	bool hasBack() const override { return true; }
 
 	void activate() override;
+	void setInviteSecret(const QString &secret);
 	void cancelled() override;
 	void submit() override;
 	void setInnerFocus() override;
@@ -42,6 +43,7 @@ class InviteWidget final : public Step {
 
 	object_ptr<Ui::InputField> _invite;
 	mtpRequestId _sentRequest = 0;
+	bool _inviteSecretApplied = false;
 };
 
 } // namespace Intro::details

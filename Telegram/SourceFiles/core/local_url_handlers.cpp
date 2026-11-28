@@ -8,6 +8,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/local_url_handlers.h"
 
 #include "core/deep_links/deep_links_router.h"
+#include "core/fragment_link_v1.h"
 #include "api/api_confirm_phone.h"
 #include "api/api_chat_filters.h"
 #include "api/api_chat_invite.h"
@@ -53,6 +54,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "media/view/media_view_open_common.h"
 #include "window/window_session_controller.h"
 #include "window/window_session_controller_link_info.h"
+#include "mtproto/mtproto_dc_options.h"
 #include "window/window_controller.h"
 #include "window/window_peer_menu.h"
 #include "window/themes/window_theme_editor_box.h" // GenerateSlug.
@@ -63,12 +65,15 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "settings/sections/settings_premium.h"
 #include "storage/storage_account.h"
 #include "mainwidget.h"
+#include "mainwindow.h"
 #include "main/main_account.h"
 #include "main/main_app_config.h"
 #include "main/main_domain.h"
+#include "main/main_domain_policy.h"
 #include "main/main_session.h"
 #include "main/main_session_settings.h"
 #include "mtproto/mtproto_config.h"
+#include "intro/intro_widget.h"
 #include "info/info_controller.h"
 #include "info/info_memento.h"
 #include "info/profile/info_profile_values.h"
@@ -1762,6 +1767,115 @@ bool ResolveOAuth(
 }
 
 } // namespace
+
+bool TryOpenFragmentLinkV1(const QString &url, const QVariant &context) {
+	const auto urlResult = FragmentLinkV1::DecodeUrl(url);
+	if (urlResult.status == FragmentLinkV1::UrlStatus::NotV1) {
+		return false;
+	}
+	if (urlResult.status == FragmentLinkV1::UrlStatus::Invalid) {
+		return true;
+	}
+	const auto decoded = &urlResult.link;
+	if (!FragmentLinkV1::CanOpenOnDefaultServer(*decoded)) {
+		return true;
+	}
+	const auto click = context.value<ClickHandlerContext>();
+	auto controller = click.sessionWindow.get();
+	auto primary = Core::App().activePrimaryWindow();
+	if (!controller && primary) {
+		controller = primary->sessionController();
+	}
+	if (decoded->type == FragmentLinkV1::Type::SignUpInvite) {
+		const auto secret = QString::fromLatin1(decoded->secret.toHex());
+		const auto origin = MTP::DefaultTeagramServerDiscoveryOrigin();
+		const auto account
+			= controller ? &controller->session().account()
+						 : Core::App().domain().maybeLastOrSomeAuthedAccount();
+		if (account) {
+			if (!Core::App().domain().addActivated(account->mtp().environment(),
+												   false, secret, origin)) {
+				const auto message = tr::lng_accounts_limit_title(tr::now);
+				if (controller) {
+					controller->showToast(message);
+				} else {
+					Ui::Toast::Show(message);
+				}
+			}
+		} else if (primary) {
+			const auto &config = primary->account().mtp().config();
+			const auto pin = config.customServer();
+			if (!Main::details::CanReceiveDefaultServerSignupInvite(
+					config.hasCustomServer(), MTP::IsDefaultTeagramServer(pin),
+					config.blocked())) {
+				Ui::Toast::Show(tr::lng_server_feature_unavailable(tr::now));
+				return true;
+			}
+			if (!primary->widget()->setSignupInviteSecret(secret, origin)) {
+				primary->account().setPendingSignupInvite({
+					.secret = secret,
+					.discoveryOrigin = origin,
+				});
+			}
+		}
+		return true;
+	}
+	if (!controller) {
+		return true;
+	}
+	const auto dispatch = FragmentLinkV1::AccountDispatchForClick(
+		*decoded, controller->session().mtp().config().customServer());
+	if (!dispatch) {
+		controller->showFeatureUnavailableOnServerToast();
+		return true;
+	}
+	const auto messageId = MsgId(static_cast<qint64>(decoded->messageId));
+	const auto clickFromMessageId = click.itemId;
+	switch (*dispatch) {
+	case FragmentLinkV1::Type::Profile:
+	case FragmentLinkV1::Type::PublicMessage:
+		controller->showPeerByLink(Window::PeerByLinkInfo{
+			.usernameOrId = decoded->username,
+			.messageId = (*dispatch == FragmentLinkV1::Type::Profile)
+							 ? ShowAtUnreadMsgId
+							 : messageId,
+			.clickFromMessageId = clickFromMessageId,
+			.clickFromBotWebviewContext = click.botWebviewContext,
+		});
+		controller->window().activate();
+		return true;
+	case FragmentLinkV1::Type::PrivateChannelMessage:
+		controller->showPeerByLink(Window::PeerByLinkInfo{
+			.usernameOrId = ChannelId(BareId(decoded->channelId)),
+			.messageId = messageId,
+			.clickFromMessageId = clickFromMessageId,
+			.clickFromBotWebviewContext = click.botWebviewContext,
+		});
+		controller->window().activate();
+		return true;
+	case FragmentLinkV1::Type::JoinChat:
+		Api::CheckChatInvite(controller,
+							 QString::fromLatin1(decoded->hash.toBase64(
+								 QByteArray::Base64UrlEncoding
+								 | QByteArray::OmitTrailingEquals)));
+		controller->window().activate();
+		return true;
+	case FragmentLinkV1::Type::StickerSet:
+	case FragmentLinkV1::Type::EmojiSet:
+		Core::App().hideMediaView();
+		controller->show(Box<StickerSetBox>(
+			controller->uiShow(),
+			StickerSetIdentifier{.shortName = decoded->shortName},
+			(*dispatch == FragmentLinkV1::Type::EmojiSet)
+				? Data::StickersType::Emoji
+				: Data::StickersType::Stickers));
+		controller->window().activate();
+		return true;
+	case FragmentLinkV1::Type::SignUpInvite:
+		break;
+	}
+	return true;
+}
 
 bool TryRouterForLocalUrl(
 		Window::SessionController *controller,

@@ -72,7 +72,9 @@ public:
 	[[nodiscard]] not_null<Main::Account*> add(MTP::Environment environment);
 	void maybeActivate(not_null<Main::Account*> account);
 	void activate(not_null<Main::Account*> account);
-	void addActivated(MTP::Environment environment, bool newWindow = false);
+	bool addActivated(MTP::Environment environment, bool newWindow = false,
+					  QString signupInviteSecret = {},
+					  QString signupInviteOrigin = {});
 
 	// Drops session-less accounts that have no window open for them,
 	// except for the active account.

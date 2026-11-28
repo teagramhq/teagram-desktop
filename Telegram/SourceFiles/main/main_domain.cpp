@@ -6,6 +6,7 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "main/main_domain.h"
+#include "main/main_domain_policy.h"
 
 #include "core/application.h"
 #include "core/core_settings.h"
@@ -325,8 +326,16 @@ not_null<Main::Account*> Domain::add(MTP::Environment environment) {
 	return account;
 }
 
-void Domain::addActivated(MTP::Environment environment, bool newWindow) {
-	const auto added = [&](not_null<Main::Account*> account) {
+bool Domain::addActivated(MTP::Environment environment, bool newWindow,
+						  QString signupInviteSecret,
+						  QString signupInviteOrigin) {
+	const auto added = [&](not_null<Main::Account *> account) {
+		if (!signupInviteSecret.isEmpty()) {
+			account->setPendingSignupInvite({
+				.secret = signupInviteSecret,
+				.discoveryOrigin = signupInviteOrigin,
+			});
+		}
 		if (newWindow) {
 			Core::App().ensureSeparateWindowFor(account);
 		} else if (const auto window = Core::App().separateWindowFor(
@@ -338,15 +347,36 @@ void Domain::addActivated(MTP::Environment environment, bool newWindow) {
 	};
 	if (accounts().size() < maxAccounts()) {
 		added(add(environment));
-	} else {
+		return true;
+	} else if (signupInviteSecret.isEmpty()) {
 		for (auto &[index, account] : accounts()) {
 			if (!account->sessionExists()
 				&& account->mtp().environment() == environment) {
 				added(account.get());
-				break;
+				return true;
 			}
 		}
+	} else {
+		const auto &list = accounts();
+		auto slots = std::vector<details::SignupInviteSlot>();
+		slots.reserve(list.size());
+		for (const auto &item : list) {
+			const auto account = item.account.get();
+			const auto &config = account->mtp().config();
+			const auto pin = config.customServer();
+			slots.push_back({
+				.hasSession = account->sessionExists(),
+				.sameEnvironment = account->mtp().environment() == environment,
+				.defaultServer = MTP::IsDefaultTeagramServer(pin),
+				.blocked = config.blocked(),
+			});
+		}
+		if (const auto selected = details::SelectSignupInviteSlot(slots)) {
+			added(list[*selected].account.get());
+			return true;
+		}
 	}
+	return false;
 }
 
 void Domain::watchSession(not_null<Account*> account) {

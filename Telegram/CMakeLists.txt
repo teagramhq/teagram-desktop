@@ -637,6 +637,8 @@ PRIVATE
     core/launcher.h
     core/local_url_conversion.cpp
     core/local_url_conversion.h
+    core/fragment_link_v1.cpp
+    core/fragment_link_v1.h
     core/sticker_import.cpp
     core/sticker_import.h
     core/telegram_sticker_import.cpp

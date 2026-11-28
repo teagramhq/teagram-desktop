@@ -62,6 +62,7 @@ TEST_CASE(RejectedInviteReturnsToInviteStepRegardlessOfCachedMode) {
 	CHECK(ShouldStartInviteStep(false, true));
 	CHECK(!ShouldStartInviteStep(false, false));
 	CHECK(ShouldStartInviteStep(true, false));
+	CHECK(ShouldStartInviteStep(false, false, true));
 }
 
 } // namespace
