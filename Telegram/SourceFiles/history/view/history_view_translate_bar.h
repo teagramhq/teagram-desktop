@@ -10,6 +10,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/wrap/slide_wrap.h"
 #include "spellcheck/spellcheck_types.h"
 
+#include <memory>
+#include <vector>
+
 class History;
 struct LanguageId;
 
@@ -33,6 +36,7 @@ public:
 		not_null<Window::SessionController*> controller,
 		not_null<History*> history);
 	~TranslateBar();
+	void setHistory(not_null<History *> history);
 
 	void show();
 	void hide();
@@ -43,8 +47,23 @@ public:
 
 #ifdef TDESKTOP_LIFECYCLE_REGRESSION
 	[[nodiscard]] bool shouldBeShownForRegressionTest() const;
+	[[nodiscard]] bool hiddenForRegressionTest() const {
+		return _wrap.isHidden();
+	}
 	[[nodiscard]] bool controlsCreatedForRegressionTest() const;
 	[[nodiscard]] int contentWidthForRegressionTest() const;
+	[[nodiscard]] History *historyForRegressionTest() const { return _history; }
+	[[nodiscard]] LanguageId overridenToForRegressionTest() const {
+		return _overridenTo.current();
+	}
+	void setOverridenToForRegressionTest(LanguageId id) { _overridenTo = id; }
+	[[nodiscard]] int translateToCallsForRegressionTest() const {
+		return _translateToCallsForRegression;
+	}
+	[[nodiscard]] std::weak_ptr<const int>
+	lifetimeTokenForRegressionTest() const {
+		return _regressionLifetimeToken;
+	}
 	void clickForRegressionTest();
 #endif
 
@@ -58,7 +77,9 @@ public:
 	}
 
 private:
-	void setup(not_null<History*> history);
+	void setup();
+	void refreshTo();
+	void refreshPhrase();
 	void setupControls();
 	void translateTo(LanguageId id);
 	void updateShadowGeometry(QRect wrapGeometry);
@@ -74,18 +95,25 @@ private:
 		Fn<void()> buttonCallback);
 
 	const not_null<Window::SessionController*> _controller;
-	const not_null<History*> _history;
+	not_null<History *> _history;
 	Ui::SlideWrap<> _wrap;
 	std::unique_ptr<Ui::PlainShadow> _shadow;
 	Fn<QRect(QRect)> _shadowGeometryPostprocess;
 	base::unique_qptr<Ui::PopupMenu> _menu;
 	rpl::variable<LanguageId> _overridenTo;
 	rpl::variable<LanguageId> _to;
+	rpl::variable<QString> _phrase;
+	LanguageId _preferredTo;
+	std::vector<LanguageId> _skipTranslationLanguages;
 	Ui::FlatLabel *_label = nullptr;
 	Fn<void()> _updateLabelGeometry;
 	bool _shouldBeShown = false;
 	bool _forceHidden = false;
-
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+	int _translateToCallsForRegression = 0;
+	std::shared_ptr<const int> _regressionLifetimeToken
+		= std::make_shared<const int>(0);
+#endif
 };
 
 } // namespace HistoryView

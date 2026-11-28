@@ -33,12 +33,16 @@ class UiStallWatchdog final : public QObject {
 	struct StallEvidence {
 		QString startedAt;
 		qint64 postedAtSteadyNanoseconds = 0;
+		qint64 stackCapturedAtSteadyNanoseconds = 0;
 		qint64 durationMilliseconds = 0;
 		qint64 durationNanoseconds = 0;
 		QString schedulerTrace;
 		std::vector<qint64> schedulerSampleOffsetsNanoseconds;
 		std::vector<qint64> schedulerSampleMainThreadCpuNanoseconds;
 		QString stack;
+		bool stackFinalized = false;
+		std::uint64_t watchdogId = 0;
+		std::uint64_t sequence = 0;
 	};
 
 	struct PingAcknowledgementEvidence {
@@ -52,6 +56,7 @@ class UiStallWatchdog final : public QObject {
 		std::vector<qint64> schedulerSampleOffsetsNanoseconds;
 		std::vector<qint64> schedulerSampleMainThreadCpuNanoseconds;
 		bool schedulerTraceComplete = false;
+		std::uint64_t watchdogId = 0;
 	};
 
 	struct SchedulerSampleEvidence {
@@ -115,6 +120,7 @@ class UiStallWatchdog final : public QObject {
 	std::chrono::milliseconds _logThreshold;
 	std::chrono::milliseconds _logRateLimit;
 	bool _captureSchedulerTrace = false;
+	std::uint64_t _watchdogId = 0;
 	std::thread _thread;
 	std::thread _reportThread;
 	std::mutex _mutex;

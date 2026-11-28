@@ -16,6 +16,15 @@ void Changes::Manager<DataType, UpdateType>::updated(
 		not_null<DataType*> data,
 		Flags flags,
 		bool dropScheduled) {
+	auto scopedStream = std::shared_ptr<ScopedStream>();
+	auto lastSubscriptionId = uint64(0);
+	if (dropScheduled) {
+		const auto scoped = _scopedStreams->find(data.get());
+		if (scoped != _scopedStreams->end()) {
+			scopedStream = scoped->second;
+			lastSubscriptionId = scopedStream->nextSubscriptionId;
+		}
+	}
 	sendRealtimeNotifications(data, flags);
 	if (dropScheduled) {
 		const auto i = _updates.find(data);
@@ -23,7 +32,12 @@ void Changes::Manager<DataType, UpdateType>::updated(
 			flags |= i->second;
 			_updates.erase(i);
 		}
-		_stream.fire({ data, flags });
+		const auto update = UpdateType{data, flags};
+		_stream.fire_copy(update);
+		if (scopedStream) {
+			sendScopedNotifications(scopedStream, update, lastSubscriptionId);
+		}
+		drop(data);
 	} else {
 		_updates[data] |= flags;
 	}
@@ -42,6 +56,23 @@ void Changes::Manager<DataType, UpdateType>::sendRealtimeNotifications(
 }
 
 template <typename DataType, typename UpdateType>
+void Changes::Manager<DataType, UpdateType>::sendScopedNotifications(
+	const std::shared_ptr<ScopedStream> &scopedStream, const UpdateType &update,
+	uint64 lastSubscriptionId) const {
+	auto i = scopedStream->subscriptions.begin();
+	while ((i != scopedStream->subscriptions.end())
+		   && (i->first <= lastSubscriptionId)) {
+		const auto id = i->first;
+		const auto stream = i->second;
+		stream->fire_copy(update);
+		// A callback can unsubscribe itself or another subscriber. Re-find the
+		// next active id after delivery instead of retaining an invalid
+		// iterator.
+		i = scopedStream->subscriptions.upper_bound(id);
+	}
+}
+
+template <typename DataType, typename UpdateType>
 rpl::producer<UpdateType> Changes::Manager<DataType, UpdateType>::updates(
 		Flags flags) const {
 	return _stream.events(
@@ -51,14 +82,49 @@ rpl::producer<UpdateType> Changes::Manager<DataType, UpdateType>::updates(
 }
 
 template <typename DataType, typename UpdateType>
-rpl::producer<UpdateType> Changes::Manager<DataType, UpdateType>::updates(
-		not_null<DataType*> data,
-		Flags flags) const {
-	return _stream.events(
-	) | rpl::filter([=](const UpdateType &update) {
-		const auto &[updateData, updateFlags] = update;
-		return (updateData == data) && (updateFlags & flags);
-	});
+rpl::producer<UpdateType>
+Changes::Manager<DataType, UpdateType>::updates(not_null<DataType *> data,
+												Flags flags) const {
+	const auto streams = std::weak_ptr<ScopedStreams>(_scopedStreams);
+	return rpl::make_producer<UpdateType>(
+		[streams, data, flags](const auto &consumer) {
+			const auto strong = streams.lock();
+			if (!strong) {
+				return rpl::lifetime();
+			}
+			const auto key = data.get();
+			const auto i = strong->find(key);
+			auto scopedStream = (i != strong->end())
+									? i->second
+									: std::make_shared<ScopedStream>();
+			if (i == strong->end()) {
+				strong->emplace(key, scopedStream);
+			}
+			const auto id = ++scopedStream->nextSubscriptionId;
+			auto stream = std::make_shared<rpl::event_stream<UpdateType>>();
+			scopedStream->subscriptions.emplace(id, stream);
+			auto result = rpl::lifetime(
+				[streams, key, weakStream = std::weak_ptr(scopedStream), id] {
+					const auto strong = streams.lock();
+					const auto scoped = weakStream.lock();
+					if (!strong || !scoped) {
+						return;
+					}
+					const auto i = strong->find(key);
+					if ((i != strong->end()) && (i->second == scoped)) {
+						scoped->subscriptions.erase(id);
+						if (scoped->subscriptions.empty()) {
+							strong->erase(i);
+						}
+					}
+				});
+			auto events
+				= stream->events() | rpl::filter([=](const UpdateType &update) {
+					  return (update.flags & flags);
+				  });
+			result.add(std::move(events).start_existing(consumer));
+			return result;
+		});
 }
 
 template <typename DataType, typename UpdateType>
@@ -79,19 +145,41 @@ rpl::producer<UpdateType> Changes::Manager<DataType, UpdateType>::flagsValue(
 template <typename DataType, typename UpdateType>
 void Changes::Manager<DataType, UpdateType>::drop(not_null<DataType*> data) {
 	_updates.remove(data);
+	_scopedStreams->erase(data.get());
 }
 
 template <typename DataType, typename UpdateType>
 void Changes::Manager<DataType, UpdateType>::sendNotifications() {
 	for (const auto &[data, flags] : base::take(_updates)) {
-		_stream.fire({ data, flags });
+		const auto update = UpdateType{data, flags};
+		const auto scoped = _scopedStreams->find(data.get());
+		const auto scopedStream
+			= (scoped != _scopedStreams->end()) ? scoped->second : nullptr;
+		const auto lastSubscriptionId
+			= scopedStream ? scopedStream->nextSubscriptionId : uint64(0);
+		_stream.fire_copy(update);
+		if (scopedStream) {
+			sendScopedNotifications(scopedStream, update, lastSubscriptionId);
+		}
 	}
 }
 
-Changes::Changes(not_null<Main::Session*> session) : _session(session) {
+Changes::Changes(not_null<Main::Session *> session)
+#ifdef TDESKTOP_UNIT_TESTS
+	: _session(session.get()) {
+#else
+	: _session(session) {
+#endif
 }
 
+#ifdef TDESKTOP_UNIT_TESTS
+Changes::Changes() = default;
+#endif
+
 Main::Session &Changes::session() const {
+#ifdef TDESKTOP_UNIT_TESTS
+	Expects(_session != nullptr);
+#endif
 	return *_session;
 }
 
@@ -126,6 +214,11 @@ rpl::producer<PeerUpdate> Changes::peerUpdates(
 		not_null<PeerData*> peer,
 		PeerUpdate::Flags flags) const {
 	return _peerChanges.updates(peer, flags);
+}
+
+int Changes::peerUpdateScopedSubscriptionCountForRegressionTest(
+	not_null<PeerData *> peer) const {
+	return _peerChanges.scopedSubscriptionCountForRegressionTest(peer);
 }
 
 rpl::producer<PeerUpdate> Changes::peerFlagsValue(
@@ -371,9 +464,15 @@ rpl::producer<ChatMemberRankChange> Changes::chatMemberRankChanges() const {
 void Changes::scheduleNotifications() {
 	if (!_notify) {
 		_notify = true;
+#ifdef TDESKTOP_UNIT_TESTS
+		if (_session) {
+			crl::on_main(_session, [=] { sendNotifications(); });
+		}
+#else
 		crl::on_main(&session(), [=] {
 			sendNotifications();
 		});
+#endif
 	}
 }
 

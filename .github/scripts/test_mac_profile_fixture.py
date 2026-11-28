@@ -214,7 +214,7 @@ printf '%s\n' "$directory"
         if inherited_mode:
             environment['FONT_TEST_MODE'] = inherited_mode
         try:
-            result = subprocess.run(['bash', 'Telegram/build/test_mac_profile_guard.sh', str(executable)],
+            result = subprocess.run(['bash', 'Telegram/build/test_mac_profile_guard.sh', str(executable), 'profile-ipc'],
                                     env=environment, capture_output=True, text=True, timeout=15)
             output = result.stdout + result.stderr
             assert f'existed_before={int(preexisting_lock)}' in output, output

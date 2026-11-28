@@ -2515,6 +2515,7 @@ if (TDESKTOP_TEAGRAM)
         set_property(SOURCE
             "${src_loc}/main.cpp"
             "${src_loc}/data/data_session.cpp"
+            "${src_loc}/core/application.cpp"
             "${src_loc}/core/sandbox.cpp"
             "${src_loc}/core/mac_protected_path_runtime.mm"
             "${src_loc}/tests/account_lifecycle_regression.cpp"

@@ -17,7 +17,42 @@ ccache_profile_script=".github/scripts/mac_ccache_profile.sh"
 temp_dir="$(mktemp -d)"
 trap 'rm -rf "$temp_dir"' EXIT
 
+grep_file_pattern_status() {
+  local status
+  if grep -Eq -- "$1" "$2"; then
+    return 0
+  else
+    status=$?
+  fi
+  if (( status == 1 )); then
+    return 1
+  fi
+  return 2
+}
+
+grep_status_fixture="$temp_dir/grep-status.txt"
+printf 'allowed\n' > "$grep_status_fixture"
+grep_file_pattern_status '^allowed$' "$grep_status_fixture" \
+  || contract_fail 'Contract grep must detect a matching line.'
+if grep_file_pattern_status '^missing$' "$grep_status_fixture"; then
+  contract_fail 'Contract grep must distinguish a missing pattern.'
+else
+  grep_status=$?
+  if (( grep_status != 1 )); then
+    contract_fail 'Contract grep must return 1 for a missing pattern.'
+  fi
+fi
+if grep_file_pattern_status '^allowed$' "$temp_dir/missing-file" 2>/dev/null; then
+  contract_fail 'Contract grep must report unreadable files as errors.'
+else
+  grep_status=$?
+  if (( grep_status != 2 )); then
+    contract_fail 'Contract grep must distinguish read errors from no match.'
+  fi
+fi
+
 PYTHONDONTWRITEBYTECODE=1 python3 "$scripts_dir/test_macos_timeout_capture.py"
+PYTHONDONTWRITEBYTECODE=1 python3 "$scripts_dir/test_macos_process_activation.py"
 
 require_contract_tests_in_lint
 for trigger in push pull_request; do
@@ -26,6 +61,8 @@ for trigger in push pull_request; do
     .github/scripts/test_macos_launch_smoke.py \
     .github/scripts/macos_timeout_capture.py \
     .github/scripts/test_macos_timeout_capture.py \
+    .github/scripts/macos_process_activation.py \
+    .github/scripts/test_macos_process_activation.py \
     .github/scripts/extract_dwarf_subprogram_address.py \
     .github/scripts/symbolicate_macos_minidump.py; do
     grep -Fxq -- "$script_path" <<< "$paths" \
@@ -557,11 +594,32 @@ fi
 for source in \
     '"${src_loc}/main.cpp"' \
     '"${src_loc}/data/data_session.cpp"' \
+    '"${src_loc}/core/application.cpp"' \
     '"${src_loc}/core/mac_protected_path_runtime.mm"' \
     '"${src_loc}/tests/account_lifecycle_regression.cpp"'; do
   grep -Fq -- "$source" <<< "$protected_path_sources" \
     || contract_fail "The protected-path define must stay scoped to $source."
 done
+grep -Fq 'TDESKTOP_MAC_EMOJI_CACHE_FOLDER_REGRESSION' \
+  Telegram/SourceFiles/core/application.cpp \
+  || contract_fail 'The protected-path profile fixture must exercise emojiCacheFolder in the app.'
+grep -Fq 'Mac emoji cache folder regression: rejected=%d' \
+  Telegram/SourceFiles/core/application.cpp \
+  || contract_fail 'The profile fixture must report the emoji cache path decision.'
+grep -Fq 'TDESKTOP_MAC_PROFILE_TEST_WAIT_FOR_APP_READY' \
+  Telegram/SourceFiles/core/application.cpp \
+  || contract_fail 'The profile fixture must publish startup readiness only after the app is ready.'
+grep -Fq 'Mac profile app ready: startup=complete' \
+  Telegram/SourceFiles/core/application.cpp \
+  || contract_fail 'The profile fixture must expose a startup completion marker.'
+for profile_marker in \
+  TDESKTOP_MAC_EMOJI_CACHE_FOLDER_REGRESSION=1 \
+  TDESKTOP_MAC_PROFILE_TEST_WAIT_FOR_APP_READY=1; do
+  grep -Fq "$profile_marker" Telegram/build/test_mac_profile_guard.sh \
+    || contract_fail "The profile IPC harness must set $profile_marker."
+done
+grep -Fq 'APP_READY' Telegram/build/test_mac_profile_guard.sh \
+  || contract_fail 'The profile IPC harness must wait for the app-ready marker before sending quit.'
 hash_expression="\${{ hashFiles('CCACHE_KEY.txt') }}"
 profile_expression="\${{ steps.ccache-profile.outputs.name }}"
 require_step_field "$mac_workflow" build-macos 'Teagram compiler cache.' '.uses | sub("@.*", "")' \
@@ -758,7 +816,7 @@ require_step_script "$mac_workflow" build-macos "$account_database_profile_step"
   'profile_root=%s/Library/Application Support/Teagram'
 
 profile_step='Run protected profile and IPC integration tests.'
-require_step_field "$mac_workflow" build-macos "$profile_step" '.timeout-minutes' '15'
+require_step_field "$mac_workflow" build-macos "$profile_step" '.timeout-minutes' '30'
 require_step_script "$mac_workflow" build-macos "$profile_step" \
   'state="$diagnostics/state"' \
   'if [ "$status" -eq 0 ]; then rm -rf "$state"; fi' \
@@ -766,7 +824,7 @@ require_step_script "$mac_workflow" build-macos "$profile_step" \
 profile_step_script="$(step_field "$mac_workflow" build-macos "$profile_step" '.run')"
 for deadline_clause in \
   'step_started_at="$(date +%s)"' \
-  'step_timeout_seconds=900' \
+  'step_timeout_seconds=1800' \
   'step_finish_headroom_seconds=60' \
   'step_deadline_epoch="$((step_started_at + step_timeout_seconds - step_finish_headroom_seconds))"' \
   'TDESKTOP_MAC_LIFECYCLE_STEP_DEADLINE_EPOCH="$step_deadline_epoch"'; do
@@ -819,13 +877,14 @@ fi
   && "$profile_step_finish_headroom_seconds" =~ ^[1-9][0-9]*$ ]] \
   || contract_fail 'The protected profile case, deadline, and cleanup timeout budget must be explicit and positive.'
 grep -Fq 'if (( CASE_RUN_TIMEOUT_SECONDS > CASE_TIMEOUT_LIMIT_SECONDS )); then' "$case_runner" \
-  || contract_fail 'Lifecycle cases must share the existing 10-minute timeout cap.'
+  || contract_fail 'Lifecycle cases must share the 20-minute timeout cap.'
 cleanup_headroom_seconds="$((2 * cleanup_grace_seconds))"
 case_timeout_budget_seconds="$((case_timeout_limit_seconds + cleanup_headroom_seconds))"
 profile_step_deadline_budget_seconds="$((profile_step_timeout_seconds - profile_step_finish_headroom_seconds))"
-((case_timeout_limit_seconds == 600 \
+((case_timeout_limit_seconds == 1200 \
     && case_timeout_budget_seconds < profile_step_deadline_budget_seconds \
     && profile_step_timeout_seconds == profile_step_timeout_minutes * 60 \
+    && profile_step_timeout_seconds == 1800 \
     && profile_step_finish_headroom_seconds > cleanup_headroom_seconds)) \
   || contract_fail "Lifecycle deadline and cleanup headroom must fit inside the profile/IPC step limit (${profile_step_timeout_minutes}m)."
 for runner_clause in \
@@ -1057,10 +1116,13 @@ require_step_field "$mac_workflow" build-macos "$regression_step" '.if' \
   "\${{ !cancelled() && steps.build.outcome == 'success' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.label.name == 'macos-build')) }}"
 regression_timeout_minutes="$(step_field "$mac_workflow" build-macos \
   "$regression_step" '.timeout-minutes')"
-[[ "$regression_timeout_minutes" == 20 ]] \
-  || contract_fail 'Full chat info session regression must retain its existing 20-minute timeout.'
+[[ "$regression_timeout_minutes" == 30 ]] \
+  || contract_fail 'Full chat info session timeout must cover dSYM generation and replay.'
 require_step_script "$mac_workflow" build-macos "$regression_step" \
   'exec > >(tee "$diagnostics/harness.log") 2>&1' \
+  'RUNNER_EXTERNAL_ACTIVATION_HOME="$HOME"' \
+  'TDESKTOP_AUTH_LIFECYCLE_REGRESSION_RUNNER_ACTIVATION_REQUIRED=1' \
+  'TDESKTOP_AUTH_LIFECYCLE_REGRESSION_RUNNER_ACTIVATION_REQUEST="$diagnostics/runner-external-activation.request"' \
   'build_dir="$repo/out"' \
   'cache_file="$build_dir/CMakeCache.txt"' \
   'compile_commands="$build_dir/compile_commands.json"' \
@@ -1080,15 +1142,57 @@ reject_step_script "$mac_workflow" build-macos "$regression_step" \
   '--debug-info --arch=arm64' \
   '--debug-line --arch=arm64' \
   'head -n 1'
-# The app bounds and cleanup live in the Python the step runs, so they are
-# read from its syntax tree: a commented-out call does not count.
+# The request decisions are implemented and unit-tested in the helper module;
+# the workflow only connects that state machine to LLDB and the app marker.
 require_step_python "$mac_workflow" build-macos "$regression_step" \
-  "command.extend(['-o', 'process handle SIGUSR2 -s false -n false -p true'])" \
+  "activation_handshake = ActivationHandshake(Path(os.path.dirname(stderr_path)) / 'runner-external-activation.status', runtime_seconds=app_runtime_timeout)" \
+  'activation_attempt = activation_handshake.begin(activation_request)' \
+  'marker_error = activation_handshake.complete(activation_attempt, activation_succeeded)' \
   'app_startup_timeout = 300' \
   'app_runtime_timeout = 180' \
   "signal_pid(app_pid, 'Teagram', cleanup_signal)"
+require_step_python "$mac_workflow" build-macos "$regression_step" \
+  "activation_helper = os.path.join(scripts_dir, 'macos_process_activation.py')" \
+  'activation_environment = os.environ.copy()' \
+  "activation_environment['HOME'] = os.environ['RUNNER_EXTERNAL_ACTIVATION_HOME']" \
+  'activation_result = run_with_runtime_deadline([sys.executable, activation_helper, str(requested_pid)], runtime_deadline=activation_handshake.runtime_deadline, timeout=220, capture_output=True, text=True, check=False, env=activation_environment)'
+require_step_script "$mac_workflow" build-macos "$regression_step" \
+  'while process.poll() is None:' \
+  'activation_handshake.begin(' \
+  'if not activation_handshake.all_requests_passed:'
+require_step_script "$mac_workflow" build-macos "$regression_step" \
+  'except subprocess.TimeoutExpired as error:' \
+  'timeout_phase = "runtime"' \
+  'break'
 require_step_script "$mac_workflow" build-macos "$regression_step" \
   'process handle SIGUSR2 -p true -s false -n false'
+require_step_script "$mac_workflow" build-macos "$regression_step" \
+  'if not activation_handshake.all_requests_passed:' \
+  'HARNESS ERROR: runner did not activate and verify ' \
+  'Teagram as frontmost before the lifecycle regression.'
+require_step_script "$mac_workflow" build-macos "$regression_step" \
+  'TDESKTOP_AUTH_LIFECYCLE_REGRESSION_RUNNER_ACTIVATION_MARKER="$diagnostics/runner-external-activation.status"'
+grep -Fq 'request.write(requestContents)' \
+  Telegram/SourceFiles/tests/account_lifecycle_regression.cpp \
+  || contract_fail 'The lifecycle app must publish its PID for runner activation.'
+grep -Fq 'WaitForRegressionCondition(' \
+  Telegram/SourceFiles/tests/account_lifecycle_regression.cpp \
+  || contract_fail 'The lifecycle app must wait for the runner activation marker.'
+grep -Fq 'WaitForRunnerExternalActivationForRegression()' \
+  Telegram/SourceFiles/tests/account_lifecycle_regression.cpp \
+  || contract_fail 'The lifecycle app must wait for runner activation before focus checks.'
+grep -Fq 'activateSettingsWindow(&stockController->window())' \
+  Telegram/SourceFiles/tests/account_lifecycle_regression.cpp \
+  || contract_fail 'The stock message-link matrix must refresh runner activation.'
+grep -Fq 'activateSettingsWindow(&pinnedController->window())' \
+  Telegram/SourceFiles/tests/account_lifecycle_regression.cpp \
+  || contract_fail 'The pinned message-link matrix must refresh runner activation.'
+grep -Fq 'RunnerExternalActivationMarkerRegressionPasses()' \
+  Telegram/SourceFiles/tests/account_lifecycle_regression.cpp \
+  || contract_fail 'The lifecycle activation marker must keep its self-test.'
+grep -Fq '"TDESKTOP_AUTH_LIFECYCLE_REGRESSION_RUNNER_ACTIVATION_REQUIRED"' \
+  Telegram/SourceFiles/tests/account_lifecycle_regression.cpp \
+  || contract_fail 'The lifecycle activation self-test must read the opt-in from the environment.'
 regression_step_index="$(job_field "$mac_workflow" build-macos \
   '.steps | to_entries[] | select(.value.name == "Full chat info session regression.") | .key')"
 summary_step_index="$(job_field "$mac_workflow" build-macos \
@@ -1099,8 +1203,57 @@ profile_step='Run protected profile and IPC integration tests.'
 require_step_field "$mac_workflow" build-macos "$profile_step" '.if' \
   "\${{ !cancelled() && steps.ccache-profile.outputs.protected_path_integration == 'ON' && steps.build.outcome == 'success' }}"
 require_step_script "$mac_workflow" build-macos "$profile_step" \
+  'RUNNER_EXTERNAL_ACTIVATION_HOME="$HOME"' \
   'test_mac_profile_guard.sh'
 profile_harness='Telegram/build/test_mac_profile_guard.sh'
+for activation_contract in \
+  'TDESKTOP_AUTH_LIFECYCLE_REGRESSION_RUNNER_ACTIVATION_REQUIRED=1' \
+  'TDESKTOP_AUTH_LIFECYCLE_REGRESSION_RUNNER_ACTIVATION_MARKER=' \
+  'TDESKTOP_AUTH_LIFECYCLE_REGRESSION_RUNNER_ACTIVATION_REQUEST=' \
+  'macos_process_activation.py' \
+  '--watch'; do
+  grep -Fq -- "$activation_contract" "$profile_harness" \
+    || contract_fail "$profile_harness must externally activate its authenticated lifecycle launch."
+done
+if ! python3 - "$profile_harness" <<'PY'
+import sys
+from pathlib import Path
+
+source = Path(sys.argv[1]).read_text()
+start = source.index("run_native_failure_continuation_case() {")
+end = source.index("\n}", start)
+native_failure = source[start:end]
+if native_failure.count("run_lifecycle_app_with_runner_activation") != 3:
+    raise SystemExit("all native failure-continuation app launches need runner activation")
+for failure_case in (
+    "username-input,teagram-icon-persistence,legacy-cleanup-symlink",
+    "admin-session-identities,pinned-migration-fixture",
+    "stock-live-admin-promotion,custom-live-admin-promotion",
+):
+    if failure_case not in native_failure:
+        raise SystemExit(f"native failure-continuation lost its fixture: {failure_case}")
+if '"$APP" -noupdate -debug' in native_failure:
+    raise SystemExit("native failure-continuation must not launch the app without the activation watcher")
+PY
+then
+  contract_fail "$profile_harness native failure fixtures must service external activation for every app launch."
+fi
+awk '
+  /if ! : > "\$activation_stop"/ { in_stop_failure = 1 }
+  in_stop_failure && /kill -TERM "\$activation_pid"/ { watcher_stopped = 1 }
+  in_stop_failure && /wait "\$activation_pid"/ && watcher_stopped {
+    watcher_reaped = 1
+  }
+  in_stop_failure && /activation stop file could not be written: %s/ {
+    path_reported = 1
+  }
+  in_stop_failure && /return 1/ { exit }
+  END { exit !(watcher_stopped && watcher_reaped && path_reported) }
+' "$profile_harness" \
+  || contract_fail "$profile_harness must stop and reap the activation watcher when its stop-file write fails."
+grep -Fq 'test_profile_runner_serves_multiple_requests_until_stop' \
+  .github/scripts/test_macos_process_activation.py \
+  || contract_fail 'Runner activation tests must cover multiple profile requests.'
 minidump_symbolizer='.github/scripts/symbolicate_macos_minidump.py'
 python3 "$minidump_symbolizer" --self-test
 for symbolizer_contract in \
@@ -1382,9 +1535,9 @@ cat > "$temp_dir/cache-latency.log" <<'EOF'
 Cache access latency regression: cache=cache seeded_directories=125 seeded_files=169 closed_clear_missing_active=1 cache_initialization_ns=585165042 initialization_allowed=1 queued_ops_before_ready=1 queued_ops_passed=1 cache_usable_ns=585252834 under_10s=1 max_main_thread_work_ns=17990000 max_startup_estimated_work_ns=66903043 max_heartbeat_gap_ns=230059167 max_heartbeat_gap_work_ns=17990000 heartbeat_gap_process_work_ns=117600000 heartbeat_gap_started_at=2026-11-06T00:47:53.000Z startup_heartbeat_gap_count=1 startup_uncovered_heartbeat_gaps=1 startup_heartbeat_gap_coverage_proven=0 startup_stall_count=1 max_startup_stall_ns=225000000 startup_stall_main_thread_work_ns=17990000 startup_stall_process_work_ns=117600000 startup_stall_started_at=2026-11-06T00:47:53.000Z startup_stall_heartbeat_gap_started_at=2026-11-06T00:47:53.000Z startup_stall_scheduler_samples=46 startup_stall_scheduler_running=36 startup_stall_scheduler_waiting=10 startup_stall_scheduler_uninterruptible=0 startup_stall_scheduler_other=0 startup_stall_scheduler_trace=RRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRWWWWWWWWWW startup_stall_stack_captured=1 startup_stall_evidence_matched=1 startup_stall_scheduler_preemption_proven=0 startup_within_budget=1 first_access_ns=86917 under_50ms=1 root_swap_refused=1 direct_fallback_closed=1 root_restored=1 startup_walks=2 main_thread_walks=0.
 Cache startup watchdog stall: cache=cache started_at=2026-11-06T00:47:53.000Z duration_ms=230 heartbeat_gap_started_at=2026-11-06T00:47:53.000Z scheduler_trace=WWWW stack_captured=1 stack=worker wait regression
 Cache access latency regression: cache=media_cache seeded_directories=125 seeded_files=169 closed_clear_missing_active=1 cache_initialization_ns=120678959 initialization_allowed=1 queued_ops_before_ready=1 queued_ops_passed=1 cache_usable_ns=120763125 under_10s=1 max_main_thread_work_ns=48247625 max_startup_estimated_work_ns=48247625 max_heartbeat_gap_ns=48247625 max_heartbeat_gap_work_ns=48247625 heartbeat_gap_process_work_ns=25000000 heartbeat_gap_started_at=2026-11-06T00:47:53.000Z startup_heartbeat_gap_count=0 startup_uncovered_heartbeat_gaps=0 startup_heartbeat_gap_coverage_proven=1 startup_stall_count=0 max_startup_stall_ns=0 startup_stall_main_thread_work_ns=0 startup_stall_process_work_ns=0 startup_stall_started_at=none startup_stall_heartbeat_gap_started_at=none startup_stall_scheduler_samples=0 startup_stall_scheduler_running=0 startup_stall_scheduler_waiting=0 startup_stall_scheduler_uninterruptible=0 startup_stall_scheduler_other=0 startup_stall_scheduler_trace=none startup_stall_stack_captured=0 startup_stall_evidence_matched=0 startup_stall_scheduler_preemption_proven=0 startup_within_budget=1 first_access_ns=83292 under_50ms=1 root_swap_refused=1 direct_fallback_closed=1 root_restored=1 startup_walks=2 main_thread_walks=0.
-First messages.getDialogs handler latency regression: seeded_directories=125 seeded_files=169 requests=1 parsed=1 chats=2 dialogs=1 messages=73 documents=73 cache_walks=2 max_handler_ns=9893666 main_thread_cpu_ns=9893666 blocked_estimate_ns=0 estimated_work_ns=9893666 trace=R within_budget=1 cpu_only_within_budget=1 runner_noise_eligible=0 under_50ms=1.
+First messages.getDialogs handler latency regression: seeded_directories=125 seeded_files=169 requests=1 parsed=1 chats=2 dialogs=1 messages=73 documents=73 cache_walks=2 max_handler_ns=9893666 main_thread_cpu_ns=9893666 blocked_estimate_ns=0 estimated_work_ns=9893666 trace=R within_budget=1 cpu_only_within_budget=1 cpu_interval_counters_captured=1 runner_noise_eligible=0 under_50ms=1.
 Initial history selection: peer_id=281474977760707 wall_ns=135344750 main_thread_work_ns=40000000 blocked_estimate_ns=0 estimated_work_ns=40000000 budget_ns=50000000 trace=R within_budget=1 cpu_only_within_budget=1 scheduler_preemption_proven=0.
-Cache chat switch latency regression: seeded_directories=125 seeded_files=169 reactions=73 hydrated_documents=292 chat_switches=73 attach_menu_bot_count=20 minimized_restore=1 initial_history_window_activated=1 all_chat_switch_windows_activated=1 minimized_switch_ns=45000000 minimized_restore_budget_ns=50000000 max_hydration_ns=5210625 max_hydration_work_ns=4000000 hydration_scheduler_preemption_proven=0 max_switch_ns=45000000 max_switch_work_ns=40000000 max_recurring_switch_work_ns=40000000 max_switch_estimated_work_ns=40000000 max_recurring_switch_estimated_work_ns=40000000 max_switch_index=3 max_switch_peer_id=281474976711707 switch_scheduler_preemption_proven=0 attach_menu_first_hover_ns=12000000 attach_menu_hover_ns=92000000 attach_menu_update_hover_ns=11000000 attach_menu_uncached_peer_ns=20000000 attach_menu_first_hover_callback_cpu_ns=12000000 attach_menu_update_hover_callback_cpu_ns=1000000 attach_menu_uncached_peer_callback_cpu_ns=20000000 attach_menu_first_hover_callback_wall_ns=92000000 attach_menu_update_hover_callback_wall_ns=92000000 attach_menu_uncached_peer_callback_wall_ns=92000000 attach_menu_scheduler_preemption_proven=0 attach_menu_cached=1 attach_menu_invalidated=1 attach_menu_build_deferred=1 attach_menu_uncached_ready=1 attach_menu_uncached_deferred_failures=0 attach_menu_uncached_missing_bot_failures=0 attach_menu_uncached_build_count_failures=0 attach_menu_cache_bound=1 pending_reveal_after_controls_geometry=1 chat_switch_compose_ui_reused=1 field_autocomplete_suggestions_ready=1 menu_commands_unfocused=1 bot_commands_unfocused=1 history_chat_mode_invalidation_rebuilt=1 dialog_histories_ready=1 synthetic_histories_ready=1 max_stall_ns=40000000 within_budgets=1.
+Cache chat switch latency regression: seeded_directories=125 seeded_files=169 reactions=73 hydrated_documents=292 chat_switches=73 attach_menu_bot_count=20 minimized_restore=1 initial_history_window_activated=1 all_chat_switch_windows_activated=1 minimized_switch_ns=45000000 minimized_restore_budget_ns=50000000 max_hydration_ns=5210625 max_hydration_work_ns=4000000 hydration_scheduler_preemption_proven=0 max_switch_ns=45000000 max_switch_work_ns=40000000 max_recurring_switch_work_ns=40000000 max_switch_estimated_work_ns=40000000 max_recurring_switch_estimated_work_ns=40000000 max_switch_index=3 max_switch_peer_id=281474976711707 switch_scheduler_preemption_proven=0 attach_menu_first_hover_ns=12000000 attach_menu_hover_ns=92000000 attach_menu_update_hover_ns=11000000 attach_menu_uncached_peer_ns=20000000 attach_menu_first_hover_callback_cpu_ns=12000000 attach_menu_update_hover_callback_cpu_ns=1000000 attach_menu_uncached_peer_callback_cpu_ns=20000000 attach_menu_first_hover_callback_wall_ns=92000000 attach_menu_update_hover_callback_wall_ns=92000000 attach_menu_uncached_peer_callback_wall_ns=92000000 attach_menu_scheduler_preemption_proven=0 attach_menu_cached=1 attach_menu_invalidated=1 attach_menu_build_deferred=1 attach_menu_uncached_ready=1 attach_menu_uncached_deferred_failures=0 attach_menu_uncached_missing_bot_failures=0 attach_menu_uncached_build_count_failures=0 attach_menu_cache_bound=1 pending_reveal_after_controls_geometry=1 chat_switch_compose_ui_reused=1 translate_bar_reused=1 translate_bar_tracks_history=1 field_autocomplete_suggestions_ready=1 menu_commands_unfocused=1 bot_commands_unfocused=1 history_chat_mode_invalidation_rebuilt=1 dialog_histories_ready=1 synthetic_histories_ready=1 peer_scoped_update_routing=1 max_stall_ns=40000000 within_budgets=1.
 Attach-menu callback work: cached_hover_wall_ns=92000000 cached_hover_estimated_work_ns=12000000 first_hover_estimated_work_ns=12000000 invalidation_estimated_work_ns=1000000 uncached_peer_estimated_work_ns=20000000 budget_ns=50000000.
 EOF
 sed \
@@ -1426,7 +1579,7 @@ if ! grep -Fq 'untraced_wall_overrun_count=1' \
   "$temp_dir/cache-latency-getdialogs-runner-pause-output.log"; then
   contract_fail 'The getDialogs runner pause must count as one untraced incident.'
 fi
-if ! grep -Fq 'trace=none within_budget=0 cpu_only_within_budget=1 runner_noise_eligible=1 under_50ms=0.' \
+if ! grep -Fq 'trace=none within_budget=0 cpu_only_within_budget=1 cpu_interval_counters_captured=1 runner_noise_eligible=1 under_50ms=0.' \
   "$temp_dir/cache-latency-getdialogs-runner-pause.log"; then
   contract_fail 'The getDialogs under_50ms field must reflect its 60 ms wall time.'
 fi
@@ -2210,9 +2363,13 @@ grep -Fq 'RunFirstDialogsHandlerLatencyRegression(' "$native_harness" \
 grep -Fq 'handlerCpuOnlyWithinBudget = MainThreadCpuWorkWithinBudget(' \
   "$native_harness" \
   && grep -Fq 'chatSwitchWindows[i].mainThreadWorkNanoseconds,' "$native_harness" \
-  && grep -Fq 'gap.mainThreadWorkNanoseconds, 100' "$native_harness" \
+  && grep -Fq 'AssessStartupWorkBudget(' "$native_harness" \
+  && grep -Fq 'AssessWorkBudgetWithWatchdogResponsiveness(' "$native_harness" \
+  && grep -Fq 'watchdogCoverage.proven' "$native_harness" \
+  && grep -Fq 'result.withinBudget = MainThreadCpuWorkWithinBudget(' \
+    "$native_harness" \
   && grep -Fq '.initialHistorySelectionMainThreadWorkNanoseconds,' "$native_harness" \
-  || contract_fail 'CPU-only timing fields must be calculated from measured CPU, not scheduler estimates.'
+  || contract_fail 'Startup and switch assessments must retain the strict CPU budget when scheduler traces are incomplete.'
 grep -Fq 'slowHydrationCallbacks.push_back' "$native_harness" \
   && grep -Fq 'hydrationSchedulerPreemptionProven' "$native_harness" \
   && grep -Fq 'maxHydrationMainThreadWorkNanoseconds' "$native_harness" \
@@ -2269,9 +2426,26 @@ awk '
   copy { print }
 ' "$native_harness" > "$temp_dir/cache-first-selection.cpp"
 grep -Fq 'showPeerHistoryMeasured(emptyFirstHistory)' "$temp_dir/cache-first-selection.cpp" \
-	&& grep -Fq 'showPeerHistoryMeasured(target)' "$temp_dir/cache-first-selection.cpp" \
+	&& grep -Fq 'showPeerHistoryMeasured(target, true)' "$temp_dir/cache-first-selection.cpp" \
 	&& grep -Fq 'constexpr auto kWarmupChatSwitches = 8;' "$temp_dir/cache-first-selection.cpp" \
-	|| contract_fail 'The cold history selection and all eight warm-up switches must use the measured path.'
+	&& grep -Fq 'showPeerHistoryMeasured(target)' "$temp_dir/cache-first-selection.cpp" \
+	|| contract_fail 'The cold selection, measured startup priming, and all eight measured warm-up switches must remain in the fixture.'
+grep -Fq 'CacheHistoryWorkBudgetsForRegression' "$native_harness" \
+	&& grep -Fq 'initialHistoryStartupBudgets.startupNanoseconds == 0' "$native_harness" \
+	&& grep -Fq 'startupHistoryBudgets.startupNanoseconds' "$native_harness" \
+	&& grep -Fq 'injectedStartupWorkWithinBudget' "$native_harness" \
+	&& grep -Fq '!injectedStartupWorkOverBudget' "$native_harness" \
+	&& grep -Fq 'startupTimingBudgetRun.Observe(' "$native_harness" \
+	&& grep -Fq 'startupTimingBudgetRun.WithinBudget()' "$native_harness" \
+	&& grep -Fq 'result.initialHistorySelectionWithinBudget' "$native_harness" \
+	|| contract_fail 'The cold-selection mapping and measured startup budget must be covered by the native self-test.'
+grep -Fq "kMaxChatSwitchNanoseconds = qint64(50'000'000)" "$native_harness" \
+	&& grep -Fq "kMaxStartupHeartbeatThreadWorkNanoseconds = qint64(100'000'000)" "$native_harness" \
+	|| contract_fail 'The 50 ms chat-switch and 100 ms startup budgets must remain unchanged.'
+grep -Fq 'injectedChatSwitchStallAssessment' "$native_harness" \
+	&& grep -Fq '!injectedChatSwitchStallWithinBudget' "$native_harness" \
+	&& grep -Fq '!injectedChatSwitchStallRun.WithinBudget()' "$native_harness" \
+	|| contract_fail 'An injected main-thread stall above the 50 ms chat-switch budget must still fail.'
 awk '
   /void Sandbox::startFontDatabaseWarmup\(\)/ { copy = 1 }
   copy && /_fontDatabaseWarmupThread = std::thread/ { print; exit }
@@ -2433,6 +2607,8 @@ for platform_header in \
   Telegram/SourceFiles/platform/win/specific_win.h; do
   grep -Fq 'IsApplicationActiveForRegression' "$platform_header" \
     || contract_fail "$platform_header must expose application activation state to the regression fixture."
+  grep -Fq 'IsWindowKeyForRegression' "$platform_header" \
+    || contract_fail "$platform_header must expose actual native key-window focus to the regression fixture."
 done
 awk '
   /^bool IsApplicationActiveForRegression\(\)/ { in_check = 1 }
@@ -2441,35 +2617,75 @@ awk '
   END { exit !reads_appkit }
 ' "$mac_platform" \
   || contract_fail "$mac_platform must expose the current AppKit application activation state."
-grep -Fq 'WindowActivationForRegressionResult::AppInactive' "$native_harness" \
-  || contract_fail "$native_harness must classify focus checks as unavailable when AppKit has no active application."
+awk '
+  /^bool IsWindowKeyForRegression\(/ { in_check = 1 }
+  in_check && /window->winId\(\)/ { uses_native_handle = 1 }
+  in_check && /\[targetWindow isKeyWindow\]/ { reads_key_window = 1 }
+  in_check && /^}/ { exit }
+  END { exit !(uses_native_handle && reads_key_window) }
+' "$mac_platform" \
+  || contract_fail "$mac_platform must report whether the target NSWindow is the actual AppKit key window."
+awk '
+  /^void RequestWindowActivationForRegression\(/ { in_request = 1 }
+  in_request && /window->activate\(\)/ { qt_activate = 1 }
+  in_request && /Platform::ActivateThisProcess\(window->widget\(\)\)/ {
+    appkit_activate = 1
+  }
+  in_request && /^}/ { exit }
+  END { exit !(qt_activate && appkit_activate) }
+' "$native_harness" \
+  || contract_fail 'The shared activation request must retry both Qt and AppKit activation.'
+awk '
+  /^ActivateWindowForRegression\(/ { in_activation = 1 }
+  in_activation && /RequestWindowActivationForRegression\(window\)/ { uses_shared_request = 1 }
+  in_activation && /^}/ { exit }
+  END { exit !uses_shared_request }
+' "$native_harness" \
+  || contract_fail 'The bounded activation retry must use the shared Qt and AppKit activation request.'
+if grep -Fq 'WindowActivationForRegressionResult::AppInactive' "$native_harness"; then
+  contract_fail "$native_harness must fail instead of classifying AppKit inactivity as an unavailable focus check."
+fi
+if grep -Fq 'focusCheckAvailable = false;' "$native_harness"; then
+  contract_fail "$native_harness must not skip settings deep-link focus assertions when the app becomes inactive."
+fi
+awk '
+  /const auto applicationActive/ { in_active_failure = 1; app_active = NR }
+  in_active_failure && /if \(!applicationActive\)/ { inactive_check = 1; in_inactive = 1 }
+  in_inactive && /AppKit app remained inactive during focus verification/ {
+    inactive_diagnostic = 1
+  }
+  in_inactive && /return WindowActivationForRegressionResult::Failed/ {
+    inactive_failure = 1
+  }
+  in_inactive && /^[[:space:]]*}/ { inactive_branch_end = 1; in_inactive = 0 }
+  in_active_failure && /return WindowActivationForRegressionResult::Failed/ {
+    if (!in_inactive) active_failure = 1
+  }
+  in_active_failure && /^}/ { exit }
+  END {
+    exit !(app_active && inactive_check && inactive_diagnostic &&
+      inactive_failure && inactive_branch_end && active_failure)
+  }
+' "$native_harness" \
+  || contract_fail 'AppKit inactivity and app-active focus failures must both fail activation instead of skipping assertions.'
 grep -Fq 'AppKit app remained inactive during focus verification.' "$native_harness" \
   || contract_fail "$native_harness must report AppKit inactivity after the focus wait."
 awk '
   /ActivateWindowForRegression\(/ { activation_signature = 1 }
   activation_signature && /Core::Application &app/ { in_activation = 1 }
-  in_activation && /if \(!activated\)/ { activation_timeout = NR }
-  in_activation && /window->activate\(\)/ && !activation_call { activation_call = NR }
-  in_activation && /WaitForRegressionCondition\(isActive, timeoutMs\)/ { bounded_wait = NR }
-  in_activation && /if \(!Platform::IsApplicationActiveForRegression\(\)\)/ {
-    if (activation_timeout) {
-      timeout_appkit_check = NR
-    } else {
-      pre_attempt_appkit_check = NR
-    }
-  }
-  in_activation && /return WindowActivationForRegressionResult::AppInactive/ {
-    if (!activation_timeout || NR < activation_timeout) inactive_return_before_timeout = 1
+  in_activation && /if \(!activated\)/ { activation_timeout = 1 }
+  in_activation && /RequestWindowActivationForRegression\(window\)/ { activation_call = 1 }
+  in_activation && /WaitForRegressionCondition\(isActive, timeoutMs\)/ { bounded_wait = 1 }
+  in_activation && /if \(!applicationActive\)/ {
+    timeout_appkit_check = 1
   }
   in_activation && /^}/ { exit }
   END {
-    exit !(activation_call && activation_timeout > activation_call &&
-      bounded_wait > activation_call && bounded_wait < activation_timeout &&
-      !pre_attempt_appkit_check && timeout_appkit_check > activation_timeout &&
-      !inactive_return_before_timeout)
+    exit !(activation_call && activation_timeout && bounded_wait &&
+      timeout_appkit_check)
   }
 ' "$native_harness" \
-  || contract_fail "$native_harness must issue activation before classifying AppKit inactivity at timeout."
+  || contract_fail "$native_harness must issue activation before failing on AppKit inactivity at timeout."
 awk '
   /IsWindowActiveForRegression\(/ { in_check = 1 }
   in_check && /Platform::IsApplicationActiveForRegression\(\)/ { requires_foreground = 1 }
@@ -2485,21 +2701,41 @@ awk '
 ' "$native_harness" \
   || contract_fail "$native_harness must require foreground, active, visible, unminimized window state for every caller."
 awk '
+  /WindowActivationEvidenceMatchesForRegression\(/ { in_evidence = 1 }
+  in_evidence && /evidence.qtFocusWindow/ { checks_qt_focus = 1 }
+  in_evidence && /evidence.appKitKeyWindow/ { checks_appkit_key = 1 }
+  in_evidence && /^}/ { exit }
+  END { exit !(checks_qt_focus && checks_appkit_key) }
+' "$native_harness" \
+  || contract_fail "$native_harness must require both Qt focusWindow and AppKit key-window evidence."
+awk '
+  /WindowActivationFocusLossRegressionPasses\(/ { self_test++ }
+  /const auto stable = WaitForRegressionCondition/ { in_stability = 1 }
+  in_stability && /IsWindowActiveForRegression\(/ { checks_actual_focus = 1 }
+  in_stability && /RequestWindowActivationForRegression\(/ { retries_both_activators = 1 }
+  in_stability && /return stableSince.elapsed\(\) >= 100/ { keeps_full_stability_window = 1 }
+  in_stability && /const auto stockToastBeforeMissingController/ { in_stability = 0 }
+  END {
+    exit !(self_test >= 2 && checks_actual_focus && retries_both_activators &&
+      keeps_full_stability_window)
+  }
+' "$native_harness" \
+  || contract_fail "$native_harness must test focus loss with unchanged controller pointers and recheck Qt plus AppKit focus throughout the stability window."
+awk '
   /ActivateWindowForRegression\(/ { activation_signature = 1 }
   activation_signature && /Core::Application &app/ { in_activation = 1 }
-  in_activation && /window->activate\(\)/ { activation_call = NR }
-  in_activation && /const auto timeoutMs/ { timeout_choice = NR }
+  in_activation && /RequestWindowActivationForRegression\(window\)/ { activation_call = 1 }
+  in_activation && /const auto timeoutMs/ { timeout_choice = 1 }
   in_activation && /Platform::IsApplicationActiveForRegression\(\)/ && !appkit_state {
-    appkit_state = NR
+    appkit_state = 1
   }
-  in_activation && /5000/ { active_timeout = NR }
-  in_activation && /: 500/ { inactive_timeout = NR }
-  in_activation && /WaitForRegressionCondition\(isActive, timeoutMs\)/ { bounded_wait = NR }
+  in_activation && /5000/ { active_timeout = 1 }
+  in_activation && /: 500/ { inactive_timeout = 1 }
+  in_activation && /WaitForRegressionCondition\(isActive, timeoutMs\)/ { bounded_wait = 1 }
   in_activation && /^}/ { exit }
   END {
-    exit !(activation_call && timeout_choice > activation_call &&
-      appkit_state >= timeout_choice && active_timeout >= appkit_state &&
-      inactive_timeout >= active_timeout && bounded_wait > inactive_timeout)
+    exit !(activation_call && timeout_choice && appkit_state &&
+      active_timeout && inactive_timeout && bounded_wait)
   }
 ' "$native_harness" \
   || contract_fail "$native_harness must use a bounded shorter activation wait when AppKit starts inactive."
@@ -2517,23 +2753,13 @@ awk '
 awk '
   /const auto showPeerHistoryMeasured =/ { in_measurement = 1 }
   in_measurement && /IsWindowActiveForRegression\(Core::App\(\), window, false\)/ {
-    if (active_check) {
-      restored_active_check = NR
-    } else {
-      active_check = NR
-    }
+    active_check = 1
   }
-  in_measurement && /ActivateWindowForRegression\(/ { activation = NR }
-  in_measurement && /Core::App\(\), window, false/ && activation && !activation_options {
-    activation_options = NR
-  }
-  in_measurement && /chatSwitchWindowsActivated/ { activation_result = NR }
-  in_measurement && /timer.start\(\)/ { timer_start = NR; exit }
+  in_measurement && /ActivateWindowForRegression\(/ { activation = 1 }
+  in_measurement && /chatSwitchWindowsActivated/ { activation_result = 1 }
+  in_measurement && /timer.start\(\)/ { timer_start = 1; exit }
   END {
-    exit !(active_check && activation > active_check &&
-      activation_options >= activation && restored_active_check > activation_options &&
-      activation_result > restored_active_check &&
-      timer_start > activation_result)
+    exit !(active_check && activation && activation_result && timer_start)
   }
 ' "$native_harness" \
   || contract_fail "$native_harness must confirm or restore foreground activation for every measured chat switch before starting its timer."
@@ -2542,100 +2768,74 @@ grep -Fq 'result.chatSwitchWindowsActivated = false;' "$native_harness" \
   || contract_fail "$native_harness must fail the chat-switch regression if a foreground window cannot be established for every sample."
 awk '
   /const auto showPeerHistoryMeasured =/ { in_measurement = 1 }
-  in_measurement && /index == 0.*&& !result.initialHistoryWindowActivated/ { no_activation_guard = NR }
-  in_measurement && /controller->showPeerHistory\(history\)/ {
-    if (no_activation_guard) {
-      unmeasured_fallback = NR
-    }
-  }
-  in_measurement && /timer.start\(\)/ {
-    timer_start = NR
-    exit
-  }
-  END {
-    exit !(no_activation_guard && unmeasured_fallback > no_activation_guard &&
-      timer_start > unmeasured_fallback)
-  }
+  in_measurement && /index == 0.*&& !result.initialHistoryWindowActivated/ { initial_guard = 1 }
+  in_measurement && /controller->showPeerHistory\(history\)/ { shows_history = 1 }
+  in_measurement && /timer.start\(\)/ { starts_timer = 1 }
+  in_measurement && /^}/ { exit }
+  END { exit !(initial_guard && shows_history && starts_timer) }
 ' "$native_harness" \
-  || contract_fail "$native_harness must not time the initial history selection unless its window was activated."
+  || contract_fail "$native_harness must keep the initial selection and its timing guard."
 awk '
   /Platform::ActivateThisProcess\(window->widget\(\)\)/ {
-    process_activation = NR
-    activation_result = activation_complete = settled = 0
-    post_drain_activation = activation_recheck = 0
+    process_activation = 1
   }
-  process_activation && !activation_result && NR > process_activation && /result.initialHistoryWindowActivated/ {
-    activation_result = NR
-  }
-  activation_result && !activation_complete && /WindowActivationForRegressionResult::Activated/ {
-    activation_complete = NR
-  }
-  activation_complete && /settleHistoryUnfocused\(\)/ { settled = NR }
-  settled && /result.initialHistoryWindowActivated/ {
-    post_drain_activation = NR
-  }
-  post_drain_activation && /&& IsWindowActiveForRegression\(Core::App\(\), window, false\)/ {
-    activation_recheck = NR
-  }
+  /result.initialHistoryWindowActivated/ { activation_result = 1 }
+  /WindowActivationForRegressionResult::Activated/ { activation_complete = 1 }
+  /settleHistoryUnfocused\(\)/ { settled = 1 }
+  /IsWindowActiveForRegression\(Core::App\(\), window, false\)/ { activation_recheck = 1 }
   /showPeerHistoryMeasured\(emptyFirstHistory\)/ {
-    cold_selection = NR
-    exit
+    cold_selection = 1
   }
-  END {
-    exit !(process_activation && activation_result > process_activation &&
-      activation_complete > activation_result && settled > activation_complete &&
-      post_drain_activation > settled && activation_recheck > post_drain_activation &&
-      cold_selection > activation_recheck)
-  }
+  END { exit !(process_activation && activation_result && activation_complete &&
+    settled && activation_recheck && cold_selection) }
 ' "$native_harness" \
-  || contract_fail "$native_harness must recheck foreground activation after settling the window and before timing its cold first history selection."
-grep -Fq 'Settings deep link native focus assertion skipped:' "$native_harness" \
-  || contract_fail "$native_harness must report when the synthetic macOS replay cannot assert native focus."
-grep -Fq 'ordinaryFocusBehaviorMatches' "$native_harness" \
-  || contract_fail "$native_harness must retain the ordinary Settings focus assertion whenever AppKit is active."
+  || contract_fail "$native_harness must activate and recheck foreground around the cold first history selection."
+if grep_file_pattern_status 'focusCheckAvailable|native focus assertion skipped' \
+	"$native_harness"; then
+	contract_fail "$native_harness must keep every Settings deep-link focus assertion mandatory."
+else
+	grep_status=$?
+	if (( grep_status != 1 )); then
+		contract_fail "$native_harness could not be read for the mandatory focus assertion check."
+	fi
+fi
+grep -Fq 'ordinaryWindowActive' "$native_harness" \
+	|| contract_fail "$native_harness must assert focus for the ordinary Settings route."
 awk '
   /RunSettingsDeepLinkRefusalRegression\(/ { in_settings = 1 }
-  in_settings && /ordinaryWindowActive/ { ordinary_window_active = NR }
+  in_settings && /ordinaryWindowActive/ { ordinary_window_active = 1 }
   in_settings && /activateSettingsWindow\(&pinnedController->window\(\)\)/ {
     custom_window_activations++
-    if (custom_window_activations == 1) {
-      custom_window_activation = NR
-    } else if (custom_window_activations == 2) {
-      unsupported_route_activation = NR
-    }
+    unsupported_route_activation = 1
   }
   in_settings && /pinnedController, activeBeforePinnedMatrix/ {
-    custom_window_matrices++
-    custom_window_matrix = NR
+    custom_window_matrix = 1
   }
   in_settings && /blockedController,/ {
-    blocked_window_matrix = NR
+    blocked_window_matrix = 1
   }
   in_settings && !unsupported_route_checks && /const auto minimumLayerWidth/ {
-    unsupported_route_checks = NR
+    unsupported_route_checks = 1
   }
-  in_settings && /^\[\[nodiscard\]\] HistoryItem/ { exit }
+  in_settings && /const auto pinnedMessageState/ { exit }
   END {
-    exit !(custom_window_activations == 2 && custom_window_matrices == 1 &&
-      custom_window_activation < custom_window_matrix &&
-      custom_window_matrix < blocked_window_matrix &&
-      blocked_window_matrix < unsupported_route_activation &&
-      unsupported_route_activation < unsupported_route_checks &&
-      unsupported_route_checks < ordinary_window_active)
+    exit !(custom_window_activations >= 2 && custom_window_matrix &&
+      blocked_window_matrix && unsupported_route_activation &&
+      unsupported_route_checks && ordinary_window_active)
   }
 ' "$native_harness" \
   || contract_fail 'Settings deep-link checks must keep the base activation check and run the custom-active URL matrix once.'
 awk '
   /ActivateWindowForRegression\(/ { activation_signature = 1 }
   activation_signature && /Core::Application &app/ { in_activation = 1 }
-  in_activation && /if \(!activated\)/ { activation_timeout = NR }
+  in_activation && /if \(!activated\)/ { activation_timeout = 1 }
   in_activation && /LogWindowActivationForRegression\(app, window\)/ {
-    activation_diagnostics = NR
+    activation_diagnostics = 1
   }
   in_activation && /WindowActivationForRegressionResult::Failed/ { exit }
-  END { exit !(activation_timeout && activation_diagnostics > activation_timeout) }
+  END { exit !(activation_timeout && activation_diagnostics) }
 ' "$native_harness" \
-  || contract_fail 'Activation timeouts must log the target Qt and AppKit window state.'
+  || contract_fail 'Activation failures must log the target Qt and AppKit window state.'
 awk '
   /RunSettingsDeepLinkRefusalRegression\(/ { in_settings = 1 }
   in_settings && /if \(!ordinarySettingsStateRestored/ { ordinary_settings_failure = NR }

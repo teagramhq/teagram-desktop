@@ -454,6 +454,7 @@ run_spoiler_cache_symlink_case() {
 	local SOCKET_PATH_READY=false
 	local SOCKET_LISTENER_READY=false
 	local SOCKET_FILE_READY=false
+	local APP_READY=false
 	local FIRST_PROCESS_ALIVE=false
 	local FAILURES=0
 	local quit_status
@@ -490,7 +491,9 @@ run_spoiler_cache_symlink_case() {
 	env HOME="$case_home" TMPDIR="$TEST_TMP_BASE" \
 		TDESKTOP_MAC_PROFILE_TEST_HOME="$case_home" \
 		TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST=1 \
-		"$APP" >"$START_LOG" 2>&1 &
+		TDESKTOP_MAC_EMOJI_CACHE_FOLDER_REGRESSION=1 \
+		TDESKTOP_MAC_PROFILE_TEST_WAIT_FOR_APP_READY=1 \
+		"$APP" -noupdate -debug >"$START_LOG" 2>&1 &
 	FIRST_PID=$!
 	for ((attempt = 0; attempt < 150; ++attempt)); do
 		if grep -F -q "Working dir: $PROFILE/" "$PROFILE/log.txt" 2>/dev/null; then
@@ -508,6 +511,9 @@ run_spoiler_cache_symlink_case() {
 		if has_start_record "Mac profile IPC ready: listening=1 full_server_name=$SOCKET_PATH"; then
 			SOCKET_LISTENER_READY=true
 		fi
+		if has_start_record "Mac profile app ready: startup=complete"; then
+			APP_READY=true
+		fi
 		if [[ -S "$SOCKET_PATH" ]]; then
 			SOCKET_FILE_READY=true
 		fi
@@ -520,6 +526,7 @@ run_spoiler_cache_symlink_case() {
 			&& "$SOCKET_PATH_READY" == true \
 			&& "$SOCKET_LISTENER_READY" == true \
 			&& "$SOCKET_FILE_READY" == true \
+			&& "$APP_READY" == true \
 			&& "$FIRST_PROCESS_ALIVE" == true ]]; then
 			break
 		fi
@@ -536,6 +543,12 @@ run_spoiler_cache_symlink_case() {
 		"expected=$LOCK_PATH found=$(find_lock_path)" || FAILURES=$((FAILURES + 1))
 	report_result "${case_name}_bound_socket" "$SOCKET_LISTENER_READY" \
 		"path=$SOCKET_PATH filesystem_socket=$SOCKET_FILE_READY" || FAILURES=$((FAILURES + 1))
+	report_result "${case_name}_app_ready" "$APP_READY" \
+		"marker=Mac profile app ready: startup=complete" || FAILURES=$((FAILURES + 1))
+	if [[ "$APP_READY" != true ]]; then
+		cat "$START_LOG" >&2
+		return 1
+	fi
 	if ! fixture_unchanged "$fixture" "$fixture_is_file" "$fixture_contents"; then
 		report_result "${case_name}_fixture_untouched" false "fixture=$fixture" || FAILURES=$((FAILURES + 1))
 	else
@@ -574,10 +587,13 @@ run_spoiler_cache_symlink_case() {
 		"status=$first_status" || FAILURES=$((FAILURES + 1))
 	refusal="$(grep -F 'class=group-container callsite=emojiCacheFolder' \
 		"$START_LOG" "$PROFILE/log.txt" 2>/dev/null || true)"
-	if [[ -n "$refusal" ]]; then
+	if [[ -n "$refusal" ]] && grep -F -q \
+		'Mac emoji cache folder regression: rejected=1' "$START_LOG"; then
 		report_result "${case_name}_cache_refusal" true "$refusal"
 	else
-		report_result "${case_name}_cache_refusal" false "missing protected-path refusal from emojiCacheFolder" || FAILURES=$((FAILURES + 1))
+		report_result "${case_name}_cache_refusal" false \
+			"missing rejected emojiCacheFolder result or protected-path refusal" \
+			|| FAILURES=$((FAILURES + 1))
 	fi
 	if ! fixture_unchanged "$fixture" "$fixture_is_file" "$fixture_contents"; then
 		report_result "${case_name}_fixture_untouched_after_exit" false "fixture=$fixture" || FAILURES=$((FAILURES + 1))
@@ -1674,7 +1690,7 @@ for cache in cache media_cache; do
 done
 local first_dialogs_handler_evidence
 first_dialogs_handler_evidence="$(grep -E \
-	'^First messages\.getDialogs handler latency regression: seeded_directories=125 seeded_files=169 requests=1 parsed=1 chats=2 dialogs=1 messages=73 documents=73 cache_walks=2 max_handler_ns=[0-9]+ main_thread_cpu_ns=-?[0-9]+ blocked_estimate_ns=-?[0-9]+ estimated_work_ns=[0-9]+ trace=([[:alpha:]?]+|none) within_budget=[01] cpu_only_within_budget=[01] runner_noise_eligible=[01] under_50ms=[01]\.$' \
+	'^First messages\.getDialogs handler latency regression: seeded_directories=125 seeded_files=169 requests=1 parsed=1 chats=2 dialogs=1 messages=73 documents=73 cache_walks=2 max_handler_ns=[0-9]+ main_thread_cpu_ns=-?[0-9]+ blocked_estimate_ns=-?[0-9]+ estimated_work_ns=[0-9]+ trace=([[:alpha:]?]+|none) within_budget=[01] cpu_only_within_budget=[01] cpu_interval_counters_captured=[01] runner_noise_eligible=[01] under_50ms=[01]\.$' \
 	"$AUTH_LOG" || true)"
 if [[ -z "$first_dialogs_handler_evidence" ]]; then
 	cat "$AUTH_LOG" >&2
@@ -1708,7 +1724,7 @@ if ! work_value_within_budget \
 fi
 local chat_switch_evidence
 chat_switch_evidence="$(grep -E \
-	'^Cache chat switch latency regression: seeded_directories=125 seeded_files=169 reactions=73 hydrated_documents=292 chat_switches=73 attach_menu_bot_count=[0-9]+ minimized_restore=1 initial_history_window_activated=1 all_chat_switch_windows_activated=1 minimized_switch_ns=[0-9]+ minimized_restore_budget_ns=50000000 max_hydration_ns=[0-9]+ max_hydration_work_ns=[0-9]+ hydration_scheduler_preemption_proven=[01] max_switch_ns=[0-9]+ max_switch_work_ns=[0-9]+ max_recurring_switch_work_ns=[0-9]+ max_switch_estimated_work_ns=[0-9]+ max_recurring_switch_estimated_work_ns=[0-9]+ max_switch_index=[0-9]+ max_switch_peer_id=[0-9]+ switch_scheduler_preemption_proven=[01] attach_menu_first_hover_ns=[0-9]+ attach_menu_hover_ns=[0-9]+ attach_menu_update_hover_ns=[0-9]+ attach_menu_uncached_peer_ns=[0-9]+ attach_menu_first_hover_callback_cpu_ns=[0-9]+ attach_menu_update_hover_callback_cpu_ns=[0-9]+ attach_menu_uncached_peer_callback_cpu_ns=[0-9]+ attach_menu_first_hover_callback_wall_ns=[0-9]+ attach_menu_update_hover_callback_wall_ns=[0-9]+ attach_menu_uncached_peer_callback_wall_ns=[0-9]+ attach_menu_scheduler_preemption_proven=[01] attach_menu_cached=1 attach_menu_invalidated=1 attach_menu_build_deferred=1 attach_menu_uncached_ready=1 attach_menu_uncached_deferred_failures=0 attach_menu_uncached_missing_bot_failures=0 attach_menu_uncached_build_count_failures=0 attach_menu_cache_bound=1 pending_reveal_after_controls_geometry=1 chat_switch_compose_ui_reused=1 field_autocomplete_suggestions_ready=1 menu_commands_unfocused=[01] bot_commands_unfocused=1 history_chat_mode_invalidation_rebuilt=1 dialog_histories_ready=1 synthetic_histories_ready=1 max_stall_ns=[0-9]+ within_budgets=1\.$' \
+	'^Cache chat switch latency regression: seeded_directories=125 seeded_files=169 reactions=73 hydrated_documents=292 chat_switches=73 attach_menu_bot_count=[0-9]+ minimized_restore=1 initial_history_window_activated=1 all_chat_switch_windows_activated=1 minimized_switch_ns=[0-9]+ minimized_restore_budget_ns=50000000 max_hydration_ns=[0-9]+ max_hydration_work_ns=[0-9]+ hydration_scheduler_preemption_proven=[01] max_switch_ns=[0-9]+ max_switch_work_ns=[0-9]+ max_recurring_switch_work_ns=[0-9]+ max_switch_estimated_work_ns=[0-9]+ max_recurring_switch_estimated_work_ns=[0-9]+ max_switch_index=[0-9]+ max_switch_peer_id=[0-9]+ switch_scheduler_preemption_proven=[01] attach_menu_first_hover_ns=[0-9]+ attach_menu_hover_ns=[0-9]+ attach_menu_update_hover_ns=[0-9]+ attach_menu_uncached_peer_ns=[0-9]+ attach_menu_first_hover_callback_cpu_ns=[0-9]+ attach_menu_update_hover_callback_cpu_ns=[0-9]+ attach_menu_uncached_peer_callback_cpu_ns=[0-9]+ attach_menu_first_hover_callback_wall_ns=[0-9]+ attach_menu_update_hover_callback_wall_ns=[0-9]+ attach_menu_uncached_peer_callback_wall_ns=[0-9]+ attach_menu_scheduler_preemption_proven=[01] attach_menu_cached=1 attach_menu_invalidated=1 attach_menu_build_deferred=1 attach_menu_uncached_ready=1 attach_menu_uncached_deferred_failures=0 attach_menu_uncached_missing_bot_failures=0 attach_menu_uncached_build_count_failures=0 attach_menu_cache_bound=1 pending_reveal_after_controls_geometry=1 chat_switch_compose_ui_reused=1 translate_bar_reused=1 translate_bar_tracks_history=1 field_autocomplete_suggestions_ready=1 menu_commands_unfocused=[01] bot_commands_unfocused=1 history_chat_mode_invalidation_rebuilt=1 dialog_histories_ready=1 synthetic_histories_ready=1 peer_scoped_update_routing=1 max_stall_ns=[0-9]+ within_budgets=1\.$' \
 	"$AUTH_LOG" || true)"
 if [[ -z "$chat_switch_evidence" ]]; then
 	cat "$AUTH_LOG" >&2
@@ -2484,6 +2500,103 @@ run_start_in_tray_regression() {
 	printf 'start_in_tray_regression=PASS hidden=1 alive_after_startup=1\n'
 }
 
+RUNNER_ACTIVATED_APP_EXIT_STATUS=0
+
+run_lifecycle_app_with_runner_activation() {
+local auth_home="$1"
+local auth_log="$2"
+local fail_cases="${3:-}"
+local activation_request="$auth_home/runner-external-activation.request"
+local activation_marker="$auth_home/runner-external-activation.status"
+local activation_stop="$auth_home/runner-external-activation.stop"
+local activation_log="$auth_home/runner-external-activation.log"
+local auth_pid
+local activation_pid
+local auth_log_tail_pid
+local auth_status=0
+local activation_status=0
+rm -f "$activation_request" "$activation_marker" "$activation_stop"
+env HOME="$auth_home" TMPDIR="$TEST_TMP_BASE" \
+	TDESKTOP_MAC_PROFILE_TEST_HOME="$auth_home" \
+	TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST=1 \
+	TDESKTOP_AUTH_LIFECYCLE_REGRESSION=1 \
+	TDESKTOP_AUTH_LIFECYCLE_REGRESSION_FAIL_CASE="$fail_cases" \
+	TDESKTOP_AUTH_LIFECYCLE_REGRESSION_RUNNER_ACTIVATION_REQUIRED=1 \
+	TDESKTOP_AUTH_LIFECYCLE_REGRESSION_RUNNER_ACTIVATION_MARKER="$activation_marker" \
+	TDESKTOP_AUTH_LIFECYCLE_REGRESSION_RUNNER_ACTIVATION_REQUEST="$activation_request" \
+	"$APP" -noupdate -debug >"$auth_log" 2>&1 &
+auth_pid=$!
+
+env HOME="${RUNNER_EXTERNAL_ACTIVATION_HOME:-$HOME}" \
+	python3 "$REPO_ROOT/.github/scripts/macos_process_activation.py" \
+		--watch "$activation_request" "$activation_marker" \
+		"$activation_stop" "$auth_pid" >"$activation_log" 2>&1 &
+activation_pid=$!
+tail -n +1 -f "$auth_log" &
+auth_log_tail_pid=$!
+while process_alive "$auth_pid"; do
+	if ! process_alive "$activation_pid"; then
+		printf 'runner activation watcher exited while pid=%s was alive.\n' \
+			"$auth_pid" >> "$activation_log"
+		kill -TERM "$auth_pid" 2>/dev/null || true
+		sleep 1
+		if process_alive "$auth_pid"; then
+			kill -KILL "$auth_pid" 2>/dev/null || true
+		fi
+		break
+	fi
+	sleep 0.05
+done
+if ! : > "$activation_stop"; then
+	printf 'activation stop file could not be written: %s\n' \
+		"$activation_stop" >&2
+	kill -TERM "$activation_pid" 2>/dev/null || true
+	if process_alive "$activation_pid"; then
+		sleep 1
+		if process_alive "$activation_pid"; then
+			kill -KILL "$activation_pid" 2>/dev/null || true
+		fi
+	fi
+	if wait "$activation_pid"; then
+		activation_status=0
+	else
+		activation_status=$?
+	fi
+	if wait "$auth_pid"; then
+		auth_status=0
+	else
+		auth_status=$?
+	fi
+	kill -TERM "$auth_log_tail_pid" 2>/dev/null || true
+	wait "$auth_log_tail_pid" 2>/dev/null || true
+	cat "$activation_log" >&2
+	cat "$auth_log" >&2
+	echo "lifecycle runner activation stop failed." >&2
+	return 1
+fi
+if wait "$auth_pid"; then
+	auth_status=0
+else
+	auth_status=$?
+fi
+if wait "$activation_pid"; then
+	activation_status=0
+else
+	activation_status=$?
+fi
+kill -TERM "$auth_log_tail_pid" 2>/dev/null || true
+wait "$auth_log_tail_pid" 2>/dev/null || true
+cat "$activation_log"
+if [[ "$activation_status" -ne 0 ]]; then
+	cat "$auth_log" >&2
+	echo "lifecycle runner activation failed." >&2
+	return 1
+fi
+RUNNER_ACTIVATED_APP_EXIT_STATUS="$auth_status"
+printf 'runner_activation_app=PASS pid=%s app_exit_status=%s\n' \
+	"$auth_pid" "$auth_status"
+}
+
 run_authenticated_lifecycle_regression() {
 local AUTH_HOME="$TEST_HOME/authenticated-lifecycle-regression"
 local AUTH_LOG="$TEST_HOME/authenticated-lifecycle-regression.log"
@@ -2492,14 +2605,16 @@ mkdir -p "$AUTH_HOME"
 prepare_authenticated_storage_fixtures "$STORAGE_FIXTURE_ROOT"
 verify_protected_storage_fixtures "$STORAGE_FIXTURE_ROOT"
 
-if ! env HOME="$AUTH_HOME" TMPDIR="$TEST_TMP_BASE" \
-	TDESKTOP_MAC_PROFILE_TEST_HOME="$AUTH_HOME" \
-	TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST=1 \
-	TDESKTOP_AUTH_LIFECYCLE_REGRESSION=1 \
-	"$APP" -noupdate -debug >"$AUTH_LOG" 2>&1; then
+if ! run_lifecycle_app_with_runner_activation \
+	"$AUTH_HOME" "$AUTH_LOG"; then
+	verify_protected_storage_fixtures "$STORAGE_FIXTURE_ROOT" || true
+	echo "authenticated lifecycle regression failed." >&2
+	exit 1
+fi
+if [[ "$RUNNER_ACTIVATED_APP_EXIT_STATUS" -ne 0 ]]; then
 	verify_protected_storage_fixtures "$STORAGE_FIXTURE_ROOT" || true
 	cat "$AUTH_LOG" >&2
-	echo "authenticated lifecycle regression failed." >&2
+	echo "authenticated lifecycle app exited with status $RUNNER_ACTIVATED_APP_EXIT_STATUS." >&2
 	exit 1
 fi
 verify_protected_storage_fixtures "$STORAGE_FIXTURE_ROOT"
@@ -2593,16 +2708,12 @@ run_native_failure_continuation_case() {
 	local promotion_failure_log="$promotion_failure_home.log"
 	local promotion_failure_status=0
 	mkdir -p "$case_home"
-	if env HOME="$case_home" TMPDIR="$TEST_TMP_BASE" \
-		TDESKTOP_MAC_PROFILE_TEST_HOME="$case_home" \
-		TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST=1 \
-		TDESKTOP_AUTH_LIFECYCLE_REGRESSION=1 \
-		TDESKTOP_AUTH_LIFECYCLE_REGRESSION_FAIL_CASE=username-input,teagram-icon-persistence,legacy-cleanup-symlink,cache-callback-timeout,cache-concurrent-deletion,stock-incoming-call-answer,pinned-incoming-call-answer,settings-search,folder-crud,admin-session-identities \
-		"$APP" -noupdate -debug >"$case_log" 2>&1; then
-		exit_status=0
-	else
-		exit_status=$?
+	if ! run_lifecycle_app_with_runner_activation \
+		"$case_home" "$case_log" \
+		username-input,teagram-icon-persistence,legacy-cleanup-symlink,cache-callback-timeout,cache-concurrent-deletion,stock-incoming-call-answer,pinned-incoming-call-answer,settings-search,folder-crud,admin-session-identities; then
+		return 1
 	fi
+	exit_status="$RUNNER_ACTIVATED_APP_EXIT_STATUS"
 	if (( exit_status == 0 )); then
 		cat "$case_log" >&2
 		echo "native lifecycle failure injection unexpectedly passed." >&2
@@ -2730,16 +2841,12 @@ END { exit step != 45 }
 	printf 'native_lifecycle_failure_continuation=PASS tested_revision=%s exit_status=%d failed_cases=username-input,teagram-icon-persistence,legacy-cleanup-symlink,cache-callback-timeout,cache-concurrent-deletion,stock-incoming-call-answer,pinned-incoming-call-answer,settings-search,folder-crud,admin-session-identities later_cases=translation-controls,manage-controls,authenticated-cache-file-symlinks,failed-init-cache-access,failed-init-media-cache-access,cold-post-open-cache,cold-post-open-media-cache,cache-access-no-walk,media-cache-access-no-walk,logout-before-cache-initialization,logout-before-media-cache-initialization,independent-creator-checks,admin-session-identities-skips,chat-migration-pass,post-close-window-lifecycle\n' \
 		"$TESTED_REVISION" "$exit_status"
 	mkdir -p "$fixture_failure_home"
-	if env HOME="$fixture_failure_home" TMPDIR="$TEST_TMP_BASE" \
-		TDESKTOP_MAC_PROFILE_TEST_HOME="$fixture_failure_home" \
-		TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST=1 \
-		TDESKTOP_AUTH_LIFECYCLE_REGRESSION=1 \
-		TDESKTOP_AUTH_LIFECYCLE_REGRESSION_FAIL_CASE=admin-session-identities,pinned-migration-fixture \
-		"$APP" -noupdate -debug >"$fixture_failure_log" 2>&1; then
-		fixture_failure_status=0
-	else
-		fixture_failure_status=$?
+	if ! run_lifecycle_app_with_runner_activation \
+		"$fixture_failure_home" "$fixture_failure_log" \
+		admin-session-identities,pinned-migration-fixture; then
+		return 1
 	fi
+	fixture_failure_status="$RUNNER_ACTIVATED_APP_EXIT_STATUS"
 	if (( fixture_failure_status == 0 )); then
 		cat "$fixture_failure_log" >&2
 		echo "combined identity and migration fixture failures unexpectedly passed." >&2
@@ -2768,16 +2875,12 @@ END { exit step != 45 }
 	fi
 	printf 'native_lifecycle_dependency_reporting=PASS combined_failures=admin-session-identities,pinned-migration-fixture stock_creator=PASS admin_cases=SKIP chat_migration=SKIP:dependency-pinned-migration-fixture\n'
 	mkdir -p "$promotion_failure_home"
-	if env HOME="$promotion_failure_home" TMPDIR="$TEST_TMP_BASE" \
-		TDESKTOP_MAC_PROFILE_TEST_HOME="$promotion_failure_home" \
-		TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST=1 \
-		TDESKTOP_AUTH_LIFECYCLE_REGRESSION=1 \
-		TDESKTOP_AUTH_LIFECYCLE_REGRESSION_FAIL_CASE=stock-live-admin-promotion,custom-live-admin-promotion \
-		"$APP" -noupdate -debug >"$promotion_failure_log" 2>&1; then
-		promotion_failure_status=0
-	else
-		promotion_failure_status=$?
+	if ! run_lifecycle_app_with_runner_activation \
+		"$promotion_failure_home" "$promotion_failure_log" \
+		stock-live-admin-promotion,custom-live-admin-promotion; then
+		return 1
 	fi
+	promotion_failure_status="$RUNNER_ACTIVATED_APP_EXIT_STATUS"
 	if (( promotion_failure_status == 0 )); then
 		cat "$promotion_failure_log" >&2
 		echo "live-admin promotion failure injection unexpectedly passed." >&2

@@ -6,6 +6,7 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "tests/account_lifecycle_regression.h"
+#include "tests/data_update_routing_test_helpers.h"
 
 #include "api/api_compose_with_ai.h"
 #include "api/api_chat_filters.h"
@@ -53,6 +54,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_ai_compose_tones.h"
 #include "data/data_channel.h"
 #include "data/data_chat.h"
+#include "data/data_changes.h"
 #include "data/data_cloud_themes.h"
 #include "data/data_download_manager.h"
 #include "data/data_document.h"
@@ -148,6 +150,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "storage/storage_account.h"
 #include "storage/storage_domain.h"
 #include "storage/storage_encryption.h"
+#include "storage/storage_shared_media.h"
 #include "storage/streamed_file_downloader.h"
 #include "styles/style_chat_helpers.h"
 #include "test/test_widgets.h"
@@ -1000,6 +1003,8 @@ WaitForMainQueueBarrierForRegressionTest(int timeoutMilliseconds,
 #endif
 
 namespace {
+
+[[nodiscard]] bool WaitForRunnerExternalActivationForRegression();
 
 const char kRegressionServerKey[] = R"(-----BEGIN RSA PUBLIC KEY-----
 MIIBCgKCAQEA6LszBcC1LGzyr992NzE0ieY+BSaOW622Aa9Bd4ZHLl+TuFQ4lo4g
@@ -5125,20 +5130,82 @@ void LogWindowActivationForRegression(Core::Application &app,
 
 enum class WindowActivationForRegressionResult {
 	Activated,
-	AppInactive,
 	Failed,
 };
+
+struct WindowActivationEvidenceForRegression final {
+	bool applicationActive = false;
+	bool activeWindow = false;
+	bool activePrimaryWindow = false;
+	bool widgetActive = false;
+	bool visible = false;
+	bool minimized = false;
+	bool qtFocusWindow = false;
+	bool appKitKeyWindow = false;
+};
+
+[[nodiscard]] bool WindowActivationEvidenceMatchesForRegression(
+	const WindowActivationEvidenceForRegression &evidence,
+	bool requirePrimary) {
+	return evidence.applicationActive && evidence.activeWindow
+		   && (!requirePrimary || evidence.activePrimaryWindow)
+		   && evidence.widgetActive && evidence.visible && !evidence.minimized
+		   && evidence.qtFocusWindow && evidence.appKitKeyWindow;
+}
+
+[[nodiscard]] bool WindowActivationFocusLossRegressionPasses() {
+	auto evidence = WindowActivationEvidenceForRegression{
+		.applicationActive = true,
+		.activeWindow = true,
+		.activePrimaryWindow = true,
+		.widgetActive = true,
+		.visible = true,
+		.minimized = false,
+		.qtFocusWindow = true,
+		.appKitKeyWindow = true,
+	};
+	const auto controllerPointersStay
+		= evidence.activeWindow && evidence.activePrimaryWindow;
+	const auto initiallyActive
+		= WindowActivationEvidenceMatchesForRegression(evidence, true);
+	evidence.qtFocusWindow = false;
+	const auto qtFocusLossDetected
+		= controllerPointersStay
+		  && !WindowActivationEvidenceMatchesForRegression(evidence, true);
+	evidence.qtFocusWindow = true;
+	evidence.appKitKeyWindow = false;
+	const auto appKitFocusLossDetected
+		= controllerPointersStay
+		  && !WindowActivationEvidenceMatchesForRegression(evidence, true);
+	return initiallyActive && qtFocusLossDetected && appKitFocusLossDetected;
+}
 
 [[nodiscard]] bool
 IsWindowActiveForRegression(Core::Application &app,
 							not_null<Window::Controller *> window,
 							bool requirePrimary = false) {
 	const auto widget = window->widget();
-	return Platform::IsApplicationActiveForRegression()
-		   && widget->isActiveWindow() && widget->isVisible()
-		   && !(widget->windowState() & Qt::WindowMinimized)
-		   && (app.activeWindow() == window.get())
-		   && (!requirePrimary || (app.activePrimaryWindow() == window.get()));
+	const auto nativeHandle = widget->windowHandle();
+	return WindowActivationEvidenceMatchesForRegression(
+		{
+			.applicationActive = Platform::IsApplicationActiveForRegression(),
+			.activeWindow = (app.activeWindow() == window.get()),
+			.activePrimaryWindow = (app.activePrimaryWindow() == window.get()),
+			.widgetActive = widget->isActiveWindow(),
+			.visible = widget->isVisible(),
+			.minimized
+			= static_cast<bool>(widget->windowState() & Qt::WindowMinimized),
+			.qtFocusWindow
+			= nativeHandle && (QGuiApplication::focusWindow() == nativeHandle),
+			.appKitKeyWindow = Platform::IsWindowKeyForRegression(widget),
+		},
+		requirePrimary);
+}
+
+void RequestWindowActivationForRegression(
+	not_null<Window::Controller *> window) {
+	window->activate();
+	Platform::ActivateThisProcess(window->widget());
 }
 
 [[nodiscard]] WindowActivationForRegressionResult
@@ -5148,33 +5215,52 @@ ActivateWindowForRegression(Core::Application &app,
 	const auto isActive = [&] {
 		return IsWindowActiveForRegression(app, window, requirePrimary);
 	};
+	const auto activate = [&] { RequestWindowActivationForRegression(window); };
 	auto retry = QTimer();
 	retry.setInterval(100);
 	QObject::connect(&retry, &QTimer::timeout, &retry, [&] {
 		if (!isActive()) {
-			window->activate();
+			activate();
 		}
 	});
 	retry.start();
-	window->activate();
+	activate();
 	const auto timeoutMs
 		= Platform::IsApplicationActiveForRegression() ? 5000 : 500;
 	const auto activated = WaitForRegressionCondition(isActive, timeoutMs);
 	retry.stop();
 	if (!activated) {
 		LogWindowActivationForRegression(app, window);
-		if (!Platform::IsApplicationActiveForRegression()) {
+		if (!window->widget()->isVisible()
+			|| !window->widget()->windowHandle()) {
 			std::fprintf(
 				stderr,
-				"Settings deep link activation unavailable: "
+				"Window activation failed: target window is not visible "
+				"or has no native handle.\n");
+			return WindowActivationForRegressionResult::Failed;
+		}
+		const auto applicationActive
+			= Platform::IsApplicationActiveForRegression();
+		if (!applicationActive) {
+			std::fprintf(
+				stderr,
+				"Window activation failed: "
 				"AppKit app remained inactive during focus verification. "
+				"Qt and AppKit focus checks could not "
+				"run. "
 				"Waited %d ms.\n",
 				timeoutMs);
-			return WindowActivationForRegressionResult::AppInactive;
+			return WindowActivationForRegressionResult::Failed;
 		}
+		std::fprintf(
+			stderr,
+			"Window activation failed: the app remained active, but Qt "
+			"target-active and AppKit target-is-key checks remained false "
+			"after %d ms.\n",
+			timeoutMs);
+		return WindowActivationForRegressionResult::Failed;
 	}
-	return activated ? WindowActivationForRegressionResult::Activated
-					 : WindowActivationForRegressionResult::Failed;
+	return WindowActivationForRegressionResult::Activated;
 }
 
 [[nodiscard]] bool
@@ -5275,6 +5361,12 @@ template <typename Condition>
 	not_null<Window::SessionController *> stockController,
 	not_null<Window::SessionController *> pinnedController,
 	not_null<Window::SessionController *> blockedController) {
+	if (!WindowActivationFocusLossRegressionPasses()) {
+		std::fprintf(stderr,
+					 "Settings deep link regression failed: focus loss with "
+					 "unchanged active-window pointers was not detected.\n");
+		return false;
+	}
 	const auto routes = std::vector<QString>{
 		u"tg://settings/premium"_q,
 		u"tg://settings/PREMIUM"_q,
@@ -5451,8 +5543,7 @@ template <typename Condition>
 	const auto dispatchRefused = [&](const QString &url,
 									 not_null<Window::SessionController *>
 										 target,
-									 Window::Controller *activeBefore,
-									 bool focusCheckAvailable) {
+									 Window::Controller *activeBefore) {
 		const auto stockToastBefore
 			= stockController
 				  ->featureUnavailableOnServerToastCallsForRegressionTest();
@@ -5483,8 +5574,7 @@ template <typename Condition>
 			  && !stockController->isLayerShown()
 			  && !pinnedController->isLayerShown()
 			  && !blockedController->isLayerShown();
-		const auto activeWindowUnchanged
-			= !focusCheckAvailable || (app.activeWindow() == activeBefore);
+		const auto activeWindowUnchanged = (app.activeWindow() == activeBefore);
 		const auto refused = handled && targetToastOnly && noPaidUiOpen
 							 && activeWindowUnchanged;
 		if (!refused) {
@@ -5501,22 +5591,23 @@ template <typename Condition>
 	};
 	const auto dispatchMatrix
 		= [&](not_null<Window::SessionController *> target,
-			  Window::Controller *activeBefore, bool focusCheckAvailable) {
+			  Window::Controller *activeBefore) {
 			  for (const auto &url : routes) {
-				  if (!dispatchRefused(url, target, activeBefore,
-									   focusCheckAvailable)) {
+				  if (!dispatchRefused(url, target, activeBefore)) {
 					  return false;
 				  }
 			  }
 			  for (const auto &url : storyRoutes) {
-				  if (!dispatchRefused(url, target, activeBefore,
-									   focusCheckAvailable)) {
+				  if (!dispatchRefused(url, target, activeBefore)) {
 					  return false;
 				  }
 			  }
 			  return true;
 		  };
 	const auto activateSettingsWindow = [&](Window::Controller *window) {
+		if (!WaitForRunnerExternalActivationForRegression()) {
+			return WindowActivationForRegressionResult::Failed;
+		}
 		Platform::ActivateThisProcess(window->widget());
 		return ActivateWindowForRegression(app, window);
 	};
@@ -5626,8 +5717,7 @@ template <typename Condition>
 										  target,
 									  not_null<HistoryWidget *> historyWidget,
 									  const ClickHandlerContext &messageContext,
-									  Window::Controller *activeBefore,
-									  bool focusCheckAvailable) {
+									  Window::Controller *activeBefore) {
 		const auto before = std::array{
 			stockController
 				->featureUnavailableOnServerToastCallsForRegressionTest(),
@@ -5693,8 +5783,7 @@ template <typename Condition>
 										   && unchanged(blockedController);
 		const auto noPaidUiOpen = sameMessageView && !target->isLayerShown()
 								  && otherWindowsUnchanged;
-		const auto activeWindowUnchanged
-			= !focusCheckAvailable || (app.activeWindow() == activeBefore);
+		const auto activeWindowUnchanged = (app.activeWindow() == activeBefore);
 		const auto refused
 			= dispatched && toastOnly && noPaidUiOpen && activeWindowUnchanged;
 		if (!refused) {
@@ -5722,14 +5811,8 @@ template <typename Condition>
 			"activate before the custom-session matrix.\n");
 		return false;
 	}
-	const auto stockFocusCheckAvailable
-		= (stockWindowActivation
-		   == WindowActivationForRegressionResult::Activated);
-	const auto activeBeforeCustomMatrix = stockFocusCheckAvailable
-											  ? &stockController->window()
-											  : app.activeWindow();
-	if (!dispatchMatrix(pinnedController, activeBeforeCustomMatrix,
-						stockFocusCheckAvailable)) {
+	const auto activeBeforeCustomMatrix = &stockController->window();
+	if (!dispatchMatrix(pinnedController, activeBeforeCustomMatrix)) {
 		return false;
 	}
 	const auto pinnedWindowActivation
@@ -5745,14 +5828,8 @@ template <typename Condition>
 			"activate before its URL matrix.\n");
 		return false;
 	}
-	const auto pinnedFocusCheckAvailable
-		= (pinnedWindowActivation
-		   == WindowActivationForRegressionResult::Activated);
-	const auto activeBeforePinnedMatrix = pinnedFocusCheckAvailable
-											  ? &pinnedController->window()
-											  : app.activeWindow();
-	if (!dispatchMatrix(pinnedController, activeBeforePinnedMatrix,
-						pinnedFocusCheckAvailable)) {
+	const auto activeBeforePinnedMatrix = &pinnedController->window();
+	if (!dispatchMatrix(pinnedController, activeBeforePinnedMatrix)) {
 		return false;
 	}
 	const auto messageRoutes = std::vector<QString>{
@@ -5783,14 +5860,8 @@ template <typename Condition>
 			"activate before the blocked-session matrix.\n");
 		return false;
 	}
-	const auto blockedMatrixFocusCheckAvailable
-		= (stockBeforeBlockedActivation
-		   == WindowActivationForRegressionResult::Activated);
-	const auto activeBeforeBlockedMatrix = blockedMatrixFocusCheckAvailable
-											   ? &stockController->window()
-											   : app.activeWindow();
-	if (!dispatchMatrix(blockedController, activeBeforeBlockedMatrix,
-						blockedMatrixFocusCheckAvailable)) {
+	const auto activeBeforeBlockedMatrix = &stockController->window();
+	if (!dispatchMatrix(blockedController, activeBeforeBlockedMatrix)) {
 		return false;
 	}
 
@@ -5807,9 +5878,6 @@ template <typename Condition>
 			"activate before the unsupported-route checks.\n");
 		return false;
 	}
-	const auto ordinaryFocusCheckAvailable
-		= (pinnedBeforeUnsupportedActivation
-		   == WindowActivationForRegressionResult::Activated);
 	{
 		const auto pinnedWindow = pinnedController->widget();
 		const auto blockedWindow = blockedController->widget();
@@ -5851,9 +5919,7 @@ template <typename Condition>
 					   && (pinnedController
 							   ->featureUnavailableOnServerToastCallsForRegressionTest()
 						   == ordinaryToastBefore)
-					   && (!ordinaryFocusCheckAvailable
-						   || (app.activeWindow()
-							   == &pinnedController->window()));
+					   && (app.activeWindow() == &pinnedController->window());
 			});
 		const auto ordinarySectionShown
 			= pinnedController->content()->isMainSectionShown();
@@ -5864,30 +5930,22 @@ template <typename Condition>
 			   == ordinaryToastBefore);
 		const auto ordinaryWindowActive
 			= (app.activeWindow() == &pinnedController->window());
-		const auto ordinaryFocusBehaviorMatches
-			= !ordinaryFocusCheckAvailable || ordinaryWindowActive;
 		if (!ordinarySettingsStateRestored || !ordinarySectionShown
 			|| !ordinaryLayerHidden || !ordinaryToastUnchanged
-			|| !ordinaryFocusBehaviorMatches) {
+			|| !ordinaryWindowActive) {
 			LogWindowActivationForRegression(app, &pinnedController->window());
 			std::fprintf(
 				stderr,
 				"Settings deep link ordinary Settings counts: section=%d "
 				"layer-hidden=%d toast-unchanged=%d active-window=%d "
-				"focus-check=%d expected-section-layer-toast-focus=1/1/1/1.\n",
+				"expected-section-layer-toast-focus=1/1/1/1.\n",
 				ordinarySectionShown, ordinaryLayerHidden,
-				ordinaryToastUnchanged, ordinaryWindowActive,
-				ordinaryFocusCheckAvailable);
+				ordinaryToastUnchanged, ordinaryWindowActive);
 			std::fprintf(
 				stderr,
 				"Settings deep link regression failed: ordinary Settings link "
 				"lost its section or focus behavior.\n");
 			return false;
-		}
-		if (!ordinaryFocusCheckAvailable) {
-			std::fprintf(stderr,
-						 "Settings deep link native focus assertion skipped: "
-						 "AppKit app is inactive.\n");
 		}
 		pinnedController->clearSectionStack(Window::SectionShow(
 			anim::type::instant, anim::activation::background));
@@ -6043,23 +6101,24 @@ template <typename Condition>
 		}
 	}
 
+	if (!WaitForRunnerExternalActivationForRegression()) {
+		std::fprintf(
+			stderr, "Settings deep link regression failed: "
+					"runner activation failed before missing-target checks.\n");
+		return false;
+	}
 	const auto stockWindowActivated
 		= ActivateWindowForRegression(app, &stockController->window(), true);
-	const auto stockFocusRestoreCheckAvailable
-		= (stockWindowActivated
-		   == WindowActivationForRegressionResult::Activated);
 	const auto activeWindowRestored
 		= (app.activeWindow() == &stockController->window());
 	const auto activePrimaryWindowRestored
 		= (app.activePrimaryWindow() == &stockController->window());
-	if (activationFailed(stockWindowActivated)
-		|| (stockFocusRestoreCheckAvailable
-			&& (!activeWindowRestored || !activePrimaryWindowRestored))) {
+	if (activationFailed(stockWindowActivated) || !activeWindowRestored
+		|| !activePrimaryWindowRestored) {
 		std::fprintf(stderr,
 					 "Settings deep link activation counts: active-window=%d "
-					 "active-primary-window=%d focus-check=%d expected=1/1.\n",
-					 activeWindowRestored, activePrimaryWindowRestored,
-					 stockFocusRestoreCheckAvailable);
+					 "active-primary-window=%d expected=1/1.\n",
+					 activeWindowRestored, activePrimaryWindowRestored);
 		std::fprintf(
 			stderr,
 			"Settings deep link regression failed: stock window did not "
@@ -6071,50 +6130,47 @@ template <typename Condition>
 	const auto missingTargetContext
 		= QVariant::fromValue(ClickHandlerContext{});
 	for (const auto &url : routes) {
-		auto focusCheckAvailable = stockFocusRestoreCheckAvailable;
-		if (focusCheckAvailable) {
-			const auto activation = ActivateWindowForRegression(
-				app, &stockController->window(), true);
-			if (activationFailed(activation)) {
-				std::fprintf(stderr, "Settings deep link regression failed: "
-									 "stock window activation failed before "
-									 "missing-target check.\n");
-				return false;
-			}
-			focusCheckAvailable
-				= (activation
-				   == WindowActivationForRegressionResult::Activated);
+		if (!WaitForRunnerExternalActivationForRegression()) {
+			std::fprintf(
+				stderr,
+				"Settings deep link regression failed: "
+				"runner activation failed before missing-target check.\n");
+			return false;
 		}
-		if (focusCheckAvailable) {
-			auto stableSince = QElapsedTimer();
-			auto lastActivation = QElapsedTimer();
-			const auto stable = WaitForRegressionCondition(
-				[&] {
-					if ((app.activeWindow() != &stockController->window())
-						|| (app.activePrimaryWindow()
-							!= &stockController->window())) {
-						stableSince.invalidate();
-						if (!lastActivation.isValid()
-							|| (lastActivation.elapsed() >= 100)) {
-							stockController->window().activate();
-							lastActivation.start();
-						}
-						return false;
+		const auto activation = ActivateWindowForRegression(
+			app, &stockController->window(), true);
+		if (activationFailed(activation)) {
+			std::fprintf(stderr,
+						 "Settings deep link regression failed: stock window "
+						 "activation failed before missing-target check.\n");
+			return false;
+		}
+		auto stableSince = QElapsedTimer();
+		auto lastActivation = QElapsedTimer();
+		const auto stable = WaitForRegressionCondition(
+			[&] {
+				if (!IsWindowActiveForRegression(
+						app, &stockController->window(), true)) {
+					stableSince.invalidate();
+					if (!lastActivation.isValid()
+						|| (lastActivation.elapsed() >= 100)) {
+						RequestWindowActivationForRegression(
+							&stockController->window());
+						lastActivation.start();
 					}
-					if (!stableSince.isValid()) {
-						stableSince.start();
-					}
-					return stableSince.elapsed() >= 100;
-				},
-				1500);
-			if (!stable && !Platform::IsApplicationActiveForRegression()) {
-				focusCheckAvailable = false;
-			} else if (!stable) {
-				std::fprintf(stderr,
-							 "Settings deep link regression failed: "
-							 "stock window activation did not settle.\n");
-				return false;
-			}
+					return false;
+				}
+				if (!stableSince.isValid()) {
+					stableSince.start();
+				}
+				return stableSince.elapsed() >= 100;
+			},
+			1500);
+		if (!stable) {
+			LogWindowActivationForRegression(app, &stockController->window());
+			std::fprintf(stderr, "Settings deep link regression failed: "
+								 "stock window activation did not settle.\n");
+			return false;
 		}
 		const auto stockToastBeforeMissingController
 			= stockController
@@ -6147,8 +6203,7 @@ template <typename Condition>
 		const auto pinnedLayerShown = pinnedController->isLayerShown();
 		const auto blockedLayerShown = blockedController->isLayerShown();
 		const auto activeWindowChanged
-			= focusCheckAvailable
-			  && (app.activeWindow() != activeBeforeMissingController);
+			= (app.activeWindow() != activeBeforeMissingController);
 		const auto unchanged = handled
 							   && (stockToastAfterMissingController
 								   == stockToastBeforeMissingController)
@@ -6167,7 +6222,7 @@ template <typename Condition>
 				"Settings deep link regression failed: missing target was "
 				"not a no-op for route=%s handled=%d "
 				"toast-delta=%d/%d/%d main-section=%d/%d/%d "
-				"layer=%d/%d/%d active-window-changed=%d focus-check=%d "
+				"layer=%d/%d/%d active-window-changed=%d "
 				"restored-blocked=%d.\n",
 				url.toUtf8().constData(), handled,
 				stockToastAfterMissingController
@@ -6178,7 +6233,7 @@ template <typename Condition>
 					- blockedToastBeforeMissingController,
 				stockMainSectionShown, pinnedMainSectionShown,
 				blockedMainSectionShown, stockLayerShown, pinnedLayerShown,
-				blockedLayerShown, activeWindowChanged, focusCheckAvailable,
+				blockedLayerShown, activeWindowChanged,
 				restoredBlockedWithoutPin);
 			return false;
 		}
@@ -6434,7 +6489,7 @@ template <typename Condition>
 		return false;
 	}
 	const auto stockBeforeMessageMatrix
-		= ActivateWindowForRegression(app, &stockController->window());
+		= activateSettingsWindow(&stockController->window());
 	if (activationFailed(stockBeforeMessageMatrix)) {
 		std::fprintf(
 			stderr,
@@ -6442,20 +6497,16 @@ template <typename Condition>
 			"activate before the custom message-link matrix.\n");
 		return false;
 	}
-	const auto stockMessageFocusCheckAvailable
-		= (stockBeforeMessageMatrix
-		   == WindowActivationForRegressionResult::Activated);
 	for (const auto &url : messageRoutes) {
 		if (!clickMessageLink(
 				url, pinnedController,
 				not_null<HistoryWidget *>(pinnedMessageState->first),
-				pinnedMessageState->second, &stockController->window(),
-				stockMessageFocusCheckAvailable)) {
+				pinnedMessageState->second, &stockController->window())) {
 			return false;
 		}
 	}
 	const auto pinnedBeforeMessageMatrix
-		= ActivateWindowForRegression(app, &pinnedController->window());
+		= activateSettingsWindow(&pinnedController->window());
 	if (activationFailed(pinnedBeforeMessageMatrix)) {
 		std::fprintf(
 			stderr,
@@ -6463,15 +6514,11 @@ template <typename Condition>
 			"activate before its message-link matrix.\n");
 		return false;
 	}
-	const auto pinnedMessageFocusCheckAvailable
-		= (pinnedBeforeMessageMatrix
-		   == WindowActivationForRegressionResult::Activated);
 	for (const auto &url : messageRoutes) {
 		if (!clickMessageLink(
 				url, pinnedController,
 				not_null<HistoryWidget *>(pinnedMessageState->first),
-				pinnedMessageState->second, &pinnedController->window(),
-				pinnedMessageFocusCheckAvailable)) {
+				pinnedMessageState->second, &pinnedController->window())) {
 			return false;
 		}
 	}
@@ -6498,9 +6545,6 @@ template <typename Condition>
 							 url.toUtf8().constData());
 				return false;
 			}
-			const auto stockFocusCheckAvailable
-				= (stockBeforeMessageRoute
-				   == WindowActivationForRegressionResult::Activated);
 			stockMessageState = prepareMessageLinkContext(stockController);
 			if (!stockMessageState
 				|| stockMessageState->second.sessionWindow.get()
@@ -6599,8 +6643,7 @@ template <typename Condition>
 				  && !blockedController->content()->isMainSectionShown()
 				  && !blockedController->isLayerShown();
 			const auto stockWindowActive
-				= !stockFocusCheckAvailable
-				  || (app.activeWindow() == &stockController->window());
+				= (app.activeWindow() == &stockController->window());
 			if (!routeStateMatched || !toastUnchanged || !otherWindowsUnchanged
 				|| !stockWindowActive) {
 				const auto infoCounts
@@ -8858,22 +8901,17 @@ bool RegressionBoxCloseEventTrace::eventFilter(QObject *watched,
 	}
 	const auto stockWindowActivationResult
 		= ActivateWindowForRegression(app, &stockController->window(), true);
-	const auto stockWindowFocusCheckAvailable
-		= (stockWindowActivationResult
-		   == WindowActivationForRegressionResult::Activated);
 	const auto activeWindowRestored
 		= app.activeWindow() == &stockController->window();
 	const auto activePrimaryWindowRestored
 		= app.activePrimaryWindow() == &stockController->window();
 	if (stockWindowActivationResult
 			== WindowActivationForRegressionResult::Failed
-		|| (stockWindowFocusCheckAvailable
-			&& (!activeWindowRestored || !activePrimaryWindowRestored))) {
+		|| !activeWindowRestored || !activePrimaryWindowRestored) {
 		std::fprintf(stderr,
 					 "Settings deep link activation counts: active-window=%d "
-					 "active-primary-window=%d focus-check=%d expected=1/1.\n",
-					 activeWindowRestored, activePrimaryWindowRestored,
-					 stockWindowFocusCheckAvailable);
+					 "active-primary-window=%d expected=1/1.\n",
+					 activeWindowRestored, activePrimaryWindowRestored);
 		std::fprintf(
 			stderr,
 			"Settings deep link regression failed: stock window activation "
@@ -10294,6 +10332,65 @@ AddTranslationRegressionMessage(not_null<Main::Session *> session,
 			[&] { return stockHistory->translatedTo() == originalTranslation; },
 			1000);
 		if (!toggled || !restored) {
+			return false;
+		}
+	}
+	{
+		const auto plainHistory
+			= stockSession.data().history(stockSession.user());
+		if (!plainHistory) {
+			return false;
+		}
+		const auto previousStockTo = stockHistory->translatedTo();
+		const auto previousStockOffer = stockHistory->translateOfferedFrom();
+		const auto previousPlainTo = plainHistory->translatedTo();
+		const auto previousPlainOffer = plainHistory->translateOfferedFrom();
+		const auto restoreHistoryTranslation = gsl::finally([&] {
+			stockHistory->translateTo(previousStockTo);
+			stockHistory->translateOfferFrom(previousStockOffer);
+			plainHistory->translateTo(previousPlainTo);
+			plainHistory->translateOfferFrom(previousPlainOffer);
+		});
+		stockHistory->translateOfferFrom(offered);
+		stockHistory->translateTo(target);
+		plainHistory->translateOfferFrom(LanguageId());
+		plainHistory->translateTo(LanguageId());
+		HistoryView::TranslateBar switchingBar(stockController->widget().get(),
+											   stockController, stockHistory);
+		switchingBar.finishAnimating();
+		if (!switchingBar.shouldBeShownForRegressionTest()) {
+			return false;
+		}
+		switchingBar.setOverridenToForRegressionTest(offered);
+		switchingBar.hide();
+		const auto translateCallsBeforePlain
+			= switchingBar.translateToCallsForRegressionTest();
+		switchingBar.setHistory(plainHistory);
+		switchingBar.finishAnimating();
+		const auto plainHistoryBoundAndHidden
+			= (switchingBar.historyForRegressionTest() == plainHistory)
+			  && !switchingBar.shouldBeShownForRegressionTest()
+			  && (switchingBar.height() == 0)
+			  && (switchingBar.overridenToForRegressionTest()
+				  == plainHistory->translatedTo())
+			  && (switchingBar.translateToCallsForRegressionTest()
+				  == translateCallsBeforePlain);
+		switchingBar.setHistory(stockHistory);
+		switchingBar.finishAnimating();
+		const auto translatedHistoryRestored
+			= (switchingBar.historyForRegressionTest() == stockHistory)
+			  && switchingBar.shouldBeShownForRegressionTest()
+			  && (switchingBar.overridenToForRegressionTest()
+				  == stockHistory->translatedTo());
+		if (!plainHistoryBoundAndHidden || !translatedHistoryRestored) {
+			std::fprintf(
+				stderr,
+				"Translation controls regression failed: reused bar did not "
+				"rebind to a plain history and restore the translated phrase. "
+				"plain=%d translated=%d calls=%d/%d.\n",
+				plainHistoryBoundAndHidden, translatedHistoryRestored,
+				switchingBar.translateToCallsForRegressionTest(),
+				translateCallsBeforePlain);
 			return false;
 		}
 	}
@@ -11771,9 +11868,47 @@ constexpr auto kMaxChatSwitchNanoseconds = qint64(50'000'000);
 constexpr auto kStartupHeartbeatGapThresholdNanoseconds = qint64(100'000'000);
 constexpr auto kMaxStartupHeartbeatThreadWorkNanoseconds = qint64(100'000'000);
 constexpr auto kMaxStartupHeartbeatProcessWorkNanoseconds = qint64(100'000'000);
+constexpr auto kMaxStartupWatchdogPingSilenceMilliseconds = qint64(100);
+constexpr auto kMaxStartupWatchdogAcknowledgementJitterNanoseconds
+	= qint64(10'000'000);
 constexpr auto kMaxSchedulerProofOtherThreadWorkNanoseconds
 	= qint64(20'000'000);
-constexpr auto kMaxStartupWatchdogPingSilenceMilliseconds = qint64(100);
+
+[[nodiscard]] bool HasRecentStartupWatchdogAcknowledgement(
+	const std::vector<Core::UiStallWatchdog::PingAcknowledgementEvidence>
+		&acknowledgements,
+	qint64 nowNanoseconds) {
+	return std::any_of(
+		begin(acknowledgements), end(acknowledgements),
+		[=](const auto &acknowledgement) {
+			return (acknowledgement.acknowledgedAtNanoseconds > 0)
+				   && (acknowledgement.acknowledgedAtNanoseconds
+					   <= nowNanoseconds)
+				   && (nowNanoseconds
+						   - acknowledgement.acknowledgedAtNanoseconds
+					   <= kMaxStartupWatchdogPingSilenceMilliseconds
+							  * 1'000'000)
+				   && (acknowledgement.responseNanoseconds >= 0)
+				   && (acknowledgement.responseNanoseconds
+					   <= kMaxStartupWatchdogPingSilenceMilliseconds
+							  * 1'000'000);
+		});
+}
+
+struct CacheHistoryWorkBudgets final {
+	qint64 chatSwitchNanoseconds = kMaxChatSwitchNanoseconds;
+	qint64 startupNanoseconds = 0;
+};
+
+[[nodiscard]] CacheHistoryWorkBudgets
+CacheHistoryWorkBudgetsForRegression(std::size_t index, bool startupWork) {
+	return {
+		.chatSwitchNanoseconds = kMaxChatSwitchNanoseconds,
+		.startupNanoseconds = startupWork && (index > 0)
+								  ? kMaxStartupHeartbeatThreadWorkNanoseconds
+								  : 0,
+	};
+}
 
 [[nodiscard]] std::vector<qint64>
 SchedulerSampleOffsetsForDuration(qint64 durationNanoseconds) {
@@ -11797,6 +11932,7 @@ struct MainThreadWorkInterval final {
 	qint64 processWorkNanoseconds = -1;
 	QString label;
 	qint64 startedAtSteadyNanoseconds = -1;
+	qint64 mainThreadCpuStartNanoseconds = -1;
 	qint64 mainThreadCpuEndNanoseconds = -1;
 };
 
@@ -11864,6 +12000,89 @@ FindMatchingMainThreadWorkEvidence(
 		return std::nullopt;
 	}
 	return result;
+}
+
+[[nodiscard]] bool
+IsMacOSDisplayLockStall(const Core::UiStallWatchdog::StallEvidence &evidence) {
+	return evidence.stack.contains(
+			   u"QReadWriteLockPrivate::recursiveLockForRead"_q)
+		   && evidence.stack.contains(u"QCocoaWindow::deliverUpdateRequest"_q);
+}
+
+[[nodiscard]] bool MacOSPingAcknowledgementEvidenceFinalizedForInterval(
+	const MainThreadWorkInterval &interval,
+	const std::vector<Core::UiStallWatchdog::PingAcknowledgementEvidence>
+		&acknowledgements) {
+	if ((interval.startedAtSteadyNanoseconds <= 0)
+		|| (interval.durationNanoseconds < 0)
+		|| (interval.durationNanoseconds
+			> std::numeric_limits<qint64>::max()
+				  - interval.startedAtSteadyNanoseconds)) {
+		return false;
+	}
+	const auto endNanoseconds
+		= interval.startedAtSteadyNanoseconds + interval.durationNanoseconds;
+	const Core::UiStallWatchdog::PingAcknowledgementEvidence
+		*latestAcknowledgement = nullptr;
+	for (const auto &acknowledgement : acknowledgements) {
+		const auto postedAtNanoseconds
+			= acknowledgement.postedAtSteadyNanoseconds;
+		const auto acknowledgedAtNanoseconds
+			= acknowledgement.acknowledgedAtNanoseconds;
+		if ((postedAtNanoseconds <= 0)
+			|| (postedAtNanoseconds > endNanoseconds)) {
+			continue;
+		}
+		if ((acknowledgedAtNanoseconds <= 0)
+			|| (acknowledgedAtNanoseconds < postedAtNanoseconds)) {
+			return false;
+		}
+		if (!latestAcknowledgement
+			|| (postedAtNanoseconds
+				> latestAcknowledgement->postedAtSteadyNanoseconds)
+			|| ((postedAtNanoseconds
+				 == latestAcknowledgement->postedAtSteadyNanoseconds)
+				&& (acknowledgement.sequence
+					> latestAcknowledgement->sequence))) {
+			latestAcknowledgement = &acknowledgement;
+		}
+	}
+	if (!latestAcknowledgement
+		|| !latestAcknowledgement->schedulerTraceComplete) {
+		return false;
+	}
+	const auto latestAcknowledgedAtNanoseconds
+		= latestAcknowledgement->acknowledgedAtNanoseconds;
+	if (latestAcknowledgedAtNanoseconds >= endNanoseconds) {
+		return true;
+	}
+	const auto latestPingIntervalNanoseconds
+		= latestAcknowledgement->pingIntervalNanoseconds;
+	if ((latestPingIntervalNanoseconds > 0)
+		&& (latestAcknowledgedAtNanoseconds
+			<= std::numeric_limits<qint64>::max()
+				   - latestPingIntervalNanoseconds)
+		&& (latestAcknowledgedAtNanoseconds + latestPingIntervalNanoseconds
+			> endNanoseconds)) {
+		return true;
+	}
+	if (latestAcknowledgement->sequence
+		== std::numeric_limits<std::uint64_t>::max()) {
+		return false;
+	}
+	const auto nextSequence = latestAcknowledgement->sequence + 1;
+	return std::any_of(
+		acknowledgements.begin(), acknowledgements.end(),
+		[&](const auto &acknowledgement) {
+			return (acknowledgement.watchdogId
+					== latestAcknowledgement->watchdogId)
+				   && (acknowledgement.sequence == nextSequence)
+				   && (acknowledgement.postedAtSteadyNanoseconds
+					   > endNanoseconds)
+				   && (acknowledgement.acknowledgedAtNanoseconds
+					   >= acknowledgement.postedAtSteadyNanoseconds)
+				   && acknowledgement.schedulerTraceComplete;
+		});
 }
 
 [[nodiscard]] std::optional<std::vector<qint64>>
@@ -11975,6 +12194,7 @@ struct SchedulerTraceWindow final {
 	bool capturePending = false;
 	std::optional<SchedulerBoundarySample> before;
 	std::optional<SchedulerBoundarySample> after;
+	qint64 mainThreadCpuStartNanoseconds = -1;
 	qint64 mainThreadCpuEndNanoseconds = -1;
 };
 
@@ -11997,7 +12217,6 @@ MarkSchedulerTraceCapturePending(SchedulerTraceWindow samples) {
 	}
 	const auto start = interval.startedAtSteadyNanoseconds;
 	const auto windowEnd = start + interval.durationNanoseconds;
-	auto acknowledgementReachedWindowEnd = false;
 	auto capturePending = false;
 	struct TraceSample final {
 		qint64 offset = 0;
@@ -12012,8 +12231,6 @@ MarkSchedulerTraceCapturePending(SchedulerTraceWindow samples) {
 			|| (postedAt > windowEnd)) {
 			continue;
 		}
-		acknowledgementReachedWindowEnd
-			= acknowledgementReachedWindowEnd || (acknowledgedAt >= windowEnd);
 		capturePending
 			= capturePending || !acknowledgement.schedulerTraceComplete;
 		if (acknowledgement.schedulerTrace.isEmpty()
@@ -12053,6 +12270,8 @@ MarkSchedulerTraceCapturePending(SchedulerTraceWindow samples) {
 			  [](const auto &a, const auto &b) { return a.offset < b.offset; });
 	auto result = SchedulerTraceWindow();
 	result.mainThreadCpuEndNanoseconds = interval.mainThreadCpuEndNanoseconds;
+	result.mainThreadCpuStartNanoseconds
+		= interval.mainThreadCpuStartNanoseconds;
 	result.trace.reserve(qsizetype(samples.size()));
 	result.sampleOffsetsNanoseconds.reserve(samples.size());
 	result.sampleMainThreadCpuNanoseconds.reserve(samples.size());
@@ -12062,7 +12281,10 @@ MarkSchedulerTraceCapturePending(SchedulerTraceWindow samples) {
 		result.sampleMainThreadCpuNanoseconds.push_back(
 			sample.mainThreadCpuNanoseconds);
 	}
-	result.capturePending = capturePending || !acknowledgementReachedWindowEnd;
+	result.capturePending
+		= capturePending
+		  || !MacOSPingAcknowledgementEvidenceFinalizedForInterval(
+			  interval, acknowledgements);
 	return result;
 }
 
@@ -12081,6 +12303,8 @@ MarkSchedulerTraceCapturePending(SchedulerTraceWindow samples) {
 	const auto windowEnd = start + interval.durationNanoseconds;
 	auto result = SchedulerTraceWindow();
 	result.mainThreadCpuEndNanoseconds = interval.mainThreadCpuEndNanoseconds;
+	result.mainThreadCpuStartNanoseconds
+		= interval.mainThreadCpuStartNanoseconds;
 	struct TraceSample final {
 		qint64 offset = 0;
 		QChar state;
@@ -12318,56 +12542,152 @@ BuildCorroboratedStartupStalls(
 	return result;
 }
 
+struct WatchdogResponsivenessCoverage final {
+	bool proven = false;
+	qint64 maxAcknowledgementGapNanoseconds = -1;
+	qint64 maxResponseNanoseconds = -1;
+	int acknowledgementCount = 0;
+	std::uint64_t watchdogId = 0;
+};
+
+[[nodiscard]] WatchdogResponsivenessCoverage
+AnalyzeWatchdogResponsivenessCoverage(
+	const MainThreadWorkInterval &interval,
+	const std::vector<Core::UiStallWatchdog::PingAcknowledgementEvidence>
+		&acknowledgements) {
+	if ((interval.startedAtSteadyNanoseconds <= 0)
+		|| (interval.durationNanoseconds <= 0)
+		|| (interval.durationNanoseconds
+			> std::numeric_limits<qint64>::max()
+				  - interval.startedAtSteadyNanoseconds)) {
+		return {};
+	}
+	const auto intervalStart = interval.startedAtSteadyNanoseconds;
+	const auto intervalEnd = intervalStart + interval.durationNanoseconds;
+	auto ordered = std::vector<
+		const Core::UiStallWatchdog::PingAcknowledgementEvidence *>();
+	ordered.reserve(acknowledgements.size());
+	for (const auto &acknowledgement : acknowledgements) {
+		ordered.push_back(&acknowledgement);
+	}
+	std::sort(ordered.begin(), ordered.end(), [](const auto a, const auto b) {
+		return (a->watchdogId == b->watchdogId)
+				   ? (a->sequence < b->sequence)
+				   : (a->watchdogId < b->watchdogId);
+	});
+	const auto maximumSilenceNanoseconds
+		= kMaxStartupWatchdogPingSilenceMilliseconds * 1'000'000;
+	auto best = WatchdogResponsivenessCoverage();
+	const auto consider = [&](const auto &candidate) {
+		if ((candidate.acknowledgementCount > best.acknowledgementCount)
+			|| (candidate.proven && !best.proven)) {
+			best = candidate;
+		}
+	};
+	const auto valid = [&](const auto &acknowledgement) {
+		if ((acknowledgement.watchdogId == 0) || (acknowledgement.sequence == 0)
+			|| (acknowledgement.acknowledgedAtNanoseconds <= 0)
+			|| (acknowledgement.postedAtSteadyNanoseconds <= 0)
+			|| (acknowledgement.acknowledgedAtNanoseconds
+				< acknowledgement.postedAtSteadyNanoseconds)
+			|| (acknowledgement.responseNanoseconds < 0)
+			|| (acknowledgement.pingIntervalNanoseconds <= 0)
+			|| (acknowledgement.pingIntervalNanoseconds
+				> maximumSilenceNanoseconds)) {
+			return false;
+		}
+		const auto maximumResponsivenessGapNanoseconds = std::min(
+			maximumSilenceNanoseconds,
+			acknowledgement.pingIntervalNanoseconds
+				+ kMaxStartupWatchdogAcknowledgementJitterNanoseconds);
+		const auto observedResponseNanoseconds
+			= acknowledgement.acknowledgedAtNanoseconds
+			  - acknowledgement.postedAtSteadyNanoseconds;
+		if ((acknowledgement.responseNanoseconds
+			 > maximumResponsivenessGapNanoseconds)
+			|| (observedResponseNanoseconds
+				> maximumResponsivenessGapNanoseconds)) {
+			return false;
+		}
+		const auto responseMeasurementErrorNanoseconds
+			= (observedResponseNanoseconds
+			   >= acknowledgement.responseNanoseconds)
+				  ? (observedResponseNanoseconds
+					 - acknowledgement.responseNanoseconds)
+				  : (acknowledgement.responseNanoseconds
+					 - observedResponseNanoseconds);
+		return responseMeasurementErrorNanoseconds <= 1'000'000;
+	};
+	for (auto first = std::size_t(0); first != ordered.size(); ++first) {
+		const auto &initial = *ordered[first];
+		if (!valid(initial)
+			|| (initial.acknowledgedAtNanoseconds > intervalStart)
+			|| (intervalStart - initial.acknowledgedAtNanoseconds > std::min(
+					maximumSilenceNanoseconds,
+					initial.pingIntervalNanoseconds
+						+ kMaxStartupWatchdogAcknowledgementJitterNanoseconds))) {
+			continue;
+		}
+		auto previous = &initial;
+		auto result = WatchdogResponsivenessCoverage{
+			.maxResponseNanoseconds = initial.responseNanoseconds,
+			.acknowledgementCount = 1,
+			.watchdogId = initial.watchdogId,
+		};
+		consider(result);
+		for (auto next = first + 1; next != ordered.size(); ++next) {
+			const auto &current = *ordered[next];
+			if (current.watchdogId != initial.watchdogId) {
+				break;
+			}
+			if ((current.sequence != previous->sequence + 1) || !valid(current)
+				|| (current.acknowledgedAtNanoseconds
+					<= previous->acknowledgedAtNanoseconds)) {
+				break;
+			}
+			const auto acknowledgementGapNanoseconds
+				= current.acknowledgedAtNanoseconds
+				  - previous->acknowledgedAtNanoseconds;
+			const auto maximumResponsivenessGapNanoseconds = std::min(
+				maximumSilenceNanoseconds,
+				previous->pingIntervalNanoseconds
+					+ kMaxStartupWatchdogAcknowledgementJitterNanoseconds);
+			if ((current.pingIntervalNanoseconds
+				 != previous->pingIntervalNanoseconds)
+				|| (acknowledgementGapNanoseconds
+					> maximumResponsivenessGapNanoseconds)) {
+				break;
+			}
+			result.maxAcknowledgementGapNanoseconds
+				= std::max(result.maxAcknowledgementGapNanoseconds,
+						   acknowledgementGapNanoseconds);
+			result.maxResponseNanoseconds = std::max(
+				result.maxResponseNanoseconds, current.responseNanoseconds);
+			++result.acknowledgementCount;
+			previous = &current;
+			consider(result);
+			if (current.acknowledgedAtNanoseconds >= intervalEnd) {
+				const auto maximumBoundaryGapNanoseconds = std::min(
+					maximumSilenceNanoseconds,
+					current.pingIntervalNanoseconds
+						+ kMaxStartupWatchdogAcknowledgementJitterNanoseconds);
+				if (current.acknowledgedAtNanoseconds - intervalEnd
+					<= maximumBoundaryGapNanoseconds) {
+					result.proven = true;
+					return result;
+				}
+				break;
+			}
+		}
+	}
+	return best;
+}
+
 [[nodiscard]] bool HeartbeatGapHasSuccessfulWatchdogCoverage(
 	const MainThreadWorkInterval &gap,
 	const std::vector<Core::UiStallWatchdog::PingAcknowledgementEvidence>
 		&acknowledgements) {
-	if (!gap.startedAt.isValid()
-		|| (gap.durationNanoseconds
-			< kStartupHeartbeatGapThresholdNanoseconds)) {
-		return false;
-	}
-	const auto gapStartMilliseconds = gap.startedAt.toMSecsSinceEpoch();
-	const auto gapDurationMilliseconds
-		= (gap.durationNanoseconds + 999'999) / 1'000'000;
-	const auto gapEndMilliseconds
-		= gapStartMilliseconds + gapDurationMilliseconds;
-	auto eligible = std::vector<std::pair<qint64, qint64>>();
-	for (const auto &acknowledgement : acknowledgements) {
-		if ((acknowledgement.responseNanoseconds < 0)
-			|| (acknowledgement.responseNanoseconds
-				> kMaxStartupWatchdogPingSilenceMilliseconds * 1'000'000)) {
-			continue;
-		}
-		const auto acknowledgedAt = QDateTime::fromString(
-			acknowledgement.acknowledgedAt, Qt::ISODateWithMs);
-		if (acknowledgedAt.isValid()) {
-			eligible.emplace_back(acknowledgedAt.toMSecsSinceEpoch(),
-								  acknowledgement.responseNanoseconds);
-		}
-	}
-	std::sort(eligible.begin(), eligible.end());
-	auto previous = std::optional<qint64>();
-	for (const auto &[acknowledgedAt, responseNanoseconds] : eligible) {
-		if (acknowledgedAt < gapStartMilliseconds) {
-			previous = acknowledgedAt;
-			continue;
-		}
-		if (!previous
-			|| (acknowledgedAt - *previous
-				> kMaxStartupWatchdogPingSilenceMilliseconds)) {
-			return false;
-		}
-		previous = acknowledgedAt;
-		if (acknowledgedAt >= gapEndMilliseconds) {
-			return (acknowledgedAt - gapEndMilliseconds
-					<= kMaxStartupWatchdogPingSilenceMilliseconds)
-				   && (responseNanoseconds
-					   <= kMaxStartupWatchdogPingSilenceMilliseconds
-							  * 1'000'000);
-		}
-	}
-	return false;
+	return AnalyzeWatchdogResponsivenessCoverage(gap, acknowledgements).proven;
 }
 
 [[nodiscard]] int CountUncoveredStartupHeartbeatGaps(
@@ -12456,7 +12776,12 @@ StartupWatchdogStallEvidenceRegressionPasses() {
 	const auto appWaitStall
 		= std::vector<CorroboratedStartupStall>{corroborated.back()};
 	const auto timerOnlyGap = std::vector<MainThreadWorkInterval>{
-		{firstStart.addMSecs(-481), 207'000'000, 30'000'000, 123'315'125},
+		{firstStart.addMSecs(-481),
+		 207'000'000,
+		 30'000'000,
+		 123'315'125,
+		 {},
+		 1'000'000'000},
 	};
 	const auto unrelatedWatchdogEvidence
 		= std::vector<Core::UiStallWatchdog::StallEvidence>{
@@ -12471,55 +12796,102 @@ StartupWatchdogStallEvidenceRegressionPasses() {
 		timerOnlyGap, unrelatedWatchdogEvidence);
 	auto timerOnlyAcknowledgements
 		= std::vector<Core::UiStallWatchdog::PingAcknowledgementEvidence>();
+	auto timerOnlySequence = std::uint64_t(1);
 	for (auto offset = qint64(-10); offset <= 217; offset += 10) {
+		const auto acknowledgedAtNanoseconds
+			= timerOnlyGap.front().startedAtSteadyNanoseconds
+			  + offset * 1'000'000;
 		timerOnlyAcknowledgements.push_back({
 			.acknowledgedAt
 			= timerOnlyGap.front().startedAt.addMSecs(offset).toString(
 				Qt::ISODateWithMs),
+			.acknowledgedAtNanoseconds = acknowledgedAtNanoseconds,
 			.responseNanoseconds = 1'000'000,
+			.pingIntervalNanoseconds = 10'000'000,
+			.sequence = timerOnlySequence++,
+			.postedAtSteadyNanoseconds = acknowledgedAtNanoseconds - 1'000'000,
+			.watchdogId = 1,
 		});
 	}
+	auto timerOnlyMissingPingAcknowledgements = timerOnlyAcknowledgements;
+	timerOnlyMissingPingAcknowledgements.erase(
+		timerOnlyMissingPingAcknowledgements.begin() + 5);
+	auto timerOnlySplitWatchdogAcknowledgements = timerOnlyAcknowledgements;
+	timerOnlySplitWatchdogAcknowledgements[5].watchdogId = 2;
+	auto timerOnlyDelayedAcknowledgements = timerOnlyAcknowledgements;
+	timerOnlyDelayedAcknowledgements[5].responseNanoseconds = 21'000'000;
+	timerOnlyDelayedAcknowledgements[5].postedAtSteadyNanoseconds
+		= timerOnlyDelayedAcknowledgements[5].acknowledgedAtNanoseconds
+		  - timerOnlyDelayedAcknowledgements[5].responseNanoseconds;
 	const auto unobservedAppWait = std::vector<MainThreadWorkInterval>{
-		{secondStart, 200'000'000, 25'000'000, 50'000'000},
+		{secondStart, 200'000'000, 25'000'000, 50'000'000, {}, 2'000'000'000},
 	};
 	const auto unobservedAppWaitAcknowledgements
 		= std::vector<Core::UiStallWatchdog::PingAcknowledgementEvidence>{
 			{
 				.acknowledgedAt
 				= secondStart.addMSecs(-10).toString(Qt::ISODateWithMs),
+				.acknowledgedAtNanoseconds = 1'990'000'000,
 				.responseNanoseconds = 1'000'000,
+				.pingIntervalNanoseconds = 2'000'000,
+				.sequence = 1,
+				.postedAtSteadyNanoseconds = 1'989'000'000,
+				.watchdogId = 1,
 			},
 			{
 				.acknowledgedAt
 				= secondStart.addMSecs(210).toString(Qt::ISODateWithMs),
+				.acknowledgedAtNanoseconds = 2'210'000'000,
 				.responseNanoseconds = 210'000'000,
+				.pingIntervalNanoseconds = 2'000'000,
+				.sequence = 2,
+				.postedAtSteadyNanoseconds = 2'000'000'000,
+				.watchdogId = 1,
 			},
 			{
 				.acknowledgedAt
 				= secondStart.addMSecs(220).toString(Qt::ISODateWithMs),
+				.acknowledgedAtNanoseconds = 2'220'000'000,
 				.responseNanoseconds = 1'000'000,
+				.pingIntervalNanoseconds = 2'000'000,
+				.sequence = 3,
+				.postedAtSteadyNanoseconds = 2'219'000'000,
+				.watchdogId = 1,
 			},
 	};
 	const auto delayedButObservedGap = std::vector<MainThreadWorkInterval>{
-		{firstStart, 116'000'000, 25'000'000, 50'000'000},
+		{firstStart, 116'000'000, 25'000'000, 50'000'000, {}, 3'000'000'000},
 	};
-	const auto delayedButObservedAcknowledgements
-		= std::vector<Core::UiStallWatchdog::PingAcknowledgementEvidence>{
-			{
-				.acknowledgedAt
-				= firstStart.addMSecs(-10).toString(Qt::ISODateWithMs),
-				.responseNanoseconds = 1'000'000,
-			},
-			{
-				.acknowledgedAt
-				= firstStart.addMSecs(77).toString(Qt::ISODateWithMs),
-				.responseNanoseconds = 77'000'000,
-			},
-			{
-				.acknowledgedAt
-				= firstStart.addMSecs(136).toString(Qt::ISODateWithMs),
-				.responseNanoseconds = 1'000'000,
-			},
+	auto delayedButObservedAcknowledgements
+		= std::vector<Core::UiStallWatchdog::PingAcknowledgementEvidence>();
+	auto delayedSequence = std::uint64_t(1);
+	for (auto offset = qint64(-10);
+		 offset
+		 <= delayedButObservedGap.front().durationNanoseconds + 10'000'000;
+		 offset += 2) {
+		const auto acknowledgedAtNanoseconds
+			= delayedButObservedGap.front().startedAtSteadyNanoseconds
+			  + offset * 1'000'000;
+		delayedButObservedAcknowledgements.push_back({
+			.acknowledgedAt
+			= firstStart.addMSecs(offset).toString(Qt::ISODateWithMs),
+			.acknowledgedAtNanoseconds = acknowledgedAtNanoseconds,
+			.responseNanoseconds = 1'000'000,
+			.pingIntervalNanoseconds = 2'000'000,
+			.sequence = delayedSequence++,
+			.postedAtSteadyNanoseconds = acknowledgedAtNanoseconds - 1'000'000,
+			.watchdogId = 1,
+		});
+	}
+	const auto freshStartupAcknowledgement
+		= Core::UiStallWatchdog::PingAcknowledgementEvidence{
+			.acknowledgedAtNanoseconds = 900'000'000,
+			.responseNanoseconds = 1'000'000,
+	};
+	const auto staleStartupAcknowledgement
+		= Core::UiStallWatchdog::PingAcknowledgementEvidence{
+			.acknowledgedAtNanoseconds = 899'000'000,
+			.responseNanoseconds = 1'000'000,
 	};
 	const auto highProcessCpuGap = std::vector<MainThreadWorkInterval>{
 		{firstStart, 230'000'000, 25'000'000, 120'000'000},
@@ -12540,12 +12912,28 @@ StartupWatchdogStallEvidenceRegressionPasses() {
 												  timerOnlyAcknowledgements)
 			   == 0)
 		   && (CountUncoveredStartupHeartbeatGaps(
+				   timerOnlyGap, timerOnlyCorroborated,
+				   timerOnlyMissingPingAcknowledgements)
+			   == 1)
+		   && (CountUncoveredStartupHeartbeatGaps(
+				   timerOnlyGap, timerOnlyCorroborated,
+				   timerOnlySplitWatchdogAcknowledgements)
+			   == 1)
+		   && (CountUncoveredStartupHeartbeatGaps(
+				   timerOnlyGap, timerOnlyCorroborated,
+				   timerOnlyDelayedAcknowledgements)
+			   == 1)
+		   && (CountUncoveredStartupHeartbeatGaps(
 				   unobservedAppWait, {}, unobservedAppWaitAcknowledgements)
 			   == 1)
 		   && (CountUncoveredStartupHeartbeatGaps(
 				   delayedButObservedGap, {},
 				   delayedButObservedAcknowledgements)
 			   == 0)
+		   && HasRecentStartupWatchdogAcknowledgement(
+			   {freshStartupAcknowledgement}, 1'000'000'000)
+		   && !HasRecentStartupWatchdogAcknowledgement(
+			   {staleStartupAcknowledgement}, 1'000'000'000)
 		   && (highProcessCpuStall.size() == 1)
 		   && !AllCorroboratedStartupStallsHaveSchedulerProof(
 			   highProcessCpuStall, true);
@@ -12564,6 +12952,7 @@ struct MainThreadWorkBudgetAssessment final {
 	bool schedulerEvidenceAvailable = false;
 	qint64 workNanoseconds = -1;
 	bool withinBudget = false;
+	bool watchdogResponsivenessEvidenceAvailable = false;
 };
 
 [[nodiscard]] MainThreadWorkEstimate EstimateMainThreadWork(
@@ -12573,6 +12962,7 @@ struct MainThreadWorkBudgetAssessment final {
 	const std::optional<SchedulerBoundarySample> &before = std::nullopt,
 	const std::optional<SchedulerBoundarySample> &after = std::nullopt,
 	const std::vector<qint64> *sampleMainThreadCpuNanoseconds = nullptr,
+	qint64 mainThreadCpuStartNanoseconds = -1,
 	qint64 mainThreadCpuEndNanoseconds = -1) {
 	if (wallNanoseconds < 0) {
 		return {};
@@ -12667,6 +13057,7 @@ struct MainThreadWorkBudgetAssessment final {
 		if (gap > kMaximumSampleGapNanoseconds) {
 			return incompleteEstimate;
 		}
+		// Avoid counting measured CPU in the leading gap as blocked work too.
 		if (!hasInWindowSample && gap && before) {
 			if ((before->distanceNanoseconds < 0)
 				|| (before->distanceNanoseconds
@@ -12675,9 +13066,13 @@ struct MainThreadWorkBudgetAssessment final {
 					&& (before->state != 'U'))) {
 				return incompleteEstimate;
 			}
-			addBlockedGap(gap, (before->state != 'R') || (state != u'R'), 0);
+			addBlockedGap(gap, (before->state != 'R') || (state != u'R'),
+						  cpuDelta(mainThreadCpuStartNanoseconds,
+								   sampleCpuNanoseconds, gap));
 		} else if (!hasInWindowSample) {
-			addBlockedGap(gap, true, 0);
+			addBlockedGap(gap, true,
+						  cpuDelta(mainThreadCpuStartNanoseconds,
+								   sampleCpuNanoseconds, gap));
 		} else {
 			addBlockedGap(gap, (previousState != u'R') || (state != u'R'),
 						  cpuDeltaKnownInsideGap(previousCpuNanoseconds,
@@ -12734,6 +13129,7 @@ EstimateMainThreadWork(qint64 mainThreadCpuNanoseconds, qint64 wallNanoseconds,
 		schedulerSamples.sampleOffsetsNanoseconds, schedulerSamples.before,
 		schedulerSamples.after,
 		&schedulerSamples.sampleMainThreadCpuNanoseconds,
+		schedulerSamples.mainThreadCpuStartNanoseconds,
 		schedulerSamples.mainThreadCpuEndNanoseconds);
 }
 
@@ -12755,12 +13151,18 @@ AssessMainThreadWorkBudget(const MainThreadWorkEstimate &estimate,
 	};
 }
 
+[[nodiscard]] bool MacOSChatSwitchEvidenceFinalizedForInterval(
+	const SchedulerTraceWindow &schedulerSamples) {
+	return !schedulerSamples.capturePending;
+}
+
 [[nodiscard]] bool MainThreadWorkBudgetEvidenceWithinBudget(
 	const MainThreadWorkBudgetAssessment &assessment, qint64 wallNanoseconds,
 	qint64 budgetNanoseconds) {
 	return assessment.withinBudget
 		   && ((wallNanoseconds < budgetNanoseconds)
-			   || assessment.schedulerEvidenceAvailable);
+			   || assessment.schedulerEvidenceAvailable
+			   || assessment.watchdogResponsivenessEvidenceAvailable);
 }
 
 constexpr auto kMaxUntracedRunnerNoiseMainThreadCpuNanoseconds = 5'000'000;
@@ -12768,7 +13170,9 @@ constexpr auto kMaxUntracedRunnerNoiseMainThreadCpuNanoseconds = 5'000'000;
 [[nodiscard]] bool MainThreadWorkBudgetIsUntracedWallOverrun(
 	const MainThreadWorkBudgetAssessment &assessment, qint64 wallNanoseconds,
 	qint64 budgetNanoseconds) {
-	return !assessment.schedulerEvidenceAvailable && assessment.withinBudget
+	return !assessment.schedulerEvidenceAvailable
+		   && !assessment.watchdogResponsivenessEvidenceAvailable
+		   && assessment.withinBudget
 		   && (assessment.workNanoseconds
 			   <= kMaxUntracedRunnerNoiseMainThreadCpuNanoseconds)
 		   && (budgetNanoseconds > 0) && (wallNanoseconds >= budgetNanoseconds);
@@ -12785,16 +13189,8 @@ struct MainThreadWorkBudgetRun final {
 		}
 		if (MainThreadWorkBudgetIsUntracedWallOverrun(
 				assessment, wallNanoseconds, budgetNanoseconds)) {
-			if ((windowStartedAtSteadyNanoseconds >= 0) && (wallNanoseconds > 0)
-				&& (windowStartedAtSteadyNanoseconds
-					<= std::numeric_limits<qint64>::max() - wallNanoseconds)) {
-				untracedWallOverrunWindows.push_back({
-					windowStartedAtSteadyNanoseconds,
-					windowStartedAtSteadyNanoseconds + wallNanoseconds,
-				});
-			} else {
-				++unanchoredUntracedWallOverruns;
-			}
+			RecordUntracedWallOverrunWindow(wallNanoseconds,
+											windowStartedAtSteadyNanoseconds);
 		} else {
 			hasHardFailure = true;
 		}
@@ -12821,6 +13217,21 @@ struct MainThreadWorkBudgetRun final {
 		return !hasHardFailure && (UntracedWallOverrunCount() <= 1);
 	}
 
+	void
+	RecordUntracedWallOverrunWindow(qint64 wallNanoseconds,
+									qint64 windowStartedAtSteadyNanoseconds) {
+		if ((windowStartedAtSteadyNanoseconds >= 0) && (wallNanoseconds > 0)
+			&& (windowStartedAtSteadyNanoseconds
+				<= std::numeric_limits<qint64>::max() - wallNanoseconds)) {
+			untracedWallOverrunWindows.push_back({
+				windowStartedAtSteadyNanoseconds,
+				windowStartedAtSteadyNanoseconds + wallNanoseconds,
+			});
+		} else {
+			++unanchoredUntracedWallOverruns;
+		}
+	}
+
 	std::vector<std::pair<qint64, qint64>> untracedWallOverrunWindows;
 	int unanchoredUntracedWallOverruns = 0;
 	bool hasHardFailure = false;
@@ -12829,6 +13240,7 @@ struct MainThreadWorkBudgetRun final {
 struct StartupWorkEstimate final {
 	SchedulerTraceWindow schedulerSamples;
 	MainThreadWorkEstimate estimate;
+	WatchdogResponsivenessCoverage watchdogCoverage;
 };
 
 [[nodiscard]] StartupWorkEstimate EstimateStartupWork(
@@ -12878,7 +13290,34 @@ struct StartupWorkEstimate final {
 			}
 		}
 	}
-	return {std::move(schedulerSamples), estimate};
+	return {std::move(schedulerSamples), estimate,
+			AnalyzeWatchdogResponsivenessCoverage(interval, acknowledgements)};
+}
+
+[[nodiscard]] MainThreadWorkBudgetAssessment
+AssessWorkBudgetWithWatchdogResponsiveness(
+	const MainThreadWorkInterval &interval,
+	const MainThreadWorkEstimate &estimate,
+	const WatchdogResponsivenessCoverage &watchdogCoverage,
+	qint64 budgetNanoseconds) {
+	auto result = AssessMainThreadWorkBudget(
+		estimate, interval.mainThreadWorkNanoseconds, budgetNanoseconds);
+	if (!result.schedulerEvidenceAvailable && watchdogCoverage.proven) {
+		result.workNanoseconds = interval.mainThreadWorkNanoseconds;
+		result.withinBudget = MainThreadCpuWorkWithinBudget(
+			interval.mainThreadWorkNanoseconds, budgetNanoseconds);
+		result.watchdogResponsivenessEvidenceAvailable = true;
+	}
+	return result;
+}
+
+[[nodiscard]] MainThreadWorkBudgetAssessment
+AssessStartupWorkBudget(const MainThreadWorkInterval &interval,
+						const StartupWorkEstimate &startupWork,
+						qint64 budgetNanoseconds) {
+	return AssessWorkBudgetWithWatchdogResponsiveness(
+		interval, startupWork.estimate, startupWork.watchdogCoverage,
+		budgetNanoseconds);
 }
 
 [[nodiscard]] bool MainThreadWorkEstimateWithinBudget(
@@ -12909,6 +13348,24 @@ void AccumulateMainThreadWorkEstimate(qint64 &aggregateNanoseconds,
 			= std::max(aggregateNanoseconds, estimateNanoseconds);
 	}
 }
+
+// Evaluates every operand of a `&&` chain, so an early failure does not hide
+// later checks. A member template cannot live in a function-local class.
+struct FixtureChecks {
+	bool allPassed = true;
+	int index = 1;
+	int firstFailed = 0;
+
+	template <typename Value> FixtureChecks &operator&&(const Value &passed) {
+		const auto value = static_cast<bool>(passed);
+		++index;
+		if (!value && !firstFailed) {
+			firstFailed = index;
+		}
+		allPassed = allPassed && value;
+		return *this;
+	}
+};
 
 [[nodiscard]] bool MainThreadBlockedWorkBudgetRegressionPasses() {
 	const auto coveredOffsets = [](qint64 duration) {
@@ -13060,6 +13517,100 @@ void AccumulateMainThreadWorkEstimate(qint64 &aggregateNanoseconds,
 		missingTraceCpuStall, 101'000'000, 100'000'000);
 	const auto blockedStartupAssessment
 		= AssessMainThreadWorkBudget(blocked, 0, 100'000'000);
+	const auto timerCoverageGap = MainThreadWorkInterval{
+		.startedAt = QDateTime::fromString(u"2026-11-28T16:42:14.160Z"_q,
+										   Qt::ISODateWithMs),
+		.durationNanoseconds = 114'303'916,
+		.mainThreadWorkNanoseconds = 1'620'000,
+		.processWorkNanoseconds = 31'280'791,
+		.startedAtSteadyNanoseconds = 3'617'681'405'416,
+	};
+	auto timerCoverageAcknowledgements
+		= std::vector<Core::UiStallWatchdog::PingAcknowledgementEvidence>();
+	auto timerCoverageSequence = std::uint64_t(1);
+	for (auto offset = qint64(-2'000'000);
+		 offset <= timerCoverageGap.durationNanoseconds + 2'000'000;
+		 offset += 2'000'000) {
+		const auto acknowledgedAtNanoseconds
+			= timerCoverageGap.startedAtSteadyNanoseconds + offset;
+		timerCoverageAcknowledgements.push_back({
+			.acknowledgedAtNanoseconds = acknowledgedAtNanoseconds,
+			.responseNanoseconds = 1'000'000,
+			.pingIntervalNanoseconds = 2'000'000,
+			.sequence = timerCoverageSequence++,
+			.postedAtSteadyNanoseconds = acknowledgedAtNanoseconds - 1'000'000,
+			.watchdogId = 7,
+		});
+	}
+	const auto responsiveChatSwitch = MainThreadWorkInterval{
+		.startedAt = timerCoverageGap.startedAt,
+		.durationNanoseconds = 98'893'625,
+		.mainThreadWorkNanoseconds = 37'525'000,
+		.processWorkNanoseconds = -1,
+		.startedAtSteadyNanoseconds
+		= timerCoverageGap.startedAtSteadyNanoseconds,
+	};
+	const auto responsiveChatSwitchEstimate = EstimateMainThreadWork(
+		responsiveChatSwitch.mainThreadWorkNanoseconds,
+		responsiveChatSwitch.durationNanoseconds, u"none"_q, {});
+	const auto responsiveChatSwitchCoverage
+		= AnalyzeWatchdogResponsivenessCoverage(responsiveChatSwitch,
+												timerCoverageAcknowledgements);
+	const auto responsiveChatSwitchAssessment
+		= AssessWorkBudgetWithWatchdogResponsiveness(
+			responsiveChatSwitch, responsiveChatSwitchEstimate,
+			responsiveChatSwitchCoverage, kMaxChatSwitchNanoseconds);
+	const auto overBudgetResponsiveChatSwitch = MainThreadWorkInterval{
+		.startedAt = timerCoverageGap.startedAt,
+		.durationNanoseconds = 57'900'875,
+		.mainThreadWorkNanoseconds = 52'376'000,
+		.processWorkNanoseconds = -1,
+		.startedAtSteadyNanoseconds
+		= timerCoverageGap.startedAtSteadyNanoseconds,
+	};
+	const auto overBudgetResponsiveChatSwitchAssessment
+		= AssessWorkBudgetWithWatchdogResponsiveness(
+			overBudgetResponsiveChatSwitch,
+			EstimateMainThreadWork(
+				overBudgetResponsiveChatSwitch.mainThreadWorkNanoseconds,
+				overBudgetResponsiveChatSwitch.durationNanoseconds, u"none"_q,
+				{}),
+			AnalyzeWatchdogResponsivenessCoverage(
+				overBudgetResponsiveChatSwitch, timerCoverageAcknowledgements),
+			kMaxChatSwitchNanoseconds);
+	const auto timerCoverageEstimate = EstimateMainThreadWork(
+		timerCoverageGap.mainThreadWorkNanoseconds,
+		timerCoverageGap.durationNanoseconds, u"WWRRWWR"_q,
+		{4'364'834, 12'888'709, 26'050'667, 36'674'000, 39'361'292, 47'655'000,
+		 113'373'125});
+	const auto timerCoverageStartupWork = StartupWorkEstimate{
+		.schedulerSamples = {},
+		.estimate = timerCoverageEstimate,
+		.watchdogCoverage = AnalyzeWatchdogResponsivenessCoverage(
+			timerCoverageGap, timerCoverageAcknowledgements),
+	};
+	const auto timerCoverageBudgetAssessment
+		= AssessStartupWorkBudget(timerCoverageGap, timerCoverageStartupWork,
+								  kMaxStartupHeartbeatThreadWorkNanoseconds);
+	auto timerCoverageBudgetRun = MainThreadWorkBudgetRun();
+	const auto timerCoverageWithinBudget = timerCoverageBudgetRun.Observe(
+		timerCoverageBudgetAssessment, timerCoverageGap.durationNanoseconds,
+		kMaxStartupHeartbeatThreadWorkNanoseconds,
+		timerCoverageGap.startedAtSteadyNanoseconds);
+	auto blockedStartupWithResponsiveTrace = timerCoverageGap;
+	blockedStartupWithResponsiveTrace.durationNanoseconds = 101'000'000;
+	blockedStartupWithResponsiveTrace.mainThreadWorkNanoseconds = 101'000'000;
+	const auto blockedStartupWithResponsiveWork = StartupWorkEstimate{
+		.estimate = EstimateMainThreadWork(
+			blockedStartupWithResponsiveTrace.mainThreadWorkNanoseconds,
+			blockedStartupWithResponsiveTrace.durationNanoseconds, u"none"_q,
+			{}),
+		.watchdogCoverage = AnalyzeWatchdogResponsivenessCoverage(
+			blockedStartupWithResponsiveTrace, timerCoverageAcknowledgements),
+	};
+	const auto blockedStartupWithResponsiveAssessment = AssessStartupWorkBudget(
+		blockedStartupWithResponsiveTrace, blockedStartupWithResponsiveWork,
+		kMaxStartupHeartbeatThreadWorkNanoseconds);
 	const auto blockedHistorySelection = EstimateMainThreadWork(
 		0, 60'000'000, QString(int(selectionOffsets.size()), QChar(u'W')),
 		selectionOffsets);
@@ -13114,6 +13665,308 @@ void AccumulateMainThreadWorkEstimate(qint64 &aggregateNanoseconds,
 	auto untracedCpuStallRun = MainThreadWorkBudgetRun();
 	untracedCpuStallRun.Observe(missingTraceCpuStallAssessment, 105'113'167,
 								100'000'000);
+	const auto injectedChatSwitchStallEstimate = EstimateMainThreadWork(
+		51'000'000, 51'000'000, u"R"_q, {0, 51'000'000});
+	const auto injectedChatSwitchStallAssessment = AssessMainThreadWorkBudget(
+		injectedChatSwitchStallEstimate, 51'000'000, kMaxChatSwitchNanoseconds);
+	auto injectedChatSwitchStallRun = MainThreadWorkBudgetRun();
+	const auto injectedChatSwitchStallWithinBudget
+		= injectedChatSwitchStallRun.Observe(injectedChatSwitchStallAssessment,
+											 51'000'000,
+											 kMaxChatSwitchNanoseconds);
+	const auto displayLockWindow = MainThreadWorkInterval{
+		.startedAt = QDateTime::fromString(u"2026-11-25T00:00:00.988"_q,
+										   Qt::ISODateWithMs),
+		.durationNanoseconds = 60'000'000,
+		.mainThreadWorkNanoseconds = 21'272'000,
+		.label = u"chat switch index=9"_q,
+		.startedAtSteadyNanoseconds = 988'000'000,
+	};
+	auto displayLockStall = Core::UiStallWatchdog::StallEvidence{
+		.startedAt = u"2026-11-25T00:00:00.988"_q,
+		.postedAtSteadyNanoseconds = 988'000'000,
+		.stackCapturedAtSteadyNanoseconds = 1'028'000'000,
+		.durationMilliseconds = 65,
+		.durationNanoseconds = 65'000'000,
+		.stack = u"QReadWriteLockPrivate::recursiveLockForRead <- "
+				 u"QCocoaWindow::deliverUpdateRequest"_q,
+		.stackFinalized = true,
+	};
+	const auto displayLockFallbackEstimate = MainThreadWorkEstimate{
+		.blockedNanoseconds = -1,
+		.estimatedWorkNanoseconds = displayLockWindow.durationNanoseconds,
+		.wallFallbackRequired = true,
+	};
+	const auto displayLockAssessment = AssessMainThreadWorkBudget(
+		displayLockFallbackEstimate,
+		displayLockWindow.mainThreadWorkNanoseconds, kMaxChatSwitchNanoseconds);
+	auto verifiedDisplayLockRun = MainThreadWorkBudgetRun();
+	const auto verifiedDisplayLockWithinBudget = verifiedDisplayLockRun.Observe(
+		displayLockAssessment, displayLockWindow.durationNanoseconds,
+		kMaxChatSwitchNanoseconds,
+		displayLockWindow.startedAtSteadyNanoseconds);
+	const auto recordedDisplayLockWindow = MainThreadWorkInterval{
+		.startedAt = displayLockWindow.startedAt,
+		.durationNanoseconds = 77'931'083,
+		.mainThreadWorkNanoseconds = 21'272'000,
+		.label = u"recorded chat switch with late display-lock evidence"_q,
+		.startedAtSteadyNanoseconds
+		= displayLockWindow.startedAtSteadyNanoseconds,
+	};
+	const auto recordedChatSwitchSchedulerSamples = SchedulerTraceWindow{
+		.trace = u"RRRWWR"_q,
+		.sampleOffsetsNanoseconds = {
+			10'092'542,
+			17'928'292,
+			19'730'500,
+			29'994'209,
+			40'609'750,
+			77'447'834,
+		},
+	};
+	// Replay the failed run's sampled window states and offsets. The watchdog
+	// stall begins 18 ms into that window, so retain only its RWWR subtrace.
+	auto recordedDisplayLockStall = displayLockStall;
+	recordedDisplayLockStall.startedAt = u"2026-11-25T00:00:01.006"_q;
+	recordedDisplayLockStall.postedAtSteadyNanoseconds
+		= recordedDisplayLockWindow.startedAtSteadyNanoseconds + 18'000'000;
+	recordedDisplayLockStall.stackCapturedAtSteadyNanoseconds
+		= recordedDisplayLockStall.postedAtSteadyNanoseconds + 40'000'000;
+	recordedDisplayLockStall.schedulerTrace.clear();
+	recordedDisplayLockStall.schedulerSampleOffsetsNanoseconds.clear();
+	for (auto i = std::size_t(0);
+		 i
+		 != recordedChatSwitchSchedulerSamples.sampleOffsetsNanoseconds.size();
+		 ++i) {
+		const auto offset
+			= recordedChatSwitchSchedulerSamples.sampleOffsetsNanoseconds[i];
+		if ((offset < 18'000'000)
+			|| (offset
+				> 18'000'000 + recordedDisplayLockStall.durationNanoseconds)) {
+			continue;
+		}
+		recordedDisplayLockStall.schedulerTrace.append(
+			recordedChatSwitchSchedulerSamples.trace[qsizetype(i)]);
+		recordedDisplayLockStall.schedulerSampleOffsetsNanoseconds.push_back(
+			offset - 18'000'000);
+	}
+	const auto recordedDisplayLockEstimate = EstimateMainThreadWork(
+		recordedDisplayLockWindow.mainThreadWorkNanoseconds,
+		recordedDisplayLockWindow.durationNanoseconds,
+		recordedChatSwitchSchedulerSamples);
+	const auto recordedDisplayLockAssessment = AssessMainThreadWorkBudget(
+		recordedDisplayLockEstimate,
+		recordedDisplayLockWindow.mainThreadWorkNanoseconds,
+		kMaxChatSwitchNanoseconds);
+	auto recordedDisplayLockRun = MainThreadWorkBudgetRun();
+	const auto recordedDisplayLockWithinBudget = recordedDisplayLockRun.Observe(
+		recordedDisplayLockAssessment,
+		recordedDisplayLockWindow.durationNanoseconds,
+		kMaxChatSwitchNanoseconds,
+		recordedDisplayLockWindow.startedAtSteadyNanoseconds);
+	const auto mixedWaitDisplayLockWindow = MainThreadWorkInterval{
+		.startedAt = QDateTime::fromString(u"2026-11-25T00:00:04.000"_q,
+										   Qt::ISODateWithMs),
+		.durationNanoseconds = 85'000'000,
+		.mainThreadWorkNanoseconds = 6'000'000,
+		.startedAtSteadyNanoseconds = 4'000'000'000,
+	};
+	auto mixedWaitDisplayLockStall = Core::UiStallWatchdog::StallEvidence{
+		.startedAt = mixedWaitDisplayLockWindow.startedAt.addMSecs(30).toString(
+			Qt::ISODateWithMs),
+		.postedAtSteadyNanoseconds
+		= mixedWaitDisplayLockWindow.startedAtSteadyNanoseconds + 30'000'000,
+		.stackCapturedAtSteadyNanoseconds
+		= mixedWaitDisplayLockWindow.startedAtSteadyNanoseconds + 70'000'000,
+		.durationMilliseconds = 65,
+		.durationNanoseconds = 65'000'000,
+		.stack = displayLockStall.stack,
+		.stackFinalized = true,
+	};
+	auto mixedWaitSchedulerSamples = SchedulerTraceWindow();
+	for (auto offset = qint64(0); offset <= 84'000'000; offset += 2'000'000) {
+		mixedWaitSchedulerSamples.sampleOffsetsNanoseconds.push_back(offset);
+		mixedWaitSchedulerSamples.trace.append((offset < 58'000'000) ? u'W'
+																	 : u'U');
+	}
+	for (auto i = std::size_t(0);
+		 i != mixedWaitSchedulerSamples.sampleOffsetsNanoseconds.size(); ++i) {
+		const auto offset
+			= mixedWaitSchedulerSamples.sampleOffsetsNanoseconds[i];
+		if (offset < 30'000'000) {
+			continue;
+		}
+		mixedWaitDisplayLockStall.schedulerTrace.append(
+			mixedWaitSchedulerSamples.trace[qsizetype(i)]);
+		mixedWaitDisplayLockStall.schedulerSampleOffsetsNanoseconds.push_back(
+			offset - 30'000'000);
+	}
+	const auto mixedWaitDisplayLockEstimate = EstimateMainThreadWork(
+		mixedWaitDisplayLockWindow.mainThreadWorkNanoseconds,
+		mixedWaitDisplayLockWindow.durationNanoseconds,
+		mixedWaitSchedulerSamples);
+	const auto mixedWaitDisplayLockAssessment = AssessMainThreadWorkBudget(
+		mixedWaitDisplayLockEstimate,
+		mixedWaitDisplayLockWindow.mainThreadWorkNanoseconds,
+		kMaxChatSwitchNanoseconds);
+	auto mixedWaitDisplayLockRun = MainThreadWorkBudgetRun();
+	const auto mixedWaitDisplayLockWithinBudget
+		= mixedWaitDisplayLockRun.Observe(
+			mixedWaitDisplayLockAssessment,
+			mixedWaitDisplayLockWindow.durationNanoseconds,
+			kMaxChatSwitchNanoseconds,
+			mixedWaitDisplayLockWindow.startedAtSteadyNanoseconds);
+	const auto excessiveDisplayLockWindow = MainThreadWorkInterval{
+		.startedAt = displayLockWindow.startedAt,
+		.durationNanoseconds = 200'000'000,
+		.mainThreadWorkNanoseconds = 21'272'000,
+		.label = u"chat switch with excessive display-lock stall"_q,
+		.startedAtSteadyNanoseconds
+		= displayLockWindow.startedAtSteadyNanoseconds,
+	};
+	auto excessiveDisplayLockStall = displayLockStall;
+	excessiveDisplayLockStall.durationMilliseconds = 180;
+	excessiveDisplayLockStall.durationNanoseconds = 180'000'000;
+	excessiveDisplayLockStall.postedAtSteadyNanoseconds
+		= excessiveDisplayLockWindow.startedAtSteadyNanoseconds;
+	excessiveDisplayLockStall.stackCapturedAtSteadyNanoseconds
+		= excessiveDisplayLockStall.postedAtSteadyNanoseconds;
+	auto excessiveDisplayLockSchedulerSamples = SchedulerTraceWindow();
+	for (auto offset = qint64(0); offset <= 200'000'000; offset += 2'000'000) {
+		excessiveDisplayLockSchedulerSamples.sampleOffsetsNanoseconds.push_back(
+			offset);
+		excessiveDisplayLockSchedulerSamples.trace.append(
+			(offset < 180'000'000) ? u'W' : u'R');
+	}
+	const auto excessiveDisplayLockEstimate = EstimateMainThreadWork(
+		excessiveDisplayLockWindow.mainThreadWorkNanoseconds,
+		excessiveDisplayLockWindow.durationNanoseconds,
+		excessiveDisplayLockSchedulerSamples);
+	const auto excessiveDisplayLockAssessment = AssessMainThreadWorkBudget(
+		excessiveDisplayLockEstimate,
+		excessiveDisplayLockWindow.mainThreadWorkNanoseconds,
+		kMaxChatSwitchNanoseconds);
+	auto excessiveDisplayLockRun = MainThreadWorkBudgetRun();
+	const auto excessiveDisplayLockWithinBudget
+		= excessiveDisplayLockRun.Observe(
+			excessiveDisplayLockAssessment,
+			excessiveDisplayLockWindow.durationNanoseconds,
+			kMaxChatSwitchNanoseconds,
+			excessiveDisplayLockWindow.startedAtSteadyNanoseconds);
+	const auto windowEndingBetweenPings = MainThreadWorkInterval{
+		.durationNanoseconds = 60'000'000,
+		.mainThreadWorkNanoseconds = 21'272'000,
+		.startedAtSteadyNanoseconds = 4'000'000'000,
+	};
+	const auto windowEndingBetweenPingsSchedulerSamples = SchedulerTraceWindow{
+		.trace = u"RRRR"_q,
+		.sampleOffsetsNanoseconds = {0, 20'000'000, 40'000'000, 60'000'000},
+	};
+	const auto windowEndingBetweenPingsEstimate = EstimateMainThreadWork(
+		windowEndingBetweenPings.mainThreadWorkNanoseconds,
+		windowEndingBetweenPings.durationNanoseconds,
+		windowEndingBetweenPingsSchedulerSamples);
+	const auto windowEndingBetweenPingsAssessment = AssessMainThreadWorkBudget(
+		windowEndingBetweenPingsEstimate,
+		windowEndingBetweenPings.mainThreadWorkNanoseconds,
+		kMaxChatSwitchNanoseconds);
+	const auto acknowledgementBeforeNextPing
+		= Core::UiStallWatchdog::PingAcknowledgementEvidence{
+			.acknowledgedAtNanoseconds
+			= windowEndingBetweenPings.startedAtSteadyNanoseconds + 59'000'000,
+			.responseNanoseconds = 2'000'000,
+			.pingIntervalNanoseconds = 2'000'000,
+			.sequence = 7,
+			.postedAtSteadyNanoseconds
+			= windowEndingBetweenPings.startedAtSteadyNanoseconds + 57'000'000,
+			.schedulerTraceComplete = true,
+	};
+	const auto acknowledgementBeforeNextPingFinalized
+		= MacOSPingAcknowledgementEvidenceFinalizedForInterval(
+			windowEndingBetweenPings,
+			std::vector<Core::UiStallWatchdog::PingAcknowledgementEvidence>{
+				acknowledgementBeforeNextPing});
+	auto delayedPostAcknowledgement = acknowledgementBeforeNextPing;
+	delayedPostAcknowledgement.acknowledgedAtNanoseconds
+		= windowEndingBetweenPings.startedAtSteadyNanoseconds + 55'000'000;
+	delayedPostAcknowledgement.postedAtSteadyNanoseconds
+		= windowEndingBetweenPings.startedAtSteadyNanoseconds + 53'000'000;
+	delayedPostAcknowledgement.pingIntervalNanoseconds = 5'000'000;
+	delayedPostAcknowledgement.sequence = 7;
+	delayedPostAcknowledgement.watchdogId = 1;
+	auto delayedNextPostAcknowledgement = delayedPostAcknowledgement;
+	delayedNextPostAcknowledgement.postedAtSteadyNanoseconds
+		= windowEndingBetweenPings.startedAtSteadyNanoseconds + 65'000'000;
+	delayedNextPostAcknowledgement.acknowledgedAtNanoseconds
+		= windowEndingBetweenPings.startedAtSteadyNanoseconds + 67'000'000;
+	delayedNextPostAcknowledgement.sequence = 8;
+	const auto delayedPostEvidenceFinalized
+		= MacOSPingAcknowledgementEvidenceFinalizedForInterval(
+			windowEndingBetweenPings,
+			std::vector<Core::UiStallWatchdog::PingAcknowledgementEvidence>{
+				delayedPostAcknowledgement});
+	const auto nextDelayedPostEvidenceFinalized
+		= MacOSPingAcknowledgementEvidenceFinalizedForInterval(
+			windowEndingBetweenPings,
+			std::vector<Core::UiStallWatchdog::PingAcknowledgementEvidence>{
+				delayedPostAcknowledgement, delayedNextPostAcknowledgement});
+	auto differentWatchdogDelayedPost = delayedNextPostAcknowledgement;
+	differentWatchdogDelayedPost.watchdogId = 2;
+	const auto differentWatchdogDoesNotFinalizeDelayedPost
+		= MacOSPingAcknowledgementEvidenceFinalizedForInterval(
+			windowEndingBetweenPings,
+			std::vector<Core::UiStallWatchdog::PingAcknowledgementEvidence>{
+				delayedPostAcknowledgement, differentWatchdogDelayedPost});
+	const auto windowEndingBetweenPingsEvidenceIsFinalized
+		= MacOSChatSwitchEvidenceFinalizedForInterval(
+			windowEndingBetweenPingsSchedulerSamples);
+	const auto untracedWindowEndingBetweenPingsSchedulerSamples
+		= SchedulerTraceForInterval(
+			windowEndingBetweenPings,
+			std::vector<Core::UiStallWatchdog::PingAcknowledgementEvidence>{
+				acknowledgementBeforeNextPing});
+	const auto untracedWindowEndingBetweenPingsEstimate
+		= EstimateMainThreadWork(
+			windowEndingBetweenPings.mainThreadWorkNanoseconds,
+			windowEndingBetweenPings.durationNanoseconds,
+			untracedWindowEndingBetweenPingsSchedulerSamples);
+	const auto untracedWindowEndingBetweenPingsAssessment
+		= AssessMainThreadWorkBudget(
+			untracedWindowEndingBetweenPingsEstimate,
+			windowEndingBetweenPings.mainThreadWorkNanoseconds,
+			kMaxChatSwitchNanoseconds);
+	const auto untracedWindowEndingBetweenPingsEvidenceIsFinalized
+		= MacOSChatSwitchEvidenceFinalizedForInterval(
+			untracedWindowEndingBetweenPingsSchedulerSamples);
+	const auto initialHistoryBudgets
+		= CacheHistoryWorkBudgetsForRegression(0U, false);
+	const auto initialHistoryStartupBudgets
+		= CacheHistoryWorkBudgetsForRegression(0U, true);
+	const auto recurringHistoryBudgets
+		= CacheHistoryWorkBudgetsForRegression(1U, false);
+	const auto startupHistoryBudgets
+		= CacheHistoryWorkBudgetsForRegression(1U, true);
+	const auto injectedStartupUnderBudgetEstimate = EstimateMainThreadWork(
+		99'000'000, 99'000'000, u"R"_q, {0, 99'000'000});
+	const auto injectedStartupUnderBudgetAssessment
+		= AssessMainThreadWorkBudget(injectedStartupUnderBudgetEstimate,
+									 99'000'000,
+									 startupHistoryBudgets.startupNanoseconds);
+	auto injectedStartupUnderBudgetRun = MainThreadWorkBudgetRun();
+	const auto injectedStartupWorkWithinBudget
+		= injectedStartupUnderBudgetRun.Observe(
+			injectedStartupUnderBudgetAssessment, 99'000'000,
+			startupHistoryBudgets.startupNanoseconds);
+	const auto injectedStartupOverBudgetEstimate = EstimateMainThreadWork(
+		101'000'000, 101'000'000, u"R"_q, {0, 101'000'000});
+	const auto injectedStartupOverBudgetAssessment = AssessMainThreadWorkBudget(
+		injectedStartupOverBudgetEstimate, 101'000'000,
+		startupHistoryBudgets.startupNanoseconds);
+	auto injectedStartupOverBudgetRun = MainThreadWorkBudgetRun();
+	const auto injectedStartupWorkOverBudget
+		= injectedStartupOverBudgetRun.Observe(
+			injectedStartupOverBudgetAssessment, 101'000'000,
+			startupHistoryBudgets.startupNanoseconds);
 	const auto noInWindowSamples
 		= EstimateMainThreadWork(18'000'000, 225'000'000, u"RRR"_q,
 								 {226'000'000, 227'000'000, 228'000'000});
@@ -13135,6 +13988,84 @@ void AccumulateMainThreadWorkEstimate(qint64 &aggregateNanoseconds,
 	const auto bracketedEstimate = EstimateMainThreadWork(
 		45'000'000, bracketedWindow.durationNanoseconds, bracketed.trace,
 		bracketed.sampleOffsetsNanoseconds, bracketed.before, bracketed.after);
+	const auto leadingBoundaryCpuWindow = SchedulerTraceForInterval(
+		MainThreadWorkInterval{
+			.durationNanoseconds = 65'000'000,
+			.startedAtSteadyNanoseconds = 1'000'000'000,
+			.mainThreadCpuStartNanoseconds = 100'000'000,
+			.mainThreadCpuEndNanoseconds = 138'000'000,
+		},
+		std::vector<Core::UiStallWatchdog::SchedulerSampleEvidence>{
+			{.sampledAtSteadyNanoseconds = 999'829'708,
+			 .state = 'W',
+			 .mainThreadCpuNanoseconds = 100'000'000},
+			{.sampledAtSteadyNanoseconds = 1'012'127'125,
+			 .state = 'R',
+			 .mainThreadCpuNanoseconds = 108'000'000},
+			{.sampledAtSteadyNanoseconds = 1'020'992'875,
+			 .state = 'R',
+			 .mainThreadCpuNanoseconds = 113'000'000},
+			{.sampledAtSteadyNanoseconds = 1'022'170'375,
+			 .state = 'R',
+			 .mainThreadCpuNanoseconds = 114'000'000},
+			{.sampledAtSteadyNanoseconds = 1'031'526'416,
+			 .state = 'R',
+			 .mainThreadCpuNanoseconds = 119'000'000},
+			{.sampledAtSteadyNanoseconds = 1'043'445'875,
+			 .state = 'R',
+			 .mainThreadCpuNanoseconds = 126'000'000},
+			{.sampledAtSteadyNanoseconds = 1'049'532'458,
+			 .state = 'R',
+			 .mainThreadCpuNanoseconds = 130'000'000},
+			{.sampledAtSteadyNanoseconds = 1'055'929'166,
+			 .state = 'R',
+			 .mainThreadCpuNanoseconds = 135'000'000},
+			{.sampledAtSteadyNanoseconds = 1'064'231'833,
+			 .state = 'R',
+			 .mainThreadCpuNanoseconds = 137'000'000},
+			{.sampledAtSteadyNanoseconds = 1'074'315'416,
+			 .state = 'U',
+			 .mainThreadCpuNanoseconds = 138'000'000},
+		});
+	const auto leadingBoundaryCpuEstimate = EstimateMainThreadWork(
+		38'000'000, 65'000'000, leadingBoundaryCpuWindow);
+	const auto leadingBoundaryCpuAssessment = AssessMainThreadWorkBudget(
+		leadingBoundaryCpuEstimate, 38'000'000, kMaxChatSwitchNanoseconds);
+	auto leadingBoundaryCpuRun = MainThreadWorkBudgetRun();
+	const auto leadingBoundaryCpuWithinBudget = leadingBoundaryCpuRun.Observe(
+		leadingBoundaryCpuAssessment, 65'000'000, kMaxChatSwitchNanoseconds,
+		1'000'000'000);
+	const auto handlerTailCpuWindow = SchedulerTraceForInterval(
+		MainThreadWorkInterval{
+			.durationNanoseconds = 16'000'000,
+			.startedAtSteadyNanoseconds = 2'000'000'000,
+			.mainThreadCpuStartNanoseconds = 100'000'000,
+			.mainThreadCpuEndNanoseconds = 102'000'000,
+		},
+		std::vector<Core::UiStallWatchdog::SchedulerSampleEvidence>{
+			{.sampledAtSteadyNanoseconds = 2'002'000'000,
+			 .state = 'R',
+			 .mainThreadCpuNanoseconds = 101'000'000},
+			{.sampledAtSteadyNanoseconds = 2'008'000'000,
+			 .state = 'R',
+			 .mainThreadCpuNanoseconds = 101'000'000},
+			{.sampledAtSteadyNanoseconds = 2'010'000'000,
+			 .state = 'W',
+			 .mainThreadCpuNanoseconds = 101'000'000},
+			{.sampledAtSteadyNanoseconds = 2'017'000'000,
+			 .state = 'U',
+			 .mainThreadCpuNanoseconds = 102'000'000},
+		});
+	const auto handlerTailCpuEstimate
+		= EstimateMainThreadWork(2'000'000, 16'000'000, handlerTailCpuWindow);
+	const auto handlerTailCpuAssessment = AssessMainThreadWorkBudget(
+		handlerTailCpuEstimate, 2'000'000, 10'500'000);
+	auto handlerTailCpuWindowWithoutEnd = handlerTailCpuWindow;
+	handlerTailCpuWindowWithoutEnd.mainThreadCpuEndNanoseconds = -1;
+	const auto handlerTailCpuEstimateWithoutEnd = EstimateMainThreadWork(
+		2'000'000, 16'000'000, handlerTailCpuWindowWithoutEnd);
+	const auto handlerTailCpuAssessmentWithoutEnd = AssessMainThreadWorkBudget(
+		handlerTailCpuEstimateWithoutEnd, 2'000'000, 10'500'000);
 	auto waitingBeforeSamples = bracketedSamples;
 	waitingBeforeSamples.front().state = 'W';
 	const auto waitingBefore
@@ -13364,6 +14295,9 @@ void AccumulateMainThreadWorkEstimate(qint64 &aggregateNanoseconds,
 			.schedulerSampleOffsetsNanoseconds = partialPingSchedulerOffsets,
 			.schedulerTraceComplete = true,
 	};
+	// Keep this ack pending: its next ping is due before the window ends.
+	auto overduePartialPingAcknowledgement = partialPingAcknowledgement;
+	overduePartialPingAcknowledgement.pingIntervalNanoseconds = 5'000'000;
 	auto partialPingStall = corroboratingStall;
 	partialPingStall.startedAt
 		= corroboratedStartupGap.startedAt.addMSecs(-2).toString(
@@ -13385,7 +14319,7 @@ void AccumulateMainThreadWorkEstimate(qint64 &aggregateNanoseconds,
 	const auto partialPingAcknowledgementWindow = SchedulerTraceForInterval(
 		corroboratedStartupGap,
 		std::vector<Core::UiStallWatchdog::PingAcknowledgementEvidence>{
-			partialPingAcknowledgement,
+			overduePartialPingAcknowledgement,
 		});
 	const auto partialPingStallWindow
 		= SchedulerTraceForInterval(corroboratedStartupGap, partialPingStall);
@@ -13629,333 +14563,493 @@ void AccumulateMainThreadWorkEstimate(qint64 &aggregateNanoseconds,
 	AccumulateMainThreadWorkEstimate(callbackEstimate, 20'000'000);
 	AccumulateMainThreadWorkEstimate(callbackEstimate, -1);
 	AccumulateMainThreadWorkEstimate(callbackEstimate, 12'000'000);
-	return (gap25.blockedNanoseconds == 0)
-		   && (gap25.estimatedWorkNanoseconds == 0)
-		   && (gap26.blockedNanoseconds == -1)
-		   && (gap26.estimatedWorkNanoseconds == 104'000'000)
-		   && (waitingEnd.blockedNanoseconds == 25'000'000)
-		   && (waitingEnd.estimatedWorkNanoseconds == 25'000'000)
-		   && (uninterruptibleMiddle.blockedNanoseconds == 50'000'000)
-		   && (uninterruptibleMiddle.estimatedWorkNanoseconds == 50'000'000)
-		   && (uncoveredEdges.blockedNanoseconds == 25'000'000)
-		   && (uncoveredEdges.estimatedWorkNanoseconds == 25'000'000)
-		   && (uncoveredEdge26.blockedNanoseconds == -1)
-		   && (uncoveredEdge26.estimatedWorkNanoseconds == 100'000'000)
-		   && (blocked.blockedNanoseconds == 101'000'000)
-		   && (blocked.estimatedWorkNanoseconds == 101'000'000)
-		   && !MainThreadWorkEstimateWithinBudget(
-			   0, 101'000'000, QString(int(startupOffsets.size()), QChar(u'W')),
-			   startupOffsets, 100'000'000)
-		   && (runnable.blockedNanoseconds == 0)
-		   && (runnable.estimatedWorkNanoseconds == 18'000'000)
-		   && MainThreadWorkEstimateWithinBudget(
-			   18'000'000, 225'000'000,
-			   QString(int(switchOffsets.size()), QChar(u'R')), switchOffsets,
-			   kMaxChatSwitchNanoseconds)
-		   && (unknownState.blockedNanoseconds == -1)
-		   && (unknownState.estimatedWorkNanoseconds == 225'000'000)
-		   && !unknownStateAssessment.schedulerEvidenceAvailable
-		   && (unknownStateAssessment.workNanoseconds == 225'000'000)
-		   && !unknownStateAssessment.withinBudget
-		   && !MainThreadWorkEstimateWithinBudget(
-			   18'000'000, 225'000'000,
-			   QString(int(switchOffsets.size()), QChar(u'?')), switchOffsets,
-			   100'000'000)
-		   && (partiallyUnknownState.blockedNanoseconds == -1)
-		   && (partiallyUnknownState.estimatedWorkNanoseconds == 225'000'000)
-		   && (negativeOffset.blockedNanoseconds == -1)
-		   && (negativeOffset.estimatedWorkNanoseconds == 225'000'000)
-		   && !MainThreadWorkEstimateWithinBudget(18'000'000, 225'000'000,
-												  blockedTailTrace,
-												  switchOffsets, 100'000'000)
-		   && (blockedTail.blockedNanoseconds == blockedTailNanoseconds)
-		   && (blockedTail.estimatedWorkNanoseconds
-			   == 18'000'000 + blockedTailNanoseconds)
-		   && (clustered.blockedNanoseconds == -1)
-		   && (clustered.estimatedWorkNanoseconds == 200'000'000)
-		   && MainThreadWorkEstimateWithinBudget(
-			   0, 200'000'000, u"RRR"_q, {0, 1'000'000, 2'000'000}, 100'000'000)
-		   && (uncoveredMiddle.blockedNanoseconds == -1)
-		   && (uncoveredMiddle.estimatedWorkNanoseconds == 200'000'000)
-		   && MainThreadWorkEstimateWithinBudget(
-			   0, 200'000'000, QString(5, QChar(u'R')),
-			   {0, 5'000'000, 10'000'000, 190'000'000, 200'000'000},
-			   100'000'000)
-		   && (uncoveredWaitingGap.blockedNanoseconds == -1)
-		   && (uncoveredWaitingGap.estimatedWorkNanoseconds == 200'000'000)
-		   && (uncoveredUninterruptibleGap.blockedNanoseconds == -1)
-		   && (uncoveredUninterruptibleGap.estimatedWorkNanoseconds
-			   == 200'000'000)
-		   && (uncoveredUnknownGap.blockedNanoseconds == -1)
-		   && (uncoveredUnknownGap.estimatedWorkNanoseconds == 200'000'000)
-		   && (uncoveredRunnableGap.blockedNanoseconds == -1)
-		   && (uncoveredRunnableGap.estimatedWorkNanoseconds == 200'000'000)
-		   && !uncoveredWaitingGapAssessment.schedulerEvidenceAvailable
-		   && (uncoveredWaitingGapAssessment.workNanoseconds == 200'000'000)
-		   && !uncoveredWaitingGapAssessment.withinBudget
-		   && !MainThreadWorkEstimateWithinBudget(
-			   1'000'000, 200'000'000, u"RW"_q, {0, 30'000'000}, 100'000'000)
-		   && !uncoveredUninterruptibleGapAssessment.schedulerEvidenceAvailable
-		   && (uncoveredUninterruptibleGapAssessment.workNanoseconds
-			   == 200'000'000)
-		   && !uncoveredUninterruptibleGapAssessment.withinBudget
-		   && !MainThreadWorkEstimateWithinBudget(
-			   1'000'000, 200'000'000, u"RU"_q, {0, 30'000'000}, 100'000'000)
-		   && !uncoveredUnknownGapAssessment.schedulerEvidenceAvailable
-		   && (uncoveredUnknownGapAssessment.workNanoseconds == 200'000'000)
-		   && !uncoveredUnknownGapAssessment.withinBudget
-		   && !MainThreadWorkEstimateWithinBudget(
-			   1'000'000, 200'000'000, u"R?"_q, {0, 30'000'000}, 100'000'000)
-		   && !uncoveredRunnableGapAssessment.schedulerEvidenceAvailable
-		   && (uncoveredRunnableGapAssessment.workNanoseconds == 1'000'000)
-		   && uncoveredRunnableGapAssessment.withinBudget
-		   && MainThreadWorkEstimateWithinBudget(
-			   1'000'000, 200'000'000, u"RR"_q, {0, 30'000'000}, 100'000'000)
-		   && !uncoveredWaitingGapWithinBudget
-		   && !uncoveredWaitingGapRun.WithinBudget()
-		   && !uncoveredUninterruptibleGapWithinBudget
-		   && !uncoveredUninterruptibleGapRun.WithinBudget()
-		   && !uncoveredUnknownGapWithinBudget
-		   && !uncoveredUnknownGapRun.WithinBudget()
-		   && !uncoveredRunnableGapWithinBudget
-		   && uncoveredRunnableGapRun.WithinBudget()
-		   && !Core::UiStallWatchdog::SchedulerTraceCoversDuration(
-			   u"RRR"_q, {0, 1'000'000, 2'000'000}, 200'000'000)
-		   && (sparseStartup.blockedNanoseconds == 50'000'000)
-		   && (sparseStartup.estimatedWorkNanoseconds == 68'000'000)
-		   && MainThreadWorkEstimateWithinBudget(
-			   18'000'000, 225'000'000, sparseStartupTrace,
-			   sparseStartupOffsets, 100'000'000)
-		   && (sixMillisecondGap.blockedNanoseconds == 3'000'000)
-		   && (sixMillisecondGap.estimatedWorkNanoseconds == 21'000'000)
-		   && MainThreadWorkEstimateWithinBudget(
-			   18'000'000, 225'000'000,
-			   QString(int(sixMillisecondGapOffsets.size()), QChar(u'R')),
-			   sixMillisecondGapOffsets, 100'000'000)
-		   && (sparseBlockedTail.blockedNanoseconds == -1)
-		   && (sparseBlockedTail.estimatedWorkNanoseconds == 225'000'000)
-		   && (sparseBlockedTailAssessment.workNanoseconds == 225'000'000)
-		   && !sparseBlockedTailAssessment.withinBudget
-		   && !sparseBlockedTailWithinBudget
-		   && !sparseBlockedTailRun.WithinBudget()
-		   && !MainThreadWorkEstimateWithinBudget(
-			   18'000'000, 225'000'000, u"RRRW"_q, sparseBlockedTailOffsets,
-			   100'000'000)
-		   && !MainThreadWorkEstimateWithinBudget(
-			   52'107'000, 227'000'000,
-			   QString(int(slowSwitchOffsets.size()), QChar(u'R')),
-			   slowSwitchOffsets, kMaxChatSwitchNanoseconds)
-		   && (initialSelectionOverBudget.estimatedWorkNanoseconds
-			   == 52'107'000)
-		   && !continuousTimelineWindow.capturePending
-		   && (continuousTimelineWindow.trace.size() == 226)
-		   && (continuousTimelineEstimate.blockedNanoseconds == 0)
-		   && (continuousTimelineEstimate.estimatedWorkNanoseconds
-			   == 18'000'000)
-		   && MainThreadWorkEstimateWithinBudget(
-			   18'000'000, sparseStartupWindow.durationNanoseconds,
-			   continuousTimelineWindow.trace,
-			   continuousTimelineWindow.sampleOffsetsNanoseconds,
-			   kMaxChatSwitchNanoseconds)
-		   && !clusteredTimelineWindow.capturePending
-		   && (clusteredTimelineEstimate.blockedNanoseconds == -1)
-		   && (clusteredTimelineEstimate.estimatedWorkNanoseconds
-			   == sparseStartupWindow.durationNanoseconds)
-		   && MainThreadWorkEstimateWithinBudget(
-			   18'000'000, sparseStartupWindow.durationNanoseconds,
-			   clusteredTimelineWindow.trace,
-			   clusteredTimelineWindow.sampleOffsetsNanoseconds, 100'000'000)
-		   && !completedWithoutTimelineCoverage.capturePending
-		   && completedWithoutTimelineCoverage.trace.isEmpty()
-		   && (completedWithoutTimelineCoverageEstimate.blockedNanoseconds
-			   == -1)
-		   && (completedWithoutTimelineCoverageEstimate.estimatedWorkNanoseconds
-			   == sparseStartupWindow.durationNanoseconds)
-		   && (boundedSwitch.estimatedWorkNanoseconds == 45'500'000)
-		   && MainThreadWorkEstimateWithinBudget(
-			   45'500'000, 227'000'000,
-			   QString(int(slowSwitchOffsets.size()), QChar(u'R')),
-			   slowSwitchOffsets, kMaxChatSwitchNanoseconds)
-		   && !MainThreadWorkEstimateWithinBudget(
-			   52'107'000, 227'000'000,
-			   QString(int(slowSwitchOffsets.size()), QChar(u'R')),
-			   slowSwitchOffsets, kMaxChatSwitchNanoseconds)
-		   && Core::UiStallWatchdog::SchedulerTraceCoversDuration(
-			   capturedWindow.trace, capturedWindow.sampleOffsetsNanoseconds,
-			   acknowledgementWindow.durationNanoseconds)
-		   && (capturedWindowEstimate.estimatedWorkNanoseconds == 18'000'000)
-		   && !corroboratedStartupWork.schedulerSamples.capturePending
-		   && (corroboratedStartupWork.estimate.estimatedWorkNanoseconds
-			   == 77'495'000)
-		   && partialPingAcknowledgementWindow.capturePending
-		   && partialPingStallWindow.capturePending
-		   && (partialPingCorroboratedStalls.size() == 1)
-		   && (CountUncoveredStartupHeartbeatGaps(
-				   std::vector<MainThreadWorkInterval>{corroboratedStartupGap},
-				   partialPingCorroboratedStalls,
-				   std::vector<
-					   Core::UiStallWatchdog::PingAcknowledgementEvidence>{
-					   partialPingAcknowledgement,
-				   })
-			   == 0)
-		   && !partialPingStartupWork.schedulerSamples.capturePending
-		   && partialPingStartupWork.schedulerSamples.before
-		   && (partialPingStartupWork.schedulerSamples.before->state == 'R')
-		   && (partialPingStartupWork.schedulerSamples.before
-				   ->distanceNanoseconds
-			   == 1'000'000)
-		   && partialPingStartupWork.schedulerSamples.after
-		   && (partialPingStartupWork.schedulerSamples.after->state == 'R')
-		   && (partialPingStartupWork.schedulerSamples.after
-				   ->distanceNanoseconds
-			   == 1'000'000)
-		   && (partialPingStartupWork.estimate.estimatedWorkNanoseconds
-			   == 23'495'000)
-		   && MainThreadEstimatedWorkWithinBudget(
-			   partialPingStartupWork.estimate.estimatedWorkNanoseconds,
-			   kMaxStartupHeartbeatThreadWorkNanoseconds)
-		   && incompleteCorroboratedStartupWork.schedulerSamples.capturePending
-		   && (incompleteCorroboratedStartupWork.estimate
-				   .estimatedWorkNanoseconds
-			   == corroboratedStartupGap.durationNanoseconds)
-		   && (overBudgetCorroboratedStartupWork.estimate
-				   .estimatedWorkNanoseconds
-			   == corroboratedStartupGap.durationNanoseconds)
-		   && !MainThreadEstimatedWorkWithinBudget(
-			   overBudgetCorroboratedStartupWork.estimate
-				   .estimatedWorkNanoseconds,
-			   100'000'000)
-		   && !sparseStartupCapture.capturePending
-		   && (sparseStartupCapture.trace == sparseStartupTrace)
-		   && (sparseStartupCaptureEstimate.blockedNanoseconds == 50'000'000)
-		   && (sparseStartupCaptureEstimate.estimatedWorkNanoseconds
-			   == 68'000'000)
-		   && MainThreadWorkEstimateWithinBudget(
-			   18'000'000, sparseStartupWindow.durationNanoseconds,
-			   sparseStartupCapture.trace,
-			   sparseStartupCapture.sampleOffsetsNanoseconds, 100'000'000)
-		   && uncapturedWindow.capturePending
-		   && pendingFirstAccessTimeoutSamples.capturePending
-		   && (pendingFirstAccessTimeoutSamples.trace == u"WWWWWWW"_q)
-		   && (pendingFirstAccessTimeoutSamples.sampleOffsetsNanoseconds.back()
-			   == 60'000'000)
-		   && !pendingFirstAccessAssessment.schedulerEvidenceAvailable
-		   && (pendingFirstAccessAssessment.workNanoseconds == 90'000'000)
-		   && !pendingFirstAccessAssessment.withinBudget
-		   && !MainThreadWorkBudgetIsUntracedWallOverrun(
-			   pendingFirstAccessAssessment, 90'000'000,
-			   kMaxChatSwitchNanoseconds)
-		   && !pendingFirstAccessWithinBudget
-		   && !pendingFirstAccessRun.WithinBudget()
-		   && pendingAcknowledgementWindow.capturePending
-		   && (pendingAcknowledgementWindow.trace == u"WWWWWWW"_q)
-		   && (pendingAcknowledgementWindow.sampleOffsetsNanoseconds.back()
-			   == 60'000'000)
-		   && pendingStartupWork.schedulerSamples.capturePending
-		   && (pendingStartupWork.schedulerSamples.trace == u"WWWWWWW"_q)
-		   && (pendingStartupAssessment.workNanoseconds == 110'000'000)
-		   && !pendingStartupAssessment.withinBudget
-		   && !pendingStartupWithinBudget && !pendingStartupRun.WithinBudget()
-		   && (incompleteWindow.trace == QString(5, QChar(u'R')))
-		   && incompleteWindow.capturePending
-		   && completedWithoutTraceWindow.trace.isEmpty()
-		   && completedWithoutTraceWindow.capturePending
-		   && (noSamples.blockedNanoseconds == -1)
-		   && (noSamples.estimatedWorkNanoseconds == 101'000'000)
-		   && !runnerSchedulingNoiseAssessment.schedulerEvidenceAvailable
-		   && (runnerSchedulingNoiseAssessment.workNanoseconds == 1'138'000)
-		   && runnerSchedulingNoiseAssessment.withinBudget
-		   && missingTraceLongWallAssessment.withinBudget
-		   && !MainThreadWorkBudgetEvidenceWithinBudget(
-			   missingTraceLongWallAssessment, 200'000'000, 100'000'000)
-		   && !missingTraceCpuStallAssessment.schedulerEvidenceAvailable
-		   && (missingTraceCpuStallAssessment.workNanoseconds == 101'000'000)
-		   && !missingTraceCpuStallAssessment.withinBudget
-		   && !MainThreadWorkBudgetEvidenceWithinBudget(
-			   missingTraceInitialSelectionAssessment, 135'000'000,
-			   kMaxChatSwitchNanoseconds)
-		   && !MainThreadWorkBudgetIsUntracedWallOverrun(
-			   missingTraceInitialSelectionAssessment, 135'000'000,
-			   kMaxChatSwitchNanoseconds)
-		   && !missingTraceHighCpuInitialSelectionGateWithinBudget
-		   && !untracedInitialSelectionWithHighCpu.WithinBudget()
-		   && (missingTraceLowCpuInitialSelectionAssessment.workNanoseconds
-			   == 1'138'000)
-		   && !missingTraceLowCpuInitialSelectionGateWithinBudget
-		   && oneUntracedWallOverrun.WithinBudget()
-		   && overlappingUntracedWallOverruns.WithinBudget()
-		   && firstDialogsRunnerPause.WithinBudget()
-		   && !missingTraceFirstDialogsGateWithinBudget
-		   && !twoUntracedWallOverruns.WithinBudget()
-		   && !tracedBlockedRun.WithinBudget()
-		   && !untracedCpuStallRun.WithinBudget()
-		   && !blockedSelectionAssessment.withinBudget
-		   && MainThreadCpuWorkWithinBudget(1'000'000,
-											kMaxChatSwitchNanoseconds)
-		   && blockedStartupAssessment.schedulerEvidenceAvailable
-		   && (blockedStartupAssessment.workNanoseconds == 101'000'000)
-		   && !blockedStartupAssessment.withinBudget
-		   && blockedSelectionAssessment.schedulerEvidenceAvailable
-		   && (blockedSelectionAssessment.workNanoseconds == 60'000'000)
-		   && !blockedSelectionAssessment.withinBudget
-		   && MainThreadWorkEstimateWithinBudget(0, 101'000'000, u"none"_q, {},
-												 100'000'000)
-		   && (noInWindowSamples.blockedNanoseconds == -1)
-		   && (noInWindowSamples.estimatedWorkNanoseconds == 225'000'000)
-		   && (bracketedEstimate.estimatedWorkNanoseconds == 45'000'000)
-		   && (waitingBeforeEstimate.estimatedWorkNanoseconds == 50'000'000)
-		   && (waitingAfterEstimate.estimatedWorkNanoseconds == 50'000'000)
-		   && (edge25Estimate.estimatedWorkNanoseconds == 45'000'000)
-		   && (edge26Estimate.blockedNanoseconds == -1)
-		   && (edge26Estimate.estimatedWorkNanoseconds == 60'000'000)
-		   && (unknownBeforeEstimate.blockedNanoseconds == -1)
-		   && (unknownBeforeEstimate.estimatedWorkNanoseconds == 60'000'000)
-		   && (withoutBoundaries.estimatedWorkNanoseconds == 55'000'000)
-		   && (overCpuBudget.estimatedWorkNanoseconds == 52'000'000)
-		   && (overlappingSampleIntervals.blockedNanoseconds == 42'143'125)
-		   && (overlappingSampleIntervals.estimatedWorkNanoseconds
-			   == 43'293'250)
-		   && MainThreadEstimatedWorkWithinBudget(
-			   overlappingSampleIntervals.estimatedWorkNanoseconds,
-			   kMaxChatSwitchNanoseconds)
-		   && (cpuOverlapEstimate.blockedNanoseconds == 35'000'000)
-		   && (cpuOverlapEstimate.estimatedWorkNanoseconds == 75'000'000)
-		   && (delayedCpuAccountingEstimate.blockedNanoseconds == 5'000'000)
-		   && (delayedCpuAccountingEstimate.estimatedWorkNanoseconds
-			   == 53'000'000)
-		   && !MainThreadEstimatedWorkWithinBudget(
-			   delayedCpuAccountingEstimate.estimatedWorkNanoseconds,
-			   kMaxChatSwitchNanoseconds)
-		   && (sparseCpuEstimate.blockedNanoseconds == -1)
-		   && (sparseCpuEstimate.estimatedWorkNanoseconds == 65'000'000)
-		   && (cpuOverWall.estimatedWorkNanoseconds >= 52'000'000)
-		   && (nearBudgetMissingScheduler.estimatedWorkNanoseconds
-			   == 50'010'000)
-		   && !MainThreadEstimatedWorkWithinBudget(
-			   nearBudgetMissingScheduler.estimatedWorkNanoseconds,
-			   kMaxChatSwitchNanoseconds)
-		   && (nearBudgetIncompleteScheduler.blockedNanoseconds == -1)
-		   && (nearBudgetIncompleteScheduler.estimatedWorkNanoseconds
-			   == 50'010'000)
-		   && !MainThreadEstimatedWorkWithinBudget(
-			   nearBudgetIncompleteScheduler.estimatedWorkNanoseconds,
-			   kMaxChatSwitchNanoseconds)
-		   && MainThreadWorkEstimateWithinBudget(
-			   18'000'000, 225'000'000, u"RRR"_q,
-			   {226'000'000, 227'000'000, 228'000'000}, 100'000'000)
-		   && (blockedAttachMenuCallback.estimatedWorkNanoseconds > 50'000'000)
-		   && !MainThreadWorkEstimateWithinBudget(
-			   12'000'000, 200'000'000,
-			   QString(int(callbackOffsets.size()), QChar(u'W')),
-			   callbackOffsets, 50'000'000)
-		   && (unmeasuredAttachMenuCallback.estimatedWorkNanoseconds
-			   == 200'000'000)
-		   && !MainThreadEstimatedWorkWithinBudget(
-			   unmeasuredAttachMenuCallback.estimatedWorkNanoseconds,
-			   50'000'000)
-		   && (callbackEstimate == -1)
-		   && !MainThreadEstimatedWorkWithinBudget(callbackEstimate,
-												   50'000'000);
+	const auto boundarySampleMatches
+		= [](const std::optional<SchedulerBoundarySample> &sample) {
+			  if (!sample.has_value()) {
+				  return false;
+			  }
+			  return (sample->state == 'R')
+					 && (sample->distanceNanoseconds == 1'000'000);
+		  };
+	const auto partialPingStartupBeforeSampleMatches
+		= boundarySampleMatches(partialPingStartupWork.schedulerSamples.before);
+	const auto partialPingStartupAfterSampleMatches
+		= boundarySampleMatches(partialPingStartupWork.schedulerSamples.after);
+	// Evaluate every fixture, so an early failure does not hide later checks.
+	auto checks = FixtureChecks{(gap25.blockedNanoseconds == 0)};
+	if (!checks.allPassed) {
+		checks.firstFailed = 1;
+	}
+	const auto &allChecksPassed =
+            checks && (gap25.estimatedWorkNanoseconds == 0) &&
+            (gap26.blockedNanoseconds == -1) &&
+            (gap26.estimatedWorkNanoseconds == 104'000'000) &&
+            (waitingEnd.blockedNanoseconds == 25'000'000) &&
+            (waitingEnd.estimatedWorkNanoseconds == 25'000'000) &&
+            (uninterruptibleMiddle.blockedNanoseconds == 50'000'000) &&
+            (uninterruptibleMiddle.estimatedWorkNanoseconds == 50'000'000) &&
+            (uncoveredEdges.blockedNanoseconds == 25'000'000) &&
+            (uncoveredEdges.estimatedWorkNanoseconds == 25'000'000) &&
+            (uncoveredEdge26.blockedNanoseconds == -1) &&
+            (uncoveredEdge26.estimatedWorkNanoseconds == 100'000'000) &&
+            (blocked.blockedNanoseconds == 101'000'000) &&
+            (blocked.estimatedWorkNanoseconds == 101'000'000) &&
+            !MainThreadWorkEstimateWithinBudget(
+                0, 101'000'000,
+                QString(int(startupOffsets.size()), QChar(u'W')),
+                startupOffsets, 100'000'000) &&
+            (runnable.blockedNanoseconds == 0) &&
+            (runnable.estimatedWorkNanoseconds == 18'000'000) &&
+            MainThreadWorkEstimateWithinBudget(
+                18'000'000, 225'000'000,
+                QString(int(switchOffsets.size()), QChar(u'R')), switchOffsets,
+                kMaxChatSwitchNanoseconds) &&
+            (unknownState.blockedNanoseconds == -1) &&
+            (unknownState.estimatedWorkNanoseconds == 225'000'000) &&
+            !unknownStateAssessment.schedulerEvidenceAvailable &&
+            (unknownStateAssessment.workNanoseconds == 225'000'000) &&
+            !unknownStateAssessment.withinBudget &&
+            !MainThreadWorkEstimateWithinBudget(
+                18'000'000, 225'000'000,
+                QString(int(switchOffsets.size()), QChar(u'?')), switchOffsets,
+                100'000'000) &&
+            (partiallyUnknownState.blockedNanoseconds == -1) &&
+            (partiallyUnknownState.estimatedWorkNanoseconds == 225'000'000) &&
+            (negativeOffset.blockedNanoseconds == -1) &&
+            (negativeOffset.estimatedWorkNanoseconds == 225'000'000) &&
+            !MainThreadWorkEstimateWithinBudget(18'000'000, 225'000'000,
+                                                blockedTailTrace, switchOffsets,
+                                                100'000'000) &&
+            (blockedTail.blockedNanoseconds == blockedTailNanoseconds) &&
+            (blockedTail.estimatedWorkNanoseconds ==
+             18'000'000 + blockedTailNanoseconds) &&
+            (clustered.blockedNanoseconds == -1) &&
+            (clustered.estimatedWorkNanoseconds == 200'000'000) &&
+            MainThreadWorkEstimateWithinBudget(0, 200'000'000, u"RRR"_q,
+                                               {0, 1'000'000, 2'000'000},
+                                               100'000'000) &&
+            (uncoveredMiddle.blockedNanoseconds == -1) &&
+            (uncoveredMiddle.estimatedWorkNanoseconds == 200'000'000) &&
+            MainThreadWorkEstimateWithinBudget(
+                0, 200'000'000, QString(5, QChar(u'R')),
+                {0, 5'000'000, 10'000'000, 190'000'000, 200'000'000},
+                100'000'000) &&
+            (uncoveredWaitingGap.blockedNanoseconds == -1) &&
+            (uncoveredWaitingGap.estimatedWorkNanoseconds == 200'000'000) &&
+            (uncoveredUninterruptibleGap.blockedNanoseconds == -1) &&
+            (uncoveredUninterruptibleGap.estimatedWorkNanoseconds ==
+             200'000'000) &&
+            (uncoveredUnknownGap.blockedNanoseconds == -1) &&
+            (uncoveredUnknownGap.estimatedWorkNanoseconds == 200'000'000) &&
+            (uncoveredRunnableGap.blockedNanoseconds == -1) &&
+            (uncoveredRunnableGap.estimatedWorkNanoseconds == 200'000'000) &&
+            !uncoveredWaitingGapAssessment.schedulerEvidenceAvailable &&
+            (uncoveredWaitingGapAssessment.workNanoseconds == 200'000'000) &&
+            !uncoveredWaitingGapAssessment.withinBudget &&
+            !MainThreadWorkEstimateWithinBudget(1'000'000, 200'000'000, u"RW"_q,
+                                                {0, 30'000'000}, 100'000'000) &&
+            !uncoveredUninterruptibleGapAssessment.schedulerEvidenceAvailable &&
+            (uncoveredUninterruptibleGapAssessment.workNanoseconds ==
+             200'000'000) &&
+            !uncoveredUninterruptibleGapAssessment.withinBudget &&
+            !MainThreadWorkEstimateWithinBudget(1'000'000, 200'000'000, u"RU"_q,
+                                                {0, 30'000'000}, 100'000'000) &&
+            !uncoveredUnknownGapAssessment.schedulerEvidenceAvailable &&
+            (uncoveredUnknownGapAssessment.workNanoseconds == 200'000'000) &&
+            !uncoveredUnknownGapAssessment.withinBudget &&
+            !MainThreadWorkEstimateWithinBudget(1'000'000, 200'000'000, u"R?"_q,
+                                                {0, 30'000'000}, 100'000'000) &&
+            !uncoveredRunnableGapAssessment.schedulerEvidenceAvailable &&
+            (uncoveredRunnableGapAssessment.workNanoseconds == 1'000'000) &&
+            uncoveredRunnableGapAssessment.withinBudget &&
+            MainThreadWorkEstimateWithinBudget(1'000'000, 200'000'000, u"RR"_q,
+                                               {0, 30'000'000}, 100'000'000) &&
+            !uncoveredWaitingGapWithinBudget &&
+            !uncoveredWaitingGapRun.WithinBudget() &&
+            !uncoveredUninterruptibleGapWithinBudget &&
+            !uncoveredUninterruptibleGapRun.WithinBudget() &&
+            !uncoveredUnknownGapWithinBudget &&
+            !uncoveredUnknownGapRun.WithinBudget() &&
+            !uncoveredRunnableGapWithinBudget &&
+            uncoveredRunnableGapRun.WithinBudget() &&
+            !Core::UiStallWatchdog::SchedulerTraceCoversDuration(
+                u"RRR"_q, {0, 1'000'000, 2'000'000}, 200'000'000) &&
+            (sparseStartup.blockedNanoseconds == 50'000'000) &&
+            (sparseStartup.estimatedWorkNanoseconds == 68'000'000) &&
+            MainThreadWorkEstimateWithinBudget(
+                18'000'000, 225'000'000, sparseStartupTrace,
+                sparseStartupOffsets, 100'000'000) &&
+            (sixMillisecondGap.blockedNanoseconds == 3'000'000) &&
+            (sixMillisecondGap.estimatedWorkNanoseconds == 21'000'000) &&
+            MainThreadWorkEstimateWithinBudget(
+                18'000'000, 225'000'000,
+                QString(int(sixMillisecondGapOffsets.size()), QChar(u'R')),
+                sixMillisecondGapOffsets, 100'000'000) &&
+            (sparseBlockedTail.blockedNanoseconds == -1) &&
+            (sparseBlockedTail.estimatedWorkNanoseconds == 225'000'000) &&
+            (sparseBlockedTailAssessment.workNanoseconds == 225'000'000) &&
+            !sparseBlockedTailAssessment.withinBudget &&
+            !sparseBlockedTailWithinBudget &&
+            !sparseBlockedTailRun.WithinBudget() &&
+            !MainThreadWorkEstimateWithinBudget(
+                18'000'000, 225'000'000, u"RRRW"_q, sparseBlockedTailOffsets,
+                100'000'000) &&
+            !MainThreadWorkEstimateWithinBudget(
+                52'107'000, 227'000'000,
+                QString(int(slowSwitchOffsets.size()), QChar(u'R')),
+                slowSwitchOffsets, kMaxChatSwitchNanoseconds) &&
+            (initialSelectionOverBudget.estimatedWorkNanoseconds ==
+             52'107'000) &&
+            !continuousTimelineWindow.capturePending &&
+            (continuousTimelineWindow.trace.size() == 226) &&
+            (continuousTimelineEstimate.blockedNanoseconds == 0) &&
+            (continuousTimelineEstimate.estimatedWorkNanoseconds ==
+             18'000'000) &&
+            MainThreadWorkEstimateWithinBudget(
+                18'000'000, sparseStartupWindow.durationNanoseconds,
+                continuousTimelineWindow.trace,
+                continuousTimelineWindow.sampleOffsetsNanoseconds,
+                kMaxChatSwitchNanoseconds) &&
+            !clusteredTimelineWindow.capturePending &&
+            (clusteredTimelineEstimate.blockedNanoseconds == -1) &&
+            (clusteredTimelineEstimate.estimatedWorkNanoseconds ==
+             sparseStartupWindow.durationNanoseconds) &&
+            MainThreadWorkEstimateWithinBudget(
+                18'000'000, sparseStartupWindow.durationNanoseconds,
+                clusteredTimelineWindow.trace,
+                clusteredTimelineWindow.sampleOffsetsNanoseconds,
+                100'000'000) &&
+            !completedWithoutTimelineCoverage.capturePending &&
+            completedWithoutTimelineCoverage.trace.isEmpty() &&
+            (completedWithoutTimelineCoverageEstimate.blockedNanoseconds ==
+             -1) &&
+            (completedWithoutTimelineCoverageEstimate
+                 .estimatedWorkNanoseconds ==
+             sparseStartupWindow.durationNanoseconds) &&
+            (boundedSwitch.estimatedWorkNanoseconds == 45'500'000) &&
+            MainThreadWorkEstimateWithinBudget(
+                45'500'000, 227'000'000,
+                QString(int(slowSwitchOffsets.size()), QChar(u'R')),
+                slowSwitchOffsets, kMaxChatSwitchNanoseconds) &&
+            !MainThreadWorkEstimateWithinBudget(
+                52'107'000, 227'000'000,
+                QString(int(slowSwitchOffsets.size()), QChar(u'R')),
+                slowSwitchOffsets, kMaxChatSwitchNanoseconds) &&
+            Core::UiStallWatchdog::SchedulerTraceCoversDuration(
+                capturedWindow.trace, capturedWindow.sampleOffsetsNanoseconds,
+                acknowledgementWindow.durationNanoseconds) &&
+            (capturedWindowEstimate.estimatedWorkNanoseconds == 18'000'000) &&
+            !corroboratedStartupWork.schedulerSamples.capturePending &&
+            (corroboratedStartupWork.estimate.estimatedWorkNanoseconds ==
+             77'495'000) &&
+            partialPingAcknowledgementWindow.capturePending &&
+            partialPingStallWindow.capturePending &&
+            (partialPingCorroboratedStalls.size() == 1) &&
+            (CountUncoveredStartupHeartbeatGaps(
+                 std::vector<MainThreadWorkInterval>{corroboratedStartupGap},
+                 partialPingCorroboratedStalls,
+                 std::vector<
+                     Core::UiStallWatchdog::PingAcknowledgementEvidence>{
+                     partialPingAcknowledgement,
+                 }) == 0) &&
+            !partialPingStartupWork.schedulerSamples.capturePending &&
+            partialPingStartupBeforeSampleMatches &&
+            partialPingStartupAfterSampleMatches &&
+            (partialPingStartupWork.estimate.estimatedWorkNanoseconds ==
+             23'495'000) &&
+            MainThreadEstimatedWorkWithinBudget(
+                partialPingStartupWork.estimate.estimatedWorkNanoseconds,
+                kMaxStartupHeartbeatThreadWorkNanoseconds) &&
+            incompleteCorroboratedStartupWork.schedulerSamples.capturePending &&
+            (incompleteCorroboratedStartupWork.estimate
+                 .estimatedWorkNanoseconds ==
+             corroboratedStartupGap.durationNanoseconds) &&
+            (overBudgetCorroboratedStartupWork.estimate
+                 .estimatedWorkNanoseconds ==
+             corroboratedStartupGap.durationNanoseconds) &&
+            !MainThreadEstimatedWorkWithinBudget(
+                overBudgetCorroboratedStartupWork.estimate
+                    .estimatedWorkNanoseconds,
+                100'000'000) &&
+            !sparseStartupCapture.capturePending &&
+            (sparseStartupCapture.trace == sparseStartupTrace) &&
+            (sparseStartupCaptureEstimate.blockedNanoseconds == 50'000'000) &&
+            (sparseStartupCaptureEstimate.estimatedWorkNanoseconds ==
+             68'000'000) &&
+            MainThreadWorkEstimateWithinBudget(
+                18'000'000, sparseStartupWindow.durationNanoseconds,
+                sparseStartupCapture.trace,
+                sparseStartupCapture.sampleOffsetsNanoseconds, 100'000'000) &&
+            uncapturedWindow.capturePending &&
+            pendingFirstAccessTimeoutSamples.capturePending &&
+            (pendingFirstAccessTimeoutSamples.trace == u"WWWWWWW"_q) &&
+            (!pendingFirstAccessTimeoutSamples.sampleOffsetsNanoseconds
+                  .empty() &&
+             (pendingFirstAccessTimeoutSamples.sampleOffsetsNanoseconds
+                  .back() == 60'000'000)) &&
+            !pendingFirstAccessAssessment.schedulerEvidenceAvailable &&
+            (pendingFirstAccessAssessment.workNanoseconds == 90'000'000) &&
+            !pendingFirstAccessAssessment.withinBudget &&
+            !MainThreadWorkBudgetIsUntracedWallOverrun(
+                pendingFirstAccessAssessment, 90'000'000,
+                kMaxChatSwitchNanoseconds) &&
+            !pendingFirstAccessWithinBudget &&
+            !pendingFirstAccessRun.WithinBudget() &&
+            pendingAcknowledgementWindow.capturePending &&
+            (pendingAcknowledgementWindow.trace == u"WWWWWWW"_q) &&
+            (!pendingAcknowledgementWindow.sampleOffsetsNanoseconds.empty() &&
+             (pendingAcknowledgementWindow.sampleOffsetsNanoseconds.back() ==
+              60'000'000)) &&
+            pendingStartupWork.schedulerSamples.capturePending &&
+            (pendingStartupWork.schedulerSamples.trace == u"WWWWWWW"_q) &&
+            (pendingStartupAssessment.workNanoseconds == 110'000'000) &&
+            !pendingStartupAssessment.withinBudget &&
+            !pendingStartupWithinBudget && !pendingStartupRun.WithinBudget() &&
+            (incompleteWindow.trace == QString(5, QChar(u'R'))) &&
+            incompleteWindow.capturePending &&
+            completedWithoutTraceWindow.trace.isEmpty() &&
+            completedWithoutTraceWindow.capturePending &&
+            (noSamples.blockedNanoseconds == -1) &&
+            (noSamples.estimatedWorkNanoseconds == 101'000'000) &&
+            !runnerSchedulingNoiseAssessment.schedulerEvidenceAvailable &&
+            (runnerSchedulingNoiseAssessment.workNanoseconds == 1'138'000) &&
+            runnerSchedulingNoiseAssessment.withinBudget &&
+            missingTraceLongWallAssessment.withinBudget &&
+            !MainThreadWorkBudgetEvidenceWithinBudget(
+                missingTraceLongWallAssessment, 200'000'000, 100'000'000) &&
+            !missingTraceCpuStallAssessment.schedulerEvidenceAvailable &&
+            (missingTraceCpuStallAssessment.workNanoseconds == 101'000'000) &&
+            !missingTraceCpuStallAssessment.withinBudget &&
+            !MainThreadWorkBudgetEvidenceWithinBudget(
+                missingTraceInitialSelectionAssessment, 135'000'000,
+                kMaxChatSwitchNanoseconds) &&
+            !MainThreadWorkBudgetIsUntracedWallOverrun(
+                missingTraceInitialSelectionAssessment, 135'000'000,
+                kMaxChatSwitchNanoseconds) &&
+            !missingTraceHighCpuInitialSelectionGateWithinBudget &&
+            !untracedInitialSelectionWithHighCpu.WithinBudget() &&
+            (missingTraceLowCpuInitialSelectionAssessment.workNanoseconds ==
+             1'138'000) &&
+            !missingTraceLowCpuInitialSelectionGateWithinBudget &&
+            oneUntracedWallOverrun.WithinBudget() &&
+            overlappingUntracedWallOverruns.WithinBudget() &&
+            firstDialogsRunnerPause.WithinBudget() &&
+            !missingTraceFirstDialogsGateWithinBudget &&
+            !twoUntracedWallOverruns.WithinBudget() &&
+            !tracedBlockedRun.WithinBudget() &&
+            !untracedCpuStallRun.WithinBudget() &&
+            !injectedChatSwitchStallWithinBudget &&
+            !injectedChatSwitchStallRun.WithinBudget() &&
+            IsMacOSDisplayLockStall(displayLockStall) &&
+            (displayLockStall.stackCapturedAtSteadyNanoseconds ==
+             displayLockStall.postedAtSteadyNanoseconds + 40'000'000) &&
+            !displayLockAssessment.schedulerEvidenceAvailable &&
+            (displayLockAssessment.workNanoseconds == 60'000'000) &&
+            !displayLockAssessment.withinBudget &&
+            !verifiedDisplayLockWithinBudget &&
+            !verifiedDisplayLockRun.WithinBudget() &&
+            IsMacOSDisplayLockStall(mixedWaitDisplayLockStall) &&
+            (mixedWaitDisplayLockStall.stackCapturedAtSteadyNanoseconds ==
+             mixedWaitDisplayLockWindow.startedAtSteadyNanoseconds +
+                 70'000'000) &&
+            (mixedWaitDisplayLockStall.stackCapturedAtSteadyNanoseconds -
+                 mixedWaitDisplayLockStall.postedAtSteadyNanoseconds ==
+             40'000'000) &&
+            (mixedWaitDisplayLockStall.schedulerTrace[13] == u'W') &&
+            (mixedWaitDisplayLockStall.schedulerTrace[14] == u'U') &&
+            (mixedWaitSchedulerSamples.trace[28] == u'W') &&
+            (mixedWaitSchedulerSamples.trace[29] == u'U') &&
+            (mixedWaitDisplayLockEstimate.blockedNanoseconds >= 0) &&
+            (mixedWaitDisplayLockEstimate.estimatedWorkNanoseconds ==
+             mixedWaitDisplayLockWindow.durationNanoseconds) &&
+            (mixedWaitDisplayLockAssessment.workNanoseconds >=
+             kMaxChatSwitchNanoseconds) &&
+            !mixedWaitDisplayLockAssessment.withinBudget &&
+            !mixedWaitDisplayLockWithinBudget &&
+            !mixedWaitDisplayLockRun.WithinBudget() &&
+            (recordedChatSwitchSchedulerSamples.trace == u"RRRWWR"_q) &&
+            (recordedDisplayLockStall.schedulerTrace == u"RWWR"_q) &&
+            (recordedDisplayLockStall.schedulerSampleOffsetsNanoseconds ==
+             std::vector<qint64>{
+                 1'730'500,
+                 11'994'209,
+                 22'609'750,
+                 59'447'834,
+             }) &&
+            (recordedDisplayLockStall.postedAtSteadyNanoseconds -
+                 recordedDisplayLockWindow.startedAtSteadyNanoseconds ==
+             18'000'000) &&
+            (recordedDisplayLockStall.stackCapturedAtSteadyNanoseconds -
+                 recordedDisplayLockStall.postedAtSteadyNanoseconds ==
+             40'000'000) &&
+            !recordedDisplayLockAssessment.schedulerEvidenceAvailable &&
+            (recordedDisplayLockAssessment.workNanoseconds == 77'931'083) &&
+            !recordedDisplayLockAssessment.withinBudget &&
+            !recordedDisplayLockWithinBudget &&
+            !recordedDisplayLockRun.WithinBudget() &&
+            IsMacOSDisplayLockStall(excessiveDisplayLockStall) &&
+            (excessiveDisplayLockStall.durationNanoseconds == 180'000'000) &&
+            (excessiveDisplayLockEstimate.blockedNanoseconds >= 0) &&
+            !excessiveDisplayLockAssessment.withinBudget &&
+            !excessiveDisplayLockWithinBudget &&
+            !excessiveDisplayLockRun.WithinBudget() &&
+            (windowEndingBetweenPingsEstimate.blockedNanoseconds == 0) &&
+            windowEndingBetweenPingsAssessment.schedulerEvidenceAvailable &&
+            windowEndingBetweenPingsAssessment.withinBudget &&
+            acknowledgementBeforeNextPingFinalized &&
+            !delayedPostEvidenceFinalized && nextDelayedPostEvidenceFinalized &&
+            !differentWatchdogDoesNotFinalizeDelayedPost &&
+            windowEndingBetweenPingsEvidenceIsFinalized &&
+            !untracedWindowEndingBetweenPingsAssessment
+                 .schedulerEvidenceAvailable &&
+            (windowEndingBetweenPings.durationNanoseconds >=
+             kMaxChatSwitchNanoseconds) &&
+            !MainThreadWorkBudgetEvidenceWithinBudget(
+                untracedWindowEndingBetweenPingsAssessment,
+                windowEndingBetweenPings.durationNanoseconds,
+                kMaxChatSwitchNanoseconds) &&
+            !untracedWindowEndingBetweenPingsSchedulerSamples.capturePending &&
+            !untracedWindowEndingBetweenPingsAssessment
+                 .schedulerEvidenceAvailable &&
+            untracedWindowEndingBetweenPingsEvidenceIsFinalized &&
+            (initialHistoryBudgets.chatSwitchNanoseconds ==
+             kMaxChatSwitchNanoseconds) &&
+            (initialHistoryBudgets.startupNanoseconds == 0) &&
+            (initialHistoryStartupBudgets.chatSwitchNanoseconds ==
+             kMaxChatSwitchNanoseconds) &&
+            (initialHistoryStartupBudgets.startupNanoseconds == 0) &&
+            (recurringHistoryBudgets.chatSwitchNanoseconds ==
+             kMaxChatSwitchNanoseconds) &&
+            (recurringHistoryBudgets.startupNanoseconds == 0) &&
+            (startupHistoryBudgets.chatSwitchNanoseconds ==
+             kMaxChatSwitchNanoseconds) &&
+            (startupHistoryBudgets.startupNanoseconds ==
+             kMaxStartupHeartbeatThreadWorkNanoseconds) &&
+            injectedStartupWorkWithinBudget &&
+            injectedStartupUnderBudgetRun.WithinBudget() &&
+            !injectedStartupWorkOverBudget &&
+            !injectedStartupOverBudgetRun.WithinBudget() &&
+            !blockedSelectionAssessment.withinBudget &&
+            MainThreadCpuWorkWithinBudget(1'000'000,
+                                          kMaxChatSwitchNanoseconds) &&
+            blockedStartupAssessment.schedulerEvidenceAvailable &&
+            (blockedStartupAssessment.workNanoseconds == 101'000'000) &&
+            !blockedStartupAssessment.withinBudget &&
+            timerCoverageStartupWork.watchdogCoverage.proven &&
+            (timerCoverageStartupWork.watchdogCoverage.watchdogId == 7) &&
+            (timerCoverageStartupWork.watchdogCoverage
+                 .maxAcknowledgementGapNanoseconds == 2'000'000) &&
+            (timerCoverageStartupWork.watchdogCoverage.maxResponseNanoseconds ==
+             1'000'000) &&
+            !timerCoverageBudgetAssessment.schedulerEvidenceAvailable &&
+            timerCoverageBudgetAssessment
+                .watchdogResponsivenessEvidenceAvailable &&
+            (timerCoverageBudgetAssessment.workNanoseconds == 1'620'000) &&
+            timerCoverageBudgetAssessment.withinBudget &&
+            timerCoverageWithinBudget &&
+            timerCoverageBudgetRun.WithinBudget() &&
+            blockedStartupWithResponsiveWork.watchdogCoverage.proven &&
+            blockedStartupWithResponsiveAssessment
+                .watchdogResponsivenessEvidenceAvailable &&
+            (blockedStartupWithResponsiveAssessment.workNanoseconds ==
+             101'000'000) &&
+            !blockedStartupWithResponsiveAssessment.withinBudget &&
+            responsiveChatSwitchCoverage.proven &&
+            responsiveChatSwitchAssessment
+                .watchdogResponsivenessEvidenceAvailable &&
+            (responsiveChatSwitchAssessment.workNanoseconds ==
+             responsiveChatSwitch.mainThreadWorkNanoseconds) &&
+            responsiveChatSwitchAssessment.withinBudget &&
+            overBudgetResponsiveChatSwitchAssessment
+                .watchdogResponsivenessEvidenceAvailable &&
+            (overBudgetResponsiveChatSwitchAssessment.workNanoseconds ==
+             overBudgetResponsiveChatSwitch.mainThreadWorkNanoseconds) &&
+            !overBudgetResponsiveChatSwitchAssessment.withinBudget &&
+            blockedSelectionAssessment.schedulerEvidenceAvailable &&
+            (blockedSelectionAssessment.workNanoseconds == 60'000'000) &&
+            !blockedSelectionAssessment.withinBudget &&
+            MainThreadWorkEstimateWithinBudget(0, 101'000'000, u"none"_q, {},
+                                               100'000'000) &&
+            (noInWindowSamples.blockedNanoseconds == -1) &&
+            (noInWindowSamples.estimatedWorkNanoseconds == 225'000'000) &&
+            (bracketedEstimate.estimatedWorkNanoseconds == 45'000'000) &&
+            (waitingBeforeEstimate.estimatedWorkNanoseconds == 50'000'000) &&
+            (waitingAfterEstimate.estimatedWorkNanoseconds == 50'000'000) &&
+            (edge25Estimate.estimatedWorkNanoseconds == 45'000'000) &&
+            (edge26Estimate.blockedNanoseconds == -1) &&
+            (edge26Estimate.estimatedWorkNanoseconds == 60'000'000) &&
+            (unknownBeforeEstimate.blockedNanoseconds == -1) &&
+            (unknownBeforeEstimate.estimatedWorkNanoseconds == 60'000'000) &&
+            (withoutBoundaries.estimatedWorkNanoseconds == 55'000'000) &&
+            (overCpuBudget.estimatedWorkNanoseconds == 52'000'000) &&
+            (overlappingSampleIntervals.blockedNanoseconds == 42'143'125) &&
+            (overlappingSampleIntervals.estimatedWorkNanoseconds ==
+             43'293'250) &&
+            MainThreadEstimatedWorkWithinBudget(
+                overlappingSampleIntervals.estimatedWorkNanoseconds,
+                kMaxChatSwitchNanoseconds) &&
+            (cpuOverlapEstimate.blockedNanoseconds == 35'000'000) &&
+            (cpuOverlapEstimate.estimatedWorkNanoseconds == 75'000'000) &&
+            !leadingBoundaryCpuWindow.capturePending &&
+            (leadingBoundaryCpuWindow.before &&
+             (leadingBoundaryCpuWindow.before->state == 'W')) &&
+            (leadingBoundaryCpuEstimate.blockedNanoseconds == 4'895'292) &&
+            (leadingBoundaryCpuEstimate.estimatedWorkNanoseconds ==
+             42'895'292) &&
+            leadingBoundaryCpuAssessment.schedulerEvidenceAvailable &&
+            leadingBoundaryCpuAssessment.withinBudget &&
+            leadingBoundaryCpuWithinBudget &&
+            leadingBoundaryCpuRun.WithinBudget() &&
+            !handlerTailCpuWindow.capturePending &&
+            (handlerTailCpuWindow.trace == u"RRW"_q) &&
+            (handlerTailCpuEstimate.blockedNanoseconds == 8'000'000) &&
+            (handlerTailCpuEstimate.estimatedWorkNanoseconds == 10'000'000) &&
+            handlerTailCpuAssessment.withinBudget &&
+            (handlerTailCpuEstimateWithoutEnd.blockedNanoseconds ==
+             9'000'000) &&
+            (handlerTailCpuEstimateWithoutEnd.estimatedWorkNanoseconds ==
+             11'000'000) &&
+            !handlerTailCpuAssessmentWithoutEnd.withinBudget &&
+            (delayedCpuAccountingEstimate.blockedNanoseconds == 5'000'000) &&
+            (delayedCpuAccountingEstimate.estimatedWorkNanoseconds ==
+             53'000'000) &&
+            !MainThreadEstimatedWorkWithinBudget(
+                delayedCpuAccountingEstimate.estimatedWorkNanoseconds,
+                kMaxChatSwitchNanoseconds) &&
+            (sparseCpuEstimate.blockedNanoseconds == -1) &&
+            (sparseCpuEstimate.estimatedWorkNanoseconds == 65'000'000) &&
+            (cpuOverWall.estimatedWorkNanoseconds >= 52'000'000) &&
+            (nearBudgetMissingScheduler.estimatedWorkNanoseconds ==
+             50'010'000) &&
+            !MainThreadEstimatedWorkWithinBudget(
+                nearBudgetMissingScheduler.estimatedWorkNanoseconds,
+                kMaxChatSwitchNanoseconds) &&
+            (nearBudgetIncompleteScheduler.blockedNanoseconds == -1) &&
+            (nearBudgetIncompleteScheduler.estimatedWorkNanoseconds ==
+             50'010'000) &&
+            !MainThreadEstimatedWorkWithinBudget(
+                nearBudgetIncompleteScheduler.estimatedWorkNanoseconds,
+                kMaxChatSwitchNanoseconds) &&
+            MainThreadWorkEstimateWithinBudget(
+                18'000'000, 225'000'000, u"RRR"_q,
+                {226'000'000, 227'000'000, 228'000'000}, 100'000'000) &&
+            (blockedAttachMenuCallback.estimatedWorkNanoseconds > 50'000'000) &&
+            !MainThreadWorkEstimateWithinBudget(
+                12'000'000, 200'000'000,
+                QString(int(callbackOffsets.size()), QChar(u'W')),
+                callbackOffsets, 50'000'000) &&
+            (unmeasuredAttachMenuCallback.estimatedWorkNanoseconds ==
+             200'000'000) &&
+            !MainThreadEstimatedWorkWithinBudget(
+                unmeasuredAttachMenuCallback.estimatedWorkNanoseconds,
+                50'000'000) &&
+            (callbackEstimate == -1) &&
+            !MainThreadEstimatedWorkWithinBudget(callbackEstimate, 50'000'000);
+	if (!allChecksPassed.allPassed) {
+		std::fprintf(stderr, "Blocked-work fixture failed: assertion=%d.\n",
+					 allChecksPassed.firstFailed);
+	}
+	return allChecksPassed.allPassed;
 }
 
 [[maybe_unused, nodiscard]] bool
@@ -14069,6 +15163,11 @@ struct CacheChatSwitchRegressionResult final {
 	bool historyScaleInvalidationRebuilt = false;
 	bool historyChatModeInvalidationRebuilt = false;
 	bool chatSwitchComposeUiReused = false;
+	bool translateBarReused = false;
+	bool translateBarClosedReopened = false;
+	bool translateBarRetainedAcrossSwitches = true;
+	bool translateBarTracksCurrentHistory = false;
+	bool openPeerMigrationRebind = false;
 	bool historyChatModeInitiallyWide = false;
 	bool historyChatModeChangedWhileHidden = false;
 	bool historyChatModeLayoutWideAfter = false;
@@ -14082,6 +15181,7 @@ struct CacheChatSwitchRegressionResult final {
 	bool initialHistorySelectionSchedulerPreemptionProven = false;
 	bool dialogHistoriesReady = false;
 	bool syntheticHistoriesReady = false;
+	bool peerScopedUpdateRouting = false;
 	bool attachMenuCacheReused = false;
 	bool attachMenuInvalidationRebuilt = false;
 	bool attachMenuBuildDeferredUntilHover = false;
@@ -14491,6 +15591,18 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 	const auto secondHistory = makeHistory(ChatId(1052));
 	const auto emptyFirstHistory = makeHistory(ChatId(1'050'051));
 	const auto emptySecondHistory = makeHistory(ChatId(1'050'052));
+	// These local slices are the complete test fixture. Do not leave history
+	// preloads pending to fail later inside a measured chat switch.
+	firstHistory->markLoadedAtTop();
+	secondHistory->markLoadedAtTop();
+	// Supply a completed newest slice too, so selecting these unread histories
+	// never starts a first-load request against the paused regression session.
+	firstHistory->addNewerSlice(QVector<MTPMessage>());
+	secondHistory->addNewerSlice(QVector<MTPMessage>());
+	// The blank histories are complete too. The top marker lets loadMessages()
+	// return before requesting an older slice during the measured selection.
+	emptyFirstHistory->markLoadedAtTop();
+	emptySecondHistory->markLoadedAtTop();
 	const auto makeUiHistory = [&](ChatId id, int messageId) {
 		data.processChats(MTP_vector<MTPChat>({MTP_chat(
 			MTP_flags(MTPDchat::Flags()), MTP_long(id.bare),
@@ -14515,19 +15627,54 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		  && secondUiHistory->loadedAtTop() && secondUiHistory->loadedAtBottom()
 		  && HasExpectedParticipants(data.chat(ChatId(1054)), UserId(1))
 		  && HasExpectedParticipants(data.chat(ChatId(1055)), UserId(1))
+		  && firstHistory->loadedAtTop() && secondHistory->loadedAtTop()
+		  && firstHistory->loadedAtBottom() && secondHistory->loadedAtBottom()
 		  && (firstHistory->unreadCount() == 7)
 		  && (secondHistory->unreadCount() == 6)
 		  && firstHistory->isReadyFor(ShowAtUnreadMsgId)
 		  && secondHistory->isReadyFor(ShowAtUnreadMsgId);
 	result.syntheticHistoriesReady
 		= emptyFirstHistory->isEmpty() && emptySecondHistory->isEmpty()
+		  && emptyFirstHistory->loadedAtTop()
+		  && emptyFirstHistory->loadedAtBottom()
+		  && emptySecondHistory->loadedAtTop()
+		  && emptySecondHistory->loadedAtBottom()
 		  && emptyFirstHistory->isReadyFor(ShowAtUnreadMsgId)
 		  && emptySecondHistory->isReadyFor(ShowAtUnreadMsgId);
+	result.peerScopedUpdateRouting
+		= Data::tests::PeerScopedUpdateRoutingRegressionPasses(
+			  session.changes(), firstHistory->peer, secondHistory->peer)
+		  && Data::tests::SharedMediaInvalidationRoutingRegressionPasses();
 	const auto historyWidget
 		= controller->content()->historyWidgetForRegressionTest();
 	if (!historyWidget) {
 		return result;
 	}
+	result.translateBarTracksCurrentHistory = true;
+	const auto translateBarLifetimeToken = [](auto *bar) {
+		return bar ? bar->lifetimeTokenForRegressionTest()
+				   : std::weak_ptr<const int>();
+	};
+	const auto sameTranslateBarLifetime
+		= [](const std::weak_ptr<const int> &expected,
+			 HistoryView::TranslateBar *current) {
+			  const auto expectedToken = expected.lock();
+			  if (!expectedToken || !current) {
+				  return false;
+			  }
+			  return current->lifetimeTokenForRegressionTest().lock()
+					 == expectedToken;
+		  };
+	const auto checkTranslateBar = [&](not_null<History *> history) {
+		const auto current = historyWidget->translateBarForRegressionTest();
+		if (!current) {
+			result.translateBarTracksCurrentHistory = false;
+		} else {
+			result.translateBarTracksCurrentHistory
+				= result.translateBarTracksCurrentHistory
+				  && (current->historyForRegressionTest() == history.get());
+		}
+	};
 	auto &regressionSettings = Core::App().settings();
 	const auto originalTabbedSelectorSectionEnabled
 		= regressionSettings.tabbedSelectorSectionEnabled();
@@ -14557,13 +15704,17 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		return settled;
 	};
 	auto chatSwitchWindows = std::vector<MainThreadWorkInterval>();
+	auto startupHistoryWindows = std::vector<MainThreadWorkInterval>();
+	auto startupTimingBudgetRun = MainThreadWorkBudgetRun();
 	auto chatSwitchCpuClockAvailable = true;
 	auto chatSwitchProcessCpuClockAvailable = true;
 	auto chatSwitchIndex = 0;
-	const auto showPeerHistoryMeasured = [&](auto history) {
+	const auto showPeerHistoryMeasured = [&](auto history,
+											 bool startupWork = false) {
 		const auto index = chatSwitchIndex++;
 		if ((index == 0) && !result.initialHistoryWindowActivated) {
 			controller->showPeerHistory(history);
+			checkTranslateBar(history);
 			return qint64(-1);
 		}
 		if ((index > 0) && result.chatSwitchWindowsActivated
@@ -14574,6 +15725,7 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 				|| !IsWindowActiveForRegression(Core::App(), window, false)) {
 				result.chatSwitchWindowsActivated = false;
 				controller->showPeerHistory(history);
+				checkTranslateBar(history);
 				return qint64(-1);
 			}
 		}
@@ -14583,15 +15735,28 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		}
 		const auto peerId = qint64(history->peer->id.value);
 		const auto startedAt = QDateTime::currentDateTime();
-		const auto mainThreadBefore = MainThreadCpuTimeNanoseconds();
-		const auto processBefore = ProcessCpuTimeNanoseconds();
 		auto timer = QElapsedTimer();
 		timer.start();
 		const auto startedAtSteadyNanoseconds
 			= std::chrono::duration_cast<std::chrono::nanoseconds>(
 				  std::chrono::steady_clock::now().time_since_epoch())
 				  .count();
+		const auto mainThreadBefore = MainThreadCpuTimeNanoseconds();
+		const auto processBefore = ProcessCpuTimeNanoseconds();
+		const auto translateBarBefore
+			= historyWidget->translateBarForRegressionTest();
+		const auto translateBarBeforeLifetime
+			= translateBarLifetimeToken(translateBarBefore);
 		controller->showPeerHistory(history);
+		const auto translateBarAfter
+			= historyWidget->translateBarForRegressionTest();
+		if (index > 0) {
+			result.translateBarRetainedAcrossSwitches
+				= result.translateBarRetainedAcrossSwitches
+				  && sameTranslateBarLifetime(translateBarBeforeLifetime,
+											  translateBarAfter);
+		}
+		checkTranslateBar(history);
 		const auto wallDurationNanoseconds = timer.nsecsElapsed();
 		const auto mainThreadAfter = MainThreadCpuTimeNanoseconds();
 		const auto processAfter = ProcessCpuTimeNanoseconds();
@@ -14629,12 +15794,16 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 			result.maxChatSwitchNanoseconds = std::max(
 				result.maxChatSwitchNanoseconds, wallDurationNanoseconds);
 		}
-		const auto label
-			= (index == 0)
-				  ? u"initial history selection index=%1 peer_id=%2"_q
-						.arg(index)
-						.arg(peerId)
-				  : u"chat switch index=%1 peer_id=%2"_q.arg(index).arg(peerId);
+		auto label
+			= u"chat switch index=%1 peer_id=%2"_q.arg(index).arg(peerId);
+		if (startupWork) {
+			label = u"startup history priming index=%1 peer_id=%2"_q.arg(index)
+						.arg(peerId);
+		} else if (index == 0) {
+			label
+				= u"initial history selection index=%1 peer_id=%2"_q.arg(index)
+					  .arg(peerId);
+		}
 		const auto interval = MainThreadWorkInterval{
 			startedAt,
 			wallDurationNanoseconds,
@@ -14642,9 +15811,13 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 			processWorkNanoseconds,
 			label,
 			startedAtSteadyNanoseconds,
+			mainThreadBefore.value_or(-1),
 			mainThreadAfter.value_or(-1),
 		};
 		chatSwitchWindows.push_back(interval);
+		if (startupWork) {
+			startupHistoryWindows.push_back(interval);
+		}
 		return wallDurationNanoseconds;
 	};
 	// A separate test window has just been created. Let its initial layout and
@@ -14666,6 +15839,14 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		  && IsWindowActiveForRegression(Core::App(), window, false);
 	showPeerHistoryMeasured(emptyFirstHistory);
 	settleHistoryUnfocused();
+	// Prime both populated histories before the recurring switch measurements.
+	// Their first display builds reactive peer-update subscriptions. They
+	// remain 50 ms chat switches and also consume the startup budget as priming
+	// work.
+	for (const auto &target : {secondHistory, firstHistory}) {
+		showPeerHistoryMeasured(target, true);
+		settleHistoryUnfocused();
+	}
 	constexpr auto kWarmupChatSwitches = 8;
 	for (auto i = 0; i != kWarmupChatSwitches; ++i) {
 		const auto target = (i % 2) ? firstHistory : secondHistory;
@@ -15432,6 +16613,18 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 	result.historyScaleInvalidationRebuilt
 		= firstUiHistoryLaidOut && secondUiHistoryShown && firstUiHistoryResized
 		  && (originalHistoryLayoutScale != regressionScale);
+	std::fprintf(
+		stderr,
+		"History scale invalidation: first_laid_out=%d second_shown=%d "
+		"first_resized=%d original_scale_changed=%d "
+		"layout_scale_matches=%d full_resize_count_before=%d "
+		"full_resize_count_after=%d rebuilt=%d.\n",
+		firstUiHistoryLaidOut, secondUiHistoryShown, firstUiHistoryResized,
+		originalHistoryLayoutScale != regressionScale,
+		firstUiHistory->layoutScaleForRegressionTest() == regressionScale,
+		originalHistoryFullResizeCount,
+		firstUiHistory->layoutFullResizeCountForRegressionTest(),
+		result.historyScaleInvalidationRebuilt);
 	style::SetScale(originalScale);
 	controller->showPeerHistory(secondUiHistory);
 	QCoreApplication::processEvents();
@@ -15579,14 +16772,32 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 	}
 	auto chatSwitchSchedulerTimeline
 		= Core::UiStallWatchdog::RecentSchedulerSamplesForTesting();
+	auto chatSwitchAcknowledgements
+		= Core::UiStallWatchdog::RecentPingAcknowledgementsForTesting();
 	const auto chatSwitchSamplingSettled = [&] {
 		chatSwitchSchedulerTimeline
 			= Core::UiStallWatchdog::RecentSchedulerSamplesForTesting();
-		for (const auto &window : chatSwitchWindows) {
-			if ((window.durationNanoseconds >= kMaxChatSwitchNanoseconds)
-				&& SchedulerTraceForInterval(window,
-											 chatSwitchSchedulerTimeline)
-					   .capturePending) {
+		chatSwitchAcknowledgements
+			= Core::UiStallWatchdog::RecentPingAcknowledgementsForTesting();
+		for (auto i = 0U; i != chatSwitchWindows.size(); ++i) {
+			const auto budgets = CacheHistoryWorkBudgetsForRegression(i, false);
+			const auto &window = chatSwitchWindows[i];
+			if (window.durationNanoseconds < budgets.chatSwitchNanoseconds) {
+				continue;
+			}
+			const auto schedulerSamples = SchedulerTraceForInterval(
+				window, chatSwitchSchedulerTimeline);
+			if (!MacOSChatSwitchEvidenceFinalizedForInterval(
+					schedulerSamples)) {
+				return false;
+			}
+			const auto estimate = EstimateMainThreadWork(
+				window.mainThreadWorkNanoseconds, window.durationNanoseconds,
+				schedulerSamples);
+			if ((estimate.blockedNanoseconds < 0)
+				&& !AnalyzeWatchdogResponsivenessCoverage(
+						window, chatSwitchAcknowledgements)
+						.proven) {
 				return false;
 			}
 		}
@@ -15596,15 +16807,19 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		= chatSwitchSamplingSettled()
 		  || WaitForRegressionCondition(chatSwitchSamplingSettled, 1000);
 	if (!chatSwitchSamplingCompleted) {
-		std::fprintf(stderr, "Chat switch scheduler capture did not "
-							 "complete within 1000 ms.\n");
+		std::fprintf(stderr,
+					 "Chat switch scheduler and watchdog evidence did not "
+					 "finalize within 1000 ms.\n");
 	}
 	chatSwitchSchedulerTimeline
 		= Core::UiStallWatchdog::RecentSchedulerSamplesForTesting();
+	chatSwitchAcknowledgements
+		= Core::UiStallWatchdog::RecentPingAcknowledgementsForTesting();
 	auto chatSwitchSchedulerSamples = std::vector<SchedulerTraceWindow>();
 	chatSwitchSchedulerSamples.reserve(chatSwitchWindows.size());
-	result.chatSwitchWorkWithinBudget
-		= chatSwitchCpuClockAvailable && !chatSwitchWindows.empty();
+	result.chatSwitchWorkWithinBudget = chatSwitchCpuClockAvailable
+										&& !chatSwitchWindows.empty()
+										&& chatSwitchSamplingCompleted;
 	for (auto i = 0U; i != chatSwitchWindows.size(); ++i) {
 		const auto schedulerSamples = SchedulerTraceForInterval(
 			chatSwitchWindows[i], chatSwitchSchedulerTimeline);
@@ -15615,22 +16830,37 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		const auto estimate = EstimateMainThreadWork(
 			chatSwitchWindows[i].mainThreadWorkNanoseconds,
 			chatSwitchWindows[i].durationNanoseconds, schedulerSamples);
-		const auto budgetAssessment = AssessMainThreadWorkBudget(
-			estimate, chatSwitchWindows[i].mainThreadWorkNanoseconds,
-			kMaxChatSwitchNanoseconds);
-		const auto withinBudget = timingBudgetRun.Observe(
-			budgetAssessment, chatSwitchWindows[i].durationNanoseconds,
-			kMaxChatSwitchNanoseconds,
-			chatSwitchWindows[i].startedAtSteadyNanoseconds);
+		const auto watchdogCoverage = AnalyzeWatchdogResponsivenessCoverage(
+			chatSwitchWindows[i], chatSwitchAcknowledgements);
+		const auto budgets = CacheHistoryWorkBudgetsForRegression(i, false);
+		const auto windowBudgetNanoseconds = budgets.chatSwitchNanoseconds;
+		const auto windowEvidenceFinalized
+			= (chatSwitchWindows[i].durationNanoseconds
+			   < windowBudgetNanoseconds)
+			  || MacOSChatSwitchEvidenceFinalizedForInterval(schedulerSamples);
+		const auto attributedWallNanoseconds
+			= chatSwitchWindows[i].durationNanoseconds;
+		const auto budgetAssessment
+			= AssessWorkBudgetWithWatchdogResponsiveness(
+				chatSwitchWindows[i], estimate, watchdogCoverage,
+				windowBudgetNanoseconds);
+		const auto withinBudget
+			= windowEvidenceFinalized
+			  && timingBudgetRun.Observe(
+				  budgetAssessment, attributedWallNanoseconds,
+				  windowBudgetNanoseconds,
+				  chatSwitchWindows[i].startedAtSteadyNanoseconds);
 		const auto runnerNoiseEligible
-			= MainThreadWorkBudgetIsUntracedWallOverrun(
-				budgetAssessment, chatSwitchWindows[i].durationNanoseconds,
-				kMaxChatSwitchNanoseconds);
+			= windowEvidenceFinalized
+			  && MainThreadWorkBudgetIsUntracedWallOverrun(
+				  budgetAssessment, attributedWallNanoseconds,
+				  windowBudgetNanoseconds);
 		const auto withinBudgetWithNoiseAllowance
 			= withinBudget || runnerNoiseEligible;
 		if ((chatSwitchWindows[i].durationNanoseconds
-			 >= kMaxChatSwitchNanoseconds)
-			&& !budgetAssessment.schedulerEvidenceAvailable) {
+			 >= windowBudgetNanoseconds)
+			&& !budgetAssessment.schedulerEvidenceAvailable
+			&& !watchdogCoverage.proven) {
 			const auto label = chatSwitchWindows[i].label.toUtf8();
 			std::fprintf(
 				stderr,
@@ -15646,14 +16876,14 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 					chatSwitchWindows[i].durationNanoseconds),
 				static_cast<long long>(
 					chatSwitchWindows[i].mainThreadWorkNanoseconds),
-				static_cast<long long>(kMaxChatSwitchNanoseconds),
+				static_cast<long long>(windowBudgetNanoseconds),
 				runnerNoiseEligible,
 				static_cast<long long>(
 					kMaxUntracedRunnerNoiseMainThreadCpuNanoseconds));
 		}
-		if ((estimate.estimatedWorkNanoseconds >= kMaxChatSwitchNanoseconds)
+		if ((estimate.estimatedWorkNanoseconds >= windowBudgetNanoseconds)
 			|| (chatSwitchWindows[i].durationNanoseconds
-				>= kMaxChatSwitchNanoseconds)) {
+				>= windowBudgetNanoseconds)) {
 			auto offsets = QStringList();
 			for (const auto offset : schedulerSampleOffsetsNanoseconds) {
 				offsets.push_back(QString::number(offset));
@@ -15682,7 +16912,7 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		}
 		if ((estimate.blockedNanoseconds < 0)
 			&& (chatSwitchWindows[i].durationNanoseconds
-				>= kMaxChatSwitchNanoseconds)) {
+				>= windowBudgetNanoseconds)) {
 			auto maxGap = qint64(0);
 			for (auto j = std::size_t(1);
 				 j < schedulerSampleOffsetsNanoseconds.size(); ++j) {
@@ -15736,46 +16966,92 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		std::fprintf(
 			stderr,
 			"Cache chat switch work window: index=%zu peer_id=%lld "
-			"wall_ns=%lld main_thread_cpu_ns=%lld "
+			"wall_ns=%lld attributed_wall_ns=%lld "
+			"main_thread_cpu_ns=%lld "
 			"blocked_estimate_ns=%lld estimated_work_ns=%lld "
-			"budget_ns=%lld capture_pending=%d trace=%s within_budget=%d "
-			"cpu_only_within_budget=%d scheduler_evidence_available=%d.\n",
+			"budget_ns=%lld capture_pending=%d trace=%s "
+			"within_budget=%d "
+			"cpu_only_within_budget=%d scheduler_evidence_available=%d "
+			"watchdog_responsiveness_proven=%d watchdog_id=%llu "
+			"watchdog_ack_count=%d watchdog_max_ack_gap_ns=%lld "
+			"watchdog_max_response_ns=%lld.\n",
 			static_cast<std::size_t>(i),
 			static_cast<long long>(
 				chatSwitchWindows[i].label.section(u'=', -1).toLongLong()),
 			static_cast<long long>(chatSwitchWindows[i].durationNanoseconds),
+			static_cast<long long>(attributedWallNanoseconds),
 			static_cast<long long>(
 				chatSwitchWindows[i].mainThreadWorkNanoseconds),
 			static_cast<long long>(estimate.blockedNanoseconds),
 			static_cast<long long>(budgetAssessment.workNanoseconds),
-			static_cast<long long>(kMaxChatSwitchNanoseconds),
+			static_cast<long long>(windowBudgetNanoseconds),
 			schedulerSamples.capturePending, traceLatin1.constData(),
 			withinBudget,
 			MainThreadCpuWorkWithinBudget(
 				chatSwitchWindows[i].mainThreadWorkNanoseconds,
-				kMaxChatSwitchNanoseconds),
-			budgetAssessment.schedulerEvidenceAvailable);
+				windowBudgetNanoseconds),
+			budgetAssessment.schedulerEvidenceAvailable,
+			watchdogCoverage.proven,
+			static_cast<unsigned long long>(watchdogCoverage.watchdogId),
+			watchdogCoverage.acknowledgementCount,
+			static_cast<long long>(
+				watchdogCoverage.maxAcknowledgementGapNanoseconds),
+			static_cast<long long>(watchdogCoverage.maxResponseNanoseconds));
 	}
 	result.chatSwitchWorkWithinBudget
 		= result.chatSwitchWorkWithinBudget && timingBudgetRun.WithinBudget();
 	result.chatSwitchSchedulerPreemptionProven
 		= chatSwitchCpuClockAvailable && chatSwitchProcessCpuClockAvailable;
 	for (auto i = 0U; i != chatSwitchWindows.size(); ++i) {
+		const auto budgets = CacheHistoryWorkBudgetsForRegression(i, false);
+		const auto windowBudgetNanoseconds = budgets.chatSwitchNanoseconds;
 		if (chatSwitchWindows[i].durationNanoseconds
-			< kMaxChatSwitchNanoseconds) {
+			< windowBudgetNanoseconds) {
 			continue;
 		}
 		const auto proof = MainThreadWorkIntervalHasSchedulerProof(
 			chatSwitchWindows[i], chatSwitchSchedulerSamples[i].trace,
 			chatSwitchSchedulerSamples[i].sampleOffsetsNanoseconds,
-			chatSwitchProcessCpuClockAvailable, kMaxChatSwitchNanoseconds,
-			kMaxChatSwitchNanoseconds,
+			chatSwitchProcessCpuClockAvailable, windowBudgetNanoseconds,
+			windowBudgetNanoseconds,
 			kMaxSchedulerProofOtherThreadWorkNanoseconds);
 		result.chatSwitchSchedulerPreemptionProven
 			= result.chatSwitchSchedulerPreemptionProven && proof;
 		if (i == 0) {
 			result.initialHistorySelectionSchedulerPreemptionProven = proof;
 		}
+	}
+	const auto startupHistorySchedulerTimeline
+		= Core::UiStallWatchdog::RecentSchedulerSamplesForTesting();
+	for (auto i = 0U; i != startupHistoryWindows.size(); ++i) {
+		const auto budgets = CacheHistoryWorkBudgetsForRegression(i + 1, true);
+		const auto startupBudgetNanoseconds = budgets.startupNanoseconds;
+		const auto &window = startupHistoryWindows[i];
+		const auto schedulerSamples = SchedulerTraceForInterval(
+			window, startupHistorySchedulerTimeline);
+		const auto estimate = EstimateMainThreadWork(
+			window.mainThreadWorkNanoseconds, window.durationNanoseconds,
+			schedulerSamples);
+		const auto budgetAssessment = AssessMainThreadWorkBudget(
+			estimate, window.mainThreadWorkNanoseconds,
+			startupBudgetNanoseconds);
+		const auto withinBudget = startupTimingBudgetRun.Observe(
+			budgetAssessment, window.durationNanoseconds,
+			startupBudgetNanoseconds, window.startedAtSteadyNanoseconds);
+		const auto label = window.label.toUtf8();
+		const auto trace = schedulerSamples.trace.isEmpty()
+							   ? QByteArray("none")
+							   : schedulerSamples.trace.toLatin1();
+		std::fprintf(stderr,
+					 "Cache startup history work: label=%s wall_ns=%lld "
+					 "main_thread_work_ns=%lld estimated_work_ns=%lld "
+					 "budget_ns=%lld trace=%s within_budget=%d.\n",
+					 label.constData(),
+					 static_cast<long long>(window.durationNanoseconds),
+					 static_cast<long long>(window.mainThreadWorkNanoseconds),
+					 static_cast<long long>(budgetAssessment.workNanoseconds),
+					 static_cast<long long>(startupBudgetNanoseconds),
+					 trace.constData(), withinBudget);
 	}
 	auto slowHydrationEvidence
 		= std::vector<std::optional<Core::UiStallWatchdog::StallEvidence>>(
@@ -15986,10 +17262,366 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		= GroupCallBarDeferredButtonRegressionPasses();
 	const auto contactStatusRequestText
 		= ContactStatusRequestTextRegressionPasses(controller);
+	auto &translationSettings = Core::App().settings();
+	const auto originalTranslateChatsEnabled
+		= translationSettings.translateChatEnabled();
+	const auto originalSessionPremium = session.premium();
+	auto translationFixtureRestoreAttempted = false;
+	const auto restoreTranslationFixture = [&] {
+		if (translationFixtureRestoreAttempted) {
+			return true;
+		}
+		translationSettings.setTranslateChatEnabled(
+			originalTranslateChatsEnabled);
+		const auto restored = SetRegressionSessionPremium(
+			&session, session.userId(), originalSessionPremium);
+		translationFixtureRestoreAttempted = true;
+		return restored;
+	};
+	const auto restoreTranslationFixtureOnExit
+		= gsl::finally([&] { Expects(restoreTranslationFixture()); });
+	const auto premiumEnabled
+		= SetRegressionSessionPremium(&session, session.userId(), true);
+	translationSettings.setTranslateChatEnabled(true);
+	const auto premiumTranslationFixtureReady
+		= premiumEnabled && session.premium()
+		  && translationSettings.translateChatEnabled();
+	const auto showHistoryForTranslateBar = [&](not_null<History *> history) {
+		controller->showPeerHistory(history);
+		return WaitForRegressionCondition(
+			[&] {
+				return (historyWidget->history() == history.get())
+					   && historyWidget
+							  ->historyTransitionFinishedForRegressionTest();
+			},
+			1500);
+	};
+	const auto firstHistoryShownForTranslateBar
+		= showHistoryForTranslateBar(firstHistory);
+	const auto translateBar = historyWidget->translateBarForRegressionTest();
+	const auto translateBarExisted = (translateBar != nullptr);
+	const auto translateBarLifetime = translateBarLifetimeToken(translateBar);
+	const auto translateBarBoundToFirstHistory
+		= translateBar && firstHistoryShownForTranslateBar
+		  && (translateBar->historyForRegressionTest() == firstHistory.get());
+	const auto secondHistoryShownForTranslateBar
+		= showHistoryForTranslateBar(secondHistory);
+	const auto secondHistoryTranslateBar
+		= historyWidget->translateBarForRegressionTest();
+	const auto secondHistoryTranslateBarBound
+		= secondHistoryShownForTranslateBar && secondHistoryTranslateBar
+		  && (secondHistoryTranslateBar->historyForRegressionTest()
+			  == secondHistory.get());
+	const auto sameTranslateBarOnSecondHistory
+		= secondHistoryTranslateBarBound
+		  && sameTranslateBarLifetime(translateBarLifetime,
+									  secondHistoryTranslateBar);
+	const auto firstHistoryReturnedForTranslateBar
+		= showHistoryForTranslateBar(firstHistory);
+	const auto returnedHistoryTranslateBar
+		= historyWidget->translateBarForRegressionTest();
+	const auto returnedHistoryTranslateBarBound
+		= firstHistoryReturnedForTranslateBar && returnedHistoryTranslateBar
+		  && (returnedHistoryTranslateBar->historyForRegressionTest()
+			  == firstHistory.get());
+	const auto sameTranslateBarOnReturn
+		= returnedHistoryTranslateBarBound
+		  && sameTranslateBarLifetime(translateBarLifetime,
+									  returnedHistoryTranslateBar);
+	result.translateBarReused = translateBarBoundToFirstHistory
+								&& sameTranslateBarOnSecondHistory
+								&& sameTranslateBarOnReturn;
+	const auto offeredTranslationLanguage = LanguageId::FromName(u"French"_q);
+	const auto originalTranslateTo = translationSettings.translateTo();
+	const auto germanLanguage = LanguageId::FromName(u"German"_q);
+	const auto spanishLanguage = LanguageId::FromName(u"Spanish"_q);
+	const auto closedTargetLanguage = (originalTranslateTo != germanLanguage)
+										  ? germanLanguage
+										  : spanishLanguage;
+	auto translationPhraseShown = false;
+	auto visibleBeforeClose = false;
+	auto closed = false;
+	auto barDestroyedOnClose = false;
+	auto translatedHistoryReady = false;
+	auto noTranslateToWhileClosed = false;
+	auto reopened = false;
+	auto reopenedBarCreated = false;
+	auto visibleOnReopen = false;
+	if (premiumTranslationFixtureReady && returnedHistoryTranslateBar
+		&& firstHistoryReturnedForTranslateBar
+		&& offeredTranslationLanguage.known() && closedTargetLanguage.known()) {
+		firstHistory->peer->setTranslationDisabled(false);
+		firstHistory->translateOfferFrom(offeredTranslationLanguage);
+		translationPhraseShown = WaitForRegressionCondition(
+			[&] {
+				const auto current
+					= historyWidget->translateBarForRegressionTest();
+				return current
+					   && (current->historyForRegressionTest()
+						   == firstHistory.get())
+					   && current->shouldBeShownForRegressionTest();
+			},
+			1500);
+		const auto translateBarAfterPhraseWait
+			= historyWidget->translateBarForRegressionTest();
+		translationPhraseShown
+			= translationPhraseShown && translateBarAfterPhraseWait
+			  && (translateBarAfterPhraseWait->historyForRegressionTest()
+				  == firstHistory.get());
+		if (translationPhraseShown) {
+			translateBarAfterPhraseWait->finishAnimating();
+			visibleBeforeClose
+				= !translateBarAfterPhraseWait->hiddenForRegressionTest()
+				  && (translateBarAfterPhraseWait->height() > 0);
+			firstHistory->translateTo(offeredTranslationLanguage);
+			translateBarAfterPhraseWait->setOverridenToForRegressionTest(
+				LanguageId());
+			translatedHistoryReady
+				= (firstHistory->translatedTo() == offeredTranslationLanguage);
+			controller->clearSectionStack();
+			closed = WaitForRegressionCondition(
+				[&] {
+					return !historyWidget->history()
+						   && historyWidget
+								  ->historyTransitionFinishedForRegressionTest();
+				},
+				1500);
+			barDestroyedOnClose
+				= closed && !historyWidget->translateBarForRegressionTest();
+			const auto translatedBeforeClosedPreference
+				= firstHistory->translatedTo();
+			translationSettings.setTranslateTo(closedTargetLanguage);
+			QCoreApplication::processEvents();
+			noTranslateToWhileClosed = (firstHistory->translatedTo()
+										== translatedBeforeClosedPreference);
+			translationSettings.setTranslateTo(originalTranslateTo);
+			reopened = showHistoryForTranslateBar(firstHistory);
+			const auto reopenedBar
+				= historyWidget->translateBarForRegressionTest();
+			if (reopenedBar) {
+				reopenedBar->finishAnimating();
+				reopenedBarCreated = (reopenedBar->historyForRegressionTest()
+									  == firstHistory.get());
+				visibleOnReopen
+					= reopened && reopenedBarCreated
+					  && reopenedBar->shouldBeShownForRegressionTest()
+					  && !reopenedBar->hiddenForRegressionTest()
+					  && (reopenedBar->height() > 0);
+			}
+			result.translateBarClosedReopened
+				= premiumTranslationFixtureReady && visibleBeforeClose
+				  && translatedHistoryReady && closed && barDestroyedOnClose
+				  && noTranslateToWhileClosed && reopened && visibleOnReopen;
+		}
+	}
+	std::fprintf(
+		stderr,
+		"Translation bar close/reopen: premium_fixture_ready=%d "
+		"translate_chats_enabled=%d session_premium=%d bar_ready=%d "
+		"first_history_returned=%d "
+		"language_ready=%d closed_target_ready=%d phrase_shown=%d "
+		"visible_before_close=%d translated_history_ready=%d closed=%d "
+		"bar_destroyed=%d no_translate_while_closed=%d reopened=%d "
+		"reopened_bar_created=%d visible_on_reopen=%d.\n",
+		premiumTranslationFixtureReady,
+		translationSettings.translateChatEnabled(), session.premium(),
+		translateBarExisted, firstHistoryReturnedForTranslateBar,
+		offeredTranslationLanguage.known(), closedTargetLanguage.known(),
+		translationPhraseShown, visibleBeforeClose, translatedHistoryReady,
+		closed, barDestroyedOnClose, noTranslateToWhileClosed, reopened,
+		reopenedBarCreated, visibleOnReopen);
+	result.translateBarClosedReopened
+		= result.translateBarClosedReopened && restoreTranslationFixture();
+	const auto historyBeforeMigration = historyWidget->history();
+	const auto migrationChatId = ChatId(1'050'057);
+	const auto migrationChannelId = ChannelId(1'050'058);
+	const auto migrationChat = data.chat(migrationChatId);
+	const auto migrationHistory = makeHistory(migrationChatId);
+	migrationHistory->getReadyFor(ShowAtTheEndMsgId);
+	migrationHistory->getReadyFor(ShowAtUnreadMsgId);
+	migrationHistory->addNewLocalMessage(
+		{
+			.id = data.nextLocalMessageId(),
+			.flags = (MessageFlag::Outgoing | MessageFlag::HasFromId),
+			.from = session.userPeerId(),
+			.date = base::unixtime::now(),
+		},
+		TextWithEntities{.text = u"migration fixture"_q},
+		MTP_messageMediaEmpty());
+	migrationHistory->markLoadedAtTop();
+	const auto migrationSourceHistoryReady
+		= !migrationHistory->isEmpty() && migrationHistory->loadedAtTop()
+		  && migrationHistory->loadedAtBottom()
+		  && migrationHistory->isReadyFor(ShowAtUnreadMsgId)
+		  && migrationHistory->isReadyFor(ShowAtTheEndMsgId);
+	using ChannelFlag = MTPDchannel::Flag;
+	const auto migrationChannelPeer
+		= data.processChats(MTP_vector<MTPChat>({MTP_channel(
+			MTP_flags(ChannelFlag::f_megagroup | ChannelFlag::f_access_hash),
+			MTP_long(migrationChannelId.bare),
+			MTP_long(migrationChannelId.bare + 100),
+			MTP_string(u"Migration regression channel"_q), MTPstring(),
+			MTP_chatPhotoEmpty(), MTP_int(1), MTPVector<MTPRestrictionReason>(),
+			MTPChatAdminRights(), MTPChatBannedRights(), MTPChatBannedRights(),
+			MTPint(), MTPVector<MTPUsername>(), MTPRecentStory(),
+			MTPPeerColor(), MTPPeerColor(), MTPEmojiStatus(), MTPint(),
+			MTPint(), MTPlong(), MTPlong(), MTPlong(), MTPlong())}));
+	const auto migrationChannel
+		= migrationChannelPeer ? migrationChannelPeer->asChannel() : nullptr;
+	if (migrationChannel) {
+		PrepareRegressionChannel(not_null<ChannelData *>(migrationChannel));
+		// Keep this synthetic destination self-owned and fully loaded. Opening
+		// a partially initialized channel would issue live participant
+		// requests; a refusal can mark the fixture forbidden and close the
+		// history we are using to verify the migration rebind.
+		migrationChannel->mgInfo->creator = session.user();
+		migrationChannel->mgInfo->botStatus = Data::BotStatus::NoBots;
+		migrationChannel->mgInfo->adminsLoaded = true;
+		migrationChannel->fullUpdated();
+	}
+	const auto migrationTargetHistory
+		= migrationChannel
+			  ? data.history(not_null<const PeerData *>(migrationChannel)).get()
+			  : nullptr;
+	if (migrationTargetHistory) {
+		migrationTargetHistory->getReadyFor(ShowAtUnreadMsgId);
+		migrationTargetHistory->getReadyFor(ShowAtTheEndMsgId);
+		migrationTargetHistory->markLoadedAtTop();
+	}
+	session.changes().sendNotifications();
+	QCoreApplication::processEvents();
+	auto migrationChatOpened = false;
+	auto migrationOpenPeerMatches = false;
+	auto migrationLinksReady = false;
+	auto migrationHistoryUnchangedAfterFlush = false;
+	auto migrationNotificationConsumerEntered = false;
+	auto migrationCallbackReached = false;
+	auto migrationCallbackPeerMatched = false;
+	auto migrationHandlerEntered = false;
+	auto migrationWidgetSwitchedToChannel = false;
+	auto migrationSwitchedToChannel = false;
+	auto migrationWidgetPeerIsChannel = false;
+	auto migrationWidgetStillInstalled = false;
+	auto migrationTransitionFinished = false;
+	auto migrationRestoredHistory = false;
+	if (migrationChannel && migrationTargetHistory) {
+		migrationChatOpened = showHistoryForTranslateBar(migrationHistory);
+		if (migrationChatOpened) {
+			migrationOpenPeerMatches
+				= (historyWidget->peer() == migrationChat.get());
+			historyWidget->resetPeerMigrationRegressionStagesForRegressionTest(
+				migrationChat.get());
+			Data::ApplyMigration(migrationChat,
+								 not_null<ChannelData *>(migrationChannel));
+			migrationLinksReady
+				= (migrationChat->migrateTo() == migrationChannel)
+				  && (migrationChannel->migrateFrom() == migrationChat.get());
+			session.changes().peerUpdated(
+				not_null<PeerData *>(migrationChat.get()),
+				Data::PeerUpdate::Flag::Migration
+					| Data::PeerUpdate::Flag::FullInfo);
+			session.changes().sendNotifications();
+			migrationHistoryUnchangedAfterFlush
+				= (historyWidget->history() == migrationHistory.get());
+			migrationSwitchedToChannel = WaitForRegressionCondition(
+				[&] {
+					const auto history = historyWidget->history();
+					return (historyWidget->peer() == migrationChannel)
+						   && history && (history->peer == migrationChannel);
+				},
+				1500);
+			const auto stages
+				= historyWidget
+					  ->peerMigrationRegressionStagesForRegressionTest();
+			migrationNotificationConsumerEntered
+				= stages.notificationConsumerEntered;
+			migrationCallbackReached = stages.callbackReached;
+			migrationCallbackPeerMatched = stages.callbackPeerMatched;
+			migrationHandlerEntered = stages.handlerEntered;
+			migrationWidgetSwitchedToChannel = stages.widgetSwitchedToChannel;
+			migrationWidgetPeerIsChannel
+				= (historyWidget->peer() == migrationChannel);
+			migrationWidgetStillInstalled
+				= (controller->content()->historyWidgetForRegressionTest()
+				   == historyWidget);
+			migrationTransitionFinished
+				= historyWidget->historyTransitionFinishedForRegressionTest();
+		}
+	}
+	if (historyBeforeMigration) {
+		controller->showPeerHistory(
+			not_null<History *>(historyBeforeMigration));
+		migrationRestoredHistory = WaitForRegressionCondition(
+			[&] {
+				return (historyWidget->history() == historyBeforeMigration)
+					   && historyWidget
+							  ->historyTransitionFinishedForRegressionTest();
+			},
+			1500);
+	}
+	result.openPeerMigrationRebind
+		= migrationSourceHistoryReady && migrationChatOpened
+		  && migrationOpenPeerMatches && migrationLinksReady
+		  && migrationHistoryUnchangedAfterFlush
+		  && migrationNotificationConsumerEntered && migrationCallbackReached
+		  && migrationCallbackPeerMatched && migrationHandlerEntered
+		  && migrationWidgetSwitchedToChannel && migrationSwitchedToChannel
+		  && migrationWidgetPeerIsChannel && migrationWidgetStillInstalled
+		  && migrationRestoredHistory;
+	std::fprintf(stderr,
+				 "Open peer migration rebind: source_history_ready=%d "
+				 "opened=%d peer_matches=%d "
+				 "links_ready=%d history_unchanged_after_flush=%d "
+				 "notification_consumer=%d callback_reached=%d "
+				 "callback_peer_matches=%d handler_entered=%d "
+				 "widget_switched_to_channel=%d switched_to_channel=%d "
+				 "widget_peer_channel=%d widget_installed=%d transition=%d "
+				 "restored=%d passed=%d.\n",
+				 migrationSourceHistoryReady, migrationChatOpened,
+				 migrationOpenPeerMatches, migrationLinksReady,
+				 migrationHistoryUnchangedAfterFlush,
+				 migrationNotificationConsumerEntered, migrationCallbackReached,
+				 migrationCallbackPeerMatched, migrationHandlerEntered,
+				 migrationWidgetSwitchedToChannel, migrationSwitchedToChannel,
+				 migrationWidgetPeerIsChannel, migrationWidgetStillInstalled,
+				 migrationTransitionFinished, migrationRestoredHistory,
+				 result.openPeerMigrationRebind);
+	std::fprintf(
+		stderr,
+		"Chat switch translation bar reuse: first_bound=%d second_bound=%d "
+		"returned_bound=%d navigation_reuse=%d reused=%d "
+		"closed_reopened=%d.\n",
+		translateBarBoundToFirstHistory, sameTranslateBarOnSecondHistory,
+		sameTranslateBarOnReturn, result.translateBarRetainedAcrossSwitches,
+		result.translateBarReused, result.translateBarClosedReopened);
 	std::fprintf(stderr, "Group call bar deferred button: passed=%d.\n",
 				 groupCallBarDeferred);
 	std::fprintf(stderr, "Contact status deferred request text: passed=%d.\n",
 				 contactStatusRequestText);
+	const auto blockedWorkBudgetRegressionPassed
+		= MainThreadBlockedWorkBudgetRegressionPasses();
+	const auto startupWatchdogRegressionPassed
+		= StartupWatchdogStallEvidenceRegressionPasses();
+	std::fprintf(
+		stderr,
+		"Chat switch gate checks: completed=%d timed_out=%d "
+		"cached_documents=%d expected_cached_documents=%d "
+		"hydration_cpu_clock=%d hydration_process_cpu_clock=%d "
+		"chat_switch_cpu_clock=%d chat_switch_process_cpu_clock=%d "
+		"scale_rebuilt=%d transitions_settled=%d "
+		"initial_selection_within_budget=%d switch_work_within_budget=%d "
+		"startup_budget=%d blocked_work_fixtures=%d "
+		"startup_watchdog_fixtures=%d.\n",
+		completed, timedOut, result.cachedDocuments,
+		(kReactionCount / 2 + 1) * kDocumentsPerReaction,
+		hydrationCpuClockAvailable, hydrationProcessCpuClockAvailable,
+		chatSwitchCpuClockAvailable, chatSwitchProcessCpuClockAvailable,
+		result.historyScaleInvalidationRebuilt,
+		result.chatSwitchTransitionsSettled,
+		result.initialHistorySelectionWithinBudget,
+		result.chatSwitchWorkWithinBudget,
+		startupTimingBudgetRun.WithinBudget(),
+		blockedWorkBudgetRegressionPassed, startupWatchdogRegressionPassed);
 	result.passed
 		= completed && !timedOut && (result.reactions == kReactionCount)
 		  && (result.attachMenuBotCount >= 20)
@@ -15997,6 +17629,7 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 			  == kReactionCount * kDocumentsPerReaction)
 		  && (result.chatSwitches == kExpectedChatSwitches)
 		  && result.dialogHistoriesReady && result.syntheticHistoriesReady
+		  && result.peerScopedUpdateRouting
 		  && (result.cachedDocuments
 			  == (kReactionCount / 2 + 1) * kDocumentsPerReaction)
 		  && result.historyScaleInvalidationRebuilt
@@ -16030,12 +17663,17 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 			  result.attachMenuUncachedPeerEstimatedWorkNanoseconds,
 			  kMaxChatSwitchNanoseconds)
 		  && result.attachMenuCacheBounded && result.chatSwitchComposeUiReused
+		  && result.translateBarReused && result.translateBarClosedReopened
+		  && result.translateBarRetainedAcrossSwitches
+		  && result.translateBarTracksCurrentHistory
+		  && result.openPeerMigrationRebind
 		  && result.fieldAutocompleteSuggestionsReady
 		  && result.botCommandsShownWhileFieldUnfocused
 		  && result.pendingRevealStartedAfterControlsGeometry
 		  && result.minimizedRestore && hydrationCpuClockAvailable
 		  && result.initialHistoryWindowActivated
 		  && result.chatSwitchWindowsActivated
+		  && startupTimingBudgetRun.WithinBudget()
 		  && (result.maxHydrationMainThreadWorkNanoseconds >= 0)
 		  && MainThreadCpuWorkWithinBudget(
 			  result.maxHydrationMainThreadWorkNanoseconds,
@@ -16049,7 +17687,8 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		  && (result.maxRecurringChatSwitchEstimatedWorkNanoseconds >= 0)
 		  && (result.maxRecurringChatSwitchEstimatedWorkNanoseconds
 			  < kMaxChatSwitchNanoseconds)
-		  && MainThreadBlockedWorkBudgetRegressionPasses();
+		  && blockedWorkBudgetRegressionPassed
+		  && startupWatchdogRegressionPassed;
 	regressionSettings.setTabbedSelectorSectionEnabled(
 		originalTabbedSelectorSectionEnabled);
 	regressionSettings.setThirdSectionInfoEnabled(
@@ -16077,6 +17716,7 @@ struct FirstDialogsHandlerRegressionResult final {
 	bool handlerWithinBudget = false;
 	bool handlerCpuOnlyWithinBudget = false;
 	bool handlerRunnerNoiseEligible = false;
+	bool handlerCpuIntervalCountersCaptured = false;
 	bool responseParsed = false;
 	bool passed = false;
 };
@@ -16204,14 +17844,22 @@ RunFirstDialogsHandlerLatencyRegression(
 			qint64(0), *handlerMainThreadAfter - *handlerMainThreadBefore);
 	}
 	const auto handlerInterval = MainThreadWorkInterval{
-		handlerStartedAt,
-		result.handlerNanoseconds,
-		result.handlerMainThreadCpuNanoseconds,
-		-1,
-		u"messages.getDialogs response handler"_q,
-		handlerStartedAtSteadyNanoseconds,
-		handlerMainThreadAfter.value_or(-1),
+		.startedAt = handlerStartedAt,
+		.durationNanoseconds = result.handlerNanoseconds,
+		.mainThreadWorkNanoseconds = result.handlerMainThreadCpuNanoseconds,
+		.processWorkNanoseconds = -1,
+		.label = u"messages.getDialogs response handler"_q,
+		.startedAtSteadyNanoseconds = handlerStartedAtSteadyNanoseconds,
+		.mainThreadCpuStartNanoseconds = handlerMainThreadBefore.value_or(-1),
+		.mainThreadCpuEndNanoseconds = handlerMainThreadAfter.value_or(-1),
 	};
+	result.handlerCpuIntervalCountersCaptured
+		= handlerMainThreadBefore.has_value()
+		  && handlerMainThreadAfter.has_value()
+		  && (handlerInterval.mainThreadCpuStartNanoseconds
+			  == *handlerMainThreadBefore)
+		  && (handlerInterval.mainThreadCpuEndNanoseconds
+			  == *handlerMainThreadAfter);
 	auto handlerSchedulerTimeline
 		= Core::UiStallWatchdog::RecentSchedulerSamplesForTesting();
 	const auto handlerCaptureSettled = [&] {
@@ -16308,6 +17956,7 @@ RunFirstDialogsHandlerLatencyRegression(
 		  && (result.processedMessages == kMessageCount)
 		  && (result.processedDocuments == kMessageCount)
 		  && (result.cacheWalks == 2)
+		  && result.handlerCpuIntervalCountersCaptured
 		  && (result.handlerWithinBudget || result.handlerRunnerNoiseEligible);
 	return result;
 }
@@ -16520,6 +18169,27 @@ void RunAuthenticatedCacheSymlinkCases(
 				continue;
 			}
 			Core::MacProtectedPath::ResetCachePathWalkCountForTesting();
+			const auto startupWatchdogBaselineReady
+				= WaitForRegressionCondition(
+					[&] {
+						const auto nowNanoseconds
+							= std::chrono::duration_cast<
+								  std::chrono::nanoseconds>(
+								  std::chrono::steady_clock::now()
+									  .time_since_epoch())
+								  .count();
+						return HasRecentStartupWatchdogAcknowledgement(
+							Core::UiStallWatchdog::
+								RecentPingAcknowledgementsForTesting(),
+							nowNanoseconds);
+					},
+					1000);
+			if (!startupWatchdogBaselineReady) {
+				std::fprintf(
+					stderr,
+					"Startup watchdog did not acknowledge a recent ping "
+					"before cache initialization.\n");
+			}
 			auto cacheInitializationTimer = QElapsedTimer();
 			cacheInitializationTimer.start();
 			auto mainThreadHeartbeatClock = QElapsedTimer();
@@ -16915,6 +18585,10 @@ void RunAuthenticatedCacheSymlinkCases(
 				  - startupStallSchedulerUninterruptible;
 			auto maxStartupEstimatedWorkNanoseconds
 				= maxMainThreadWorkNanoseconds;
+			auto maxStartupWatchdogAcknowledgementGapNanoseconds = qint64(-1);
+			auto maxStartupWatchdogResponseNanoseconds = qint64(-1);
+			auto startupWatchdogAcknowledgementCount = 0;
+			auto startupWatchdogId = std::uint64_t(0);
 			auto startupWorkWithinBound = true;
 			for (const auto &gap : startupHeartbeatGaps) {
 				const auto startupWork = EstimateStartupWork(
@@ -16923,8 +18597,20 @@ void RunAuthenticatedCacheSymlinkCases(
 				const auto &schedulerSamples = startupWork.schedulerSamples;
 				const auto &trace = schedulerSamples.trace;
 				const auto &estimate = startupWork.estimate;
-				const auto budgetAssessment = AssessMainThreadWorkBudget(
-					estimate, gap.mainThreadWorkNanoseconds, 100'000'000);
+				const auto &watchdogCoverage = startupWork.watchdogCoverage;
+				const auto budgetAssessment
+					= AssessStartupWorkBudget(gap, startupWork, 100'000'000);
+				maxStartupWatchdogAcknowledgementGapNanoseconds = std::max(
+					maxStartupWatchdogAcknowledgementGapNanoseconds,
+					watchdogCoverage.maxAcknowledgementGapNanoseconds);
+				maxStartupWatchdogResponseNanoseconds
+					= std::max(maxStartupWatchdogResponseNanoseconds,
+							   watchdogCoverage.maxResponseNanoseconds);
+				startupWatchdogAcknowledgementCount
+					+= watchdogCoverage.acknowledgementCount;
+				if (watchdogCoverage.watchdogId != 0) {
+					startupWatchdogId = watchdogCoverage.watchdogId;
+				}
 				const auto withinBudget = timingBudgetRun.Observe(
 					budgetAssessment, gap.durationNanoseconds, 100'000'000,
 					gap.startedAtSteadyNanoseconds);
@@ -16941,14 +18627,37 @@ void RunAuthenticatedCacheSymlinkCases(
 				const auto schedulerCaptureRequired
 					= gap.durationNanoseconds >= 100'000'000;
 				if (schedulerCaptureRequired
-					&& !budgetAssessment.schedulerEvidenceAvailable) {
+					&& !budgetAssessment.schedulerEvidenceAvailable
+					&& !watchdogCoverage.proven) {
+					auto offsets = QStringList();
+					for (const auto offset :
+						 schedulerSamples.sampleOffsetsNanoseconds) {
+						offsets.push_back(QString::number(offset));
+					}
+					auto maximumSampleGapNanoseconds = qint64(0);
+					for (auto i = std::size_t(1);
+						 i < schedulerSamples.sampleOffsetsNanoseconds.size();
+						 ++i) {
+						maximumSampleGapNanoseconds = std::max(
+							maximumSampleGapNanoseconds,
+							schedulerSamples.sampleOffsetsNanoseconds[i]
+								- schedulerSamples
+									  .sampleOffsetsNanoseconds[i - 1]);
+					}
+					const auto offsetsText = offsets.join(u',').toLatin1();
 					std::fprintf(
 						stderr,
-						"HARNESS ERROR: startup scheduler trace unavailable: "
-						"started_at=%s window_start_steady_ns=%lld "
+						"HARNESS ERROR: startup scheduler trace "
+						"unavailable: "
+						"started_at=%s "
+						"window_start_steady_ns=%lld "
 						"wall_ns=%lld main_thread_cpu_ns=%lld "
-						"budget_ns=100000000 runner_noise_eligible=%d "
-						"runner_noise_cpu_limit_ns=%lld.\n",
+						"budget_ns=100000000 "
+						"runner_noise_eligible=%d "
+						"runner_noise_cpu_limit_ns=%lld trace=%s "
+						"offsets_ns=%s max_sample_gap_ns=%lld "
+						"before=%c before_distance_ns=%lld "
+						"after=%c after_distance_ns=%lld.\n",
 						gap.startedAt.toString(Qt::ISODateWithMs)
 							.toUtf8()
 							.constData(),
@@ -16957,7 +18666,21 @@ void RunAuthenticatedCacheSymlinkCases(
 						static_cast<long long>(gap.mainThreadWorkNanoseconds),
 						runnerNoiseEligible,
 						static_cast<long long>(
-							kMaxUntracedRunnerNoiseMainThreadCpuNanoseconds));
+							kMaxUntracedRunnerNoiseMainThreadCpuNanoseconds),
+						trace.toLatin1().constData(), offsetsText.constData(),
+						static_cast<long long>(maximumSampleGapNanoseconds),
+						schedulerSamples.before ? schedulerSamples.before->state
+												: '-',
+						static_cast<long long>(
+							schedulerSamples.before
+								? schedulerSamples.before->distanceNanoseconds
+								: -1),
+						schedulerSamples.after ? schedulerSamples.after->state
+											   : '-',
+						static_cast<long long>(
+							schedulerSamples.after
+								? schedulerSamples.after->distanceNanoseconds
+								: -1));
 				}
 				const auto gapStartedAtUtf8
 					= gap.startedAt.toString(Qt::ISODateWithMs).toUtf8();
@@ -16969,9 +18692,16 @@ void RunAuthenticatedCacheSymlinkCases(
 					"wall_ns=%lld "
 					"main_thread_cpu_ns=%lld "
 					"blocked_estimate_ns=%lld "
-					"estimated_work_ns=%lld budget_ns=100000000 "
-					"capture_pending=%d trace_samples=%zu trace=%s "
-					"within_budget=%d cpu_only_within_budget=%d "
+					"estimated_work_ns=%lld "
+					"budget_ns=100000000 "
+					"capture_pending=%d trace_samples=%zu "
+					"trace=%s "
+					"within_budget=%d "
+					"cpu_only_within_budget=%d "
+					"watchdog_responsiveness_proven=%d "
+					"watchdog_id=%llu watchdog_ack_count=%d "
+					"watchdog_max_ack_gap_ns=%lld "
+					"watchdog_max_response_ns=%lld "
 					"scheduler_capture_required=%d "
 					"scheduler_evidence_available=%d.\n",
 					gapStartedAtUtf8.constData(),
@@ -16984,6 +18714,14 @@ void RunAuthenticatedCacheSymlinkCases(
 					traceLatin1.constData(), withinBudget,
 					MainThreadCpuWorkWithinBudget(gap.mainThreadWorkNanoseconds,
 												  100'000'000),
+					watchdogCoverage.proven,
+					static_cast<unsigned long long>(
+						watchdogCoverage.watchdogId),
+					watchdogCoverage.acknowledgementCount,
+					static_cast<long long>(
+						watchdogCoverage.maxAcknowledgementGapNanoseconds),
+					static_cast<long long>(
+						watchdogCoverage.maxResponseNanoseconds),
 					schedulerCaptureRequired,
 					budgetAssessment.schedulerEvidenceAvailable);
 			}
@@ -17036,6 +18774,7 @@ void RunAuthenticatedCacheSymlinkCases(
 					"main_thread_cpu_ns=%lld blocked_estimate_ns=%lld "
 					"estimated_work_ns=%lld trace=%s "
 					"within_budget=%d cpu_only_within_budget=%d "
+					"cpu_interval_counters_captured=%d "
 					"runner_noise_eligible=%d under_50ms=%d.\n",
 					dialogsHandler.requests, dialogsHandler.responseParsed,
 					dialogsHandler.processedChats,
@@ -17056,6 +18795,7 @@ void RunAuthenticatedCacheSymlinkCases(
 							   .constData()),
 					dialogsHandler.handlerWithinBudget,
 					dialogsHandler.handlerCpuOnlyWithinBudget,
+					dialogsHandler.handlerCpuIntervalCountersCaptured,
 					dialogsHandler.handlerRunnerNoiseEligible,
 					dialogsHandler.handlerNanoseconds < kMaxHandlerNanoseconds);
 				auto &app = Core::App();
@@ -17177,12 +18917,15 @@ void RunAuthenticatedCacheSymlinkCases(
 					"attach_menu_cache_bound=%d "
 					"pending_reveal_after_controls_geometry=%d "
 					"chat_switch_compose_ui_reused=%d "
+					"translate_bar_reused=%d "
+					"translate_bar_tracks_history=%d "
 					"field_autocomplete_suggestions_ready=%d "
 					"menu_commands_unfocused=%d "
 					"bot_commands_unfocused=%d "
 					"history_chat_mode_invalidation_rebuilt=%d "
 					"dialog_histories_ready=%d "
 					"synthetic_histories_ready=%d "
+					"peer_scoped_update_routing=%d "
 					"max_stall_ns=%lld within_budgets=%d.\n",
 					chatSwitch.reactions, chatSwitch.hydratedDocuments,
 					chatSwitch.chatSwitches, chatSwitch.attachMenuBotCount,
@@ -17245,12 +18988,15 @@ void RunAuthenticatedCacheSymlinkCases(
 					chatSwitch.attachMenuCacheBounded,
 					chatSwitch.pendingRevealStartedAfterControlsGeometry,
 					chatSwitch.chatSwitchComposeUiReused,
+					chatSwitch.translateBarReused,
+					chatSwitch.translateBarTracksCurrentHistory,
 					chatSwitch.fieldAutocompleteSuggestionsReady,
 					chatSwitch.menuCommandsShownWhileFieldUnfocused,
 					chatSwitch.botCommandsShownWhileFieldUnfocused,
 					chatSwitch.historyChatModeInvalidationRebuilt,
 					chatSwitch.dialogHistoriesReady,
 					chatSwitch.syntheticHistoriesReady,
+					chatSwitch.peerScopedUpdateRouting,
 					static_cast<long long>(chatSwitch.maxStallNanoseconds),
 					chatSwitch.passed);
 				std::fprintf(
@@ -17380,6 +19126,10 @@ void RunAuthenticatedCacheSymlinkCases(
 				"startup_heartbeat_gap_count=%d "
 				"startup_uncovered_heartbeat_gaps=%d "
 				"startup_heartbeat_gap_coverage_proven=%d "
+				"startup_watchdog_id=%llu "
+				"startup_watchdog_acknowledgement_count=%d "
+				"startup_max_watchdog_ack_gap_ns=%lld "
+				"startup_max_watchdog_response_ns=%lld "
 				"startup_stall_count=%d "
 				"max_startup_stall_ns=%lld "
 				"startup_stall_main_thread_work_ns=%lld "
@@ -17402,7 +19152,8 @@ void RunAuthenticatedCacheSymlinkCases(
 				"first_access_estimated_work_ns=%lld "
 				"first_access_trace=%s "
 				"first_access_within_budget=%d "
-				"first_access_cpu_only_within_budget=%d under_50ms=%d "
+				"first_access_cpu_only_within_budget=%d "
+				"under_50ms=%d "
 				"root_swap_refused=%d direct_fallback_closed=%d "
 				"root_restored=%d startup_walks=%d "
 				"main_thread_walks=%d.\n",
@@ -17421,6 +19172,11 @@ void RunAuthenticatedCacheSymlinkCases(
 				heartbeatGapStartedAtUtf8.constData(),
 				int(startupHeartbeatGaps.size()), uncoveredStartupHeartbeatGaps,
 				startupHeartbeatGapCoverageProven,
+				static_cast<unsigned long long>(startupWatchdogId),
+				startupWatchdogAcknowledgementCount,
+				static_cast<long long>(
+					maxStartupWatchdogAcknowledgementGapNanoseconds),
+				static_cast<long long>(maxStartupWatchdogResponseNanoseconds),
 				int(corroboratedStartupStalls.size()),
 				static_cast<long long>(maxStartupStallNanoseconds),
 				static_cast<long long>(startupStallMainThreadWorkNanoseconds),
@@ -17449,6 +19205,7 @@ void RunAuthenticatedCacheSymlinkCases(
 				startupWalks, mainThreadWalks);
 			const auto passed
 				= startupScansCompleted && first && second
+				  && startupWatchdogBaselineReady
 				  && missingActiveVersionBeforeOpen
 				  && initializationPendingAtFirstAccess
 				  && queuedOperationsPassed && cacheInitializationAllowed
@@ -20632,7 +22389,176 @@ RunAiComposeApplyHandlerRegression(not_null<Window::Controller *> window,
 	return true;
 }
 
+enum class RunnerExternalActivationMarkerState {
+	Waiting,
+	Activated,
+	Failed,
+};
+
+[[nodiscard]] bool RunnerExternalActivationConfigValidForRegression() {
+	const auto activationRequired = qEnvironmentVariable(
+		"TDESKTOP_AUTH_LIFECYCLE_REGRESSION_RUNNER_ACTIVATION_REQUIRED");
+	const auto markerPath = qEnvironmentVariable(
+		"TDESKTOP_AUTH_LIFECYCLE_REGRESSION_RUNNER_ACTIVATION_MARKER");
+	return (activationRequired != u"1"_q) || !markerPath.isEmpty();
+}
+
+[[nodiscard]] RunnerExternalActivationMarkerState
+RunnerExternalActivationMarkerStateForRegression(const QByteArray &contents,
+												 qint64 expectedPid,
+												 int expectedRequestNumber) {
+	const auto lines = contents.split('\n');
+	const auto expectedPidLine
+		= QByteArray("pid=") + QByteArray::number(expectedPid);
+	const auto expectedRequestLine
+		= QByteArray("request=") + QByteArray::number(expectedRequestNumber);
+	if (lines.size() < 3 || lines[0] != expectedPidLine
+		|| lines[1] != expectedRequestLine) {
+		return RunnerExternalActivationMarkerState::Waiting;
+	}
+	if (lines[2] == "result=PASS") {
+		return RunnerExternalActivationMarkerState::Activated;
+	}
+	if (lines[2] == "result=FAIL") {
+		return RunnerExternalActivationMarkerState::Failed;
+	}
+	return RunnerExternalActivationMarkerState::Waiting;
+}
+
+[[nodiscard]] bool RunnerExternalActivationMarkerRegressionPasses() {
+	constexpr auto kPid = qint64(4321);
+	constexpr auto kRequestNumber = 2;
+	constexpr auto kRequiredVariable
+		= "TDESKTOP_AUTH_LIFECYCLE_REGRESSION_RUNNER_ACTIVATION_REQUIRED";
+	constexpr auto kMarkerVariable
+		= "TDESKTOP_AUTH_LIFECYCLE_REGRESSION_RUNNER_ACTIVATION_MARKER";
+	const auto previousRequiredWasSet
+		= qEnvironmentVariableIsSet(kRequiredVariable);
+	const auto previousRequired = qgetenv(kRequiredVariable);
+	const auto previousMarkerWasSet
+		= qEnvironmentVariableIsSet(kMarkerVariable);
+	const auto previousMarker = qgetenv(kMarkerVariable);
+	const auto restoreEnvironment = gsl::finally([&] {
+		if (previousRequiredWasSet) {
+			qputenv(kRequiredVariable, previousRequired);
+		} else {
+			qunsetenv(kRequiredVariable);
+		}
+		if (previousMarkerWasSet) {
+			qputenv(kMarkerVariable, previousMarker);
+		} else {
+			qunsetenv(kMarkerVariable);
+		}
+	});
+	qunsetenv(kMarkerVariable);
+	qputenv(kRequiredVariable, "1");
+	const auto missingRequiredMarkerFails
+		= !RunnerExternalActivationConfigValidForRegression();
+	qunsetenv(kRequiredVariable);
+	const auto missingOptionalMarkerPasses
+		= RunnerExternalActivationConfigValidForRegression();
+	qputenv(kRequiredVariable, "1");
+	qputenv(kMarkerVariable, "marker");
+	const auto configuredRequiredMarkerPasses
+		= RunnerExternalActivationConfigValidForRegression();
+	return missingRequiredMarkerFails && missingOptionalMarkerPasses
+		   && configuredRequiredMarkerPasses
+		   && (RunnerExternalActivationMarkerStateForRegression(
+				   "pid=4321\nrequest=2\nresult=PASS\n", kPid, kRequestNumber)
+			   == RunnerExternalActivationMarkerState::Activated)
+		   && (RunnerExternalActivationMarkerStateForRegression(
+				   "pid=4321\nrequest=2\nresult=FAIL\n", kPid, kRequestNumber)
+			   == RunnerExternalActivationMarkerState::Failed)
+		   && (RunnerExternalActivationMarkerStateForRegression(
+				   "pid=9876\nrequest=2\nresult=PASS\n", kPid, kRequestNumber)
+			   == RunnerExternalActivationMarkerState::Waiting)
+		   && (RunnerExternalActivationMarkerStateForRegression(
+				   "pid=4321\nrequest=1\nresult=PASS\n", kPid, kRequestNumber)
+			   == RunnerExternalActivationMarkerState::Waiting)
+		   && (RunnerExternalActivationMarkerStateForRegression(
+				   "pid=4321\nrequest=2\n", kPid, kRequestNumber)
+			   == RunnerExternalActivationMarkerState::Waiting);
+}
+
+[[nodiscard]] bool WaitForRunnerExternalActivationForRegression() {
+	const auto markerPath = qEnvironmentVariable(
+		"TDESKTOP_AUTH_LIFECYCLE_REGRESSION_RUNNER_ACTIVATION_MARKER");
+	if (markerPath.isEmpty()) {
+		if (!RunnerExternalActivationConfigValidForRegression()) {
+			std::fprintf(
+				stderr,
+				"Runner external activation marker path is not configured.\n");
+			return false;
+		}
+		return true;
+	}
+	const auto processId = QCoreApplication::applicationPid();
+	const auto requestPath = qEnvironmentVariable(
+		"TDESKTOP_AUTH_LIFECYCLE_REGRESSION_RUNNER_ACTIVATION_REQUEST");
+	if (requestPath.isEmpty()) {
+		std::fprintf(
+			stderr,
+			"Runner external activation request path is not configured.\n");
+		return false;
+	}
+	static auto requestNumber = 0;
+	++requestNumber;
+	auto request = QFile(requestPath);
+	if (!request.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+		std::fprintf(
+			stderr,
+			"Runner external activation request could not be published.\n");
+		return false;
+	}
+	auto requestContents = QByteArray("pid=") + QByteArray::number(processId);
+	requestContents.append("\nrequest=");
+	requestContents.append(QByteArray::number(requestNumber));
+	requestContents.append('\n');
+	if (request.write(requestContents) != requestContents.size()
+		|| !request.flush()) {
+		std::fprintf(stderr,
+					 "Runner external activation request write failed.\n");
+		return false;
+	}
+	auto markerState = RunnerExternalActivationMarkerState::Waiting;
+	const auto ready = WaitForRegressionCondition(
+		[&] {
+			auto marker = QFile(markerPath);
+			if (!marker.open(QIODevice::ReadOnly)) {
+				return false;
+			}
+			markerState = RunnerExternalActivationMarkerStateForRegression(
+				marker.readAll(), processId, requestNumber);
+			return markerState != RunnerExternalActivationMarkerState::Waiting;
+		},
+		240'000, 50);
+	if (!ready
+		|| markerState != RunnerExternalActivationMarkerState::Activated) {
+		std::fprintf(
+			stderr,
+			"Runner external activation gate failed before focus checks: "
+			"pid=%lld request=%d state=%s.\n",
+			static_cast<long long>(processId), requestNumber,
+			!ready ? "marker-not-published-or-mismatched"
+				   : "external-activation-failed");
+		return false;
+	}
+	std::fprintf(stderr,
+				 "Runner external activation verified before focus checks: "
+				 "pid=%lld request=%d.\n",
+				 static_cast<long long>(processId), requestNumber);
+	return true;
+}
+
 [[nodiscard]] int StartAccountLifecycleRegression(Fn<void(int)> done) {
+	if (!RunnerExternalActivationMarkerRegressionPasses()) {
+		std::fprintf(stderr,
+					 "Runner external activation marker self-test failed.\n");
+		return 1;
+	}
+	if (!WaitForRunnerExternalActivationForRegression()) {
+		return 1;
+	}
 	auto nativeLifecycleResults = std::make_shared<NativeLifecycleResults>();
 	const auto injectedFailCases
 		= qEnvironmentVariable("TDESKTOP_AUTH_LIFECYCLE_REGRESSION_FAIL_CASE")

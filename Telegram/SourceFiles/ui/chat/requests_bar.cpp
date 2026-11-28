@@ -207,6 +207,8 @@ void RequestsBar::hide() {
 	_shadow->hide();
 }
 
+bool RequestsBar::isShown() const { return !_wrap.isHidden(); }
+
 void RequestsBar::raise() {
 	_wrap.raise();
 	_shadow->raise();

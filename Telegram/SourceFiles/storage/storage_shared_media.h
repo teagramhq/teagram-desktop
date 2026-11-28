@@ -7,6 +7,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #pragma once
 
+#include <map>
+#include <memory>
 #include <rpl/event_stream.h>
 #include "storage/storage_facade.h"
 #include "storage/storage_sparse_ids_list.h"
@@ -267,7 +269,10 @@ public:
 	rpl::producer<SharedMediaSliceUpdate> sliceUpdated() const;
 	rpl::producer<SharedMediaRemoveOne> oneRemoved() const;
 	rpl::producer<SharedMediaRemoveAll> allRemoved() const;
-	rpl::producer<SharedMediaInvalidateBottom> bottomInvalidated() const;
+	rpl::producer<SharedMediaInvalidateBottom>
+	bottomInvalidated(PeerId peerId) const;
+	[[nodiscard]] int
+	bottomInvalidatedSubscriberCountForRegressionTest(PeerId peerId) const;
 
 private:
 	struct Key {
@@ -278,15 +283,27 @@ private:
 		friend inline constexpr auto operator<=>(Key, Key) = default;
 	};
 	using Lists = std::array<SparseIdsList, kSharedMediaTypeCount>;
+	struct BottomInvalidatedStream final {
+		using SubscriptionId = uint64;
+		std::map<
+			SubscriptionId,
+			std::shared_ptr<rpl::event_stream<SharedMediaInvalidateBottom>>>
+			subscriptions;
+		SubscriptionId nextSubscriptionId = 0;
+	};
+	using BottomInvalidatedStreams
+		= std::map<PeerId, std::shared_ptr<BottomInvalidatedStream>>;
 
 	std::map<Key, Lists>::iterator enforceLists(Key key);
+	void sendBottomInvalidated(const SharedMediaInvalidateBottom &update) const;
 
 	std::map<Key, Lists> _lists;
 
 	rpl::event_stream<SharedMediaSliceUpdate> _sliceUpdated;
 	rpl::event_stream<SharedMediaRemoveOne> _oneRemoved;
 	rpl::event_stream<SharedMediaRemoveAll> _allRemoved;
-	rpl::event_stream<SharedMediaInvalidateBottom> _bottomInvalidated;
+	std::shared_ptr<BottomInvalidatedStreams> _bottomInvalidatedStreams
+		= std::make_shared<BottomInvalidatedStreams>();
 
 	rpl::lifetime _lifetime;
 

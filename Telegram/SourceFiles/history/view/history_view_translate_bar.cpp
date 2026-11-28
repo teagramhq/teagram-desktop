@@ -252,7 +252,7 @@ TranslateBar::TranslateBar(
 		return (shown == _shadow->isHidden());
 	}));
 
-	setup(history);
+	setup();
 }
 
 TranslateBar::~TranslateBar() = default;
@@ -293,85 +293,122 @@ void TranslateBar::updateShadowGeometry(QRect wrapGeometry) {
 		: regular);
 }
 
-void TranslateBar::setup(not_null<History*> history) {
-	if (!history->session().serverTranslationSupported()) {
+void TranslateBar::setHistory(not_null<History *> history) {
+	if (_history == history) {
+		show();
+		return;
+	}
+	_menu = nullptr;
+	_history = history;
+	_overridenTo = history->translatedTo();
+	_forceHidden = false;
+	if (_history->session().serverTranslationSupported()) {
+		refreshTo();
+		_wrap.toggle(_shouldBeShown, anim::type::normal);
+	}
+}
+
+void TranslateBar::setup() {
+	if (!_history->session().serverTranslationSupported()) {
 		return;
 	}
 	_wrap.geometryValue(
 	) | rpl::on_next([=](QRect rect) {
 		updateShadowGeometry(rect);
 	}, _wrap.lifetime());
-	_overridenTo = history->translatedTo();
-	_to = rpl::combine(
-		Core::App().settings().translateToValue(),
-		Core::App().settings().skipTranslationLanguagesValue(),
-		history->session().changes().historyFlagsValue(
-			history,
-			Data::HistoryUpdate::Flag::TranslateFrom),
-		_overridenTo.value()
-	) | rpl::map([=](
-			LanguageId to,
-			const std::vector<LanguageId> &skip,
-			const auto &,
-			LanguageId overridenTo) {
-		return overridenTo
-			? overridenTo
-			: Ui::ChooseTranslateTo(history, to, skip);
-	}) | rpl::distinct_until_changed();
+	_phrase.value() | rpl::distinct_until_changed()
+		| rpl::on_next(
+			[=](QString phrase) {
+				_shouldBeShown = !phrase.isEmpty();
+				if (_shouldBeShown) {
+					if (!_label) {
+						setupControls();
+					}
+					_label->setText(phrase);
+					_updateLabelGeometry();
+				}
+				if (!_forceHidden) {
+					_wrap.toggle(_shouldBeShown, anim::type::normal);
+				}
+			},
+			lifetime());
 
-	_to.value(
-	) | rpl::filter([=](LanguageId should) {
-		const auto now = history->translatedTo();
-		return now && (now != should);
-	}) | rpl::on_next([=](LanguageId should) {
-		translateTo(should);
-	}, _wrap.lifetime());
+	_overridenTo = _history->translatedTo();
+	auto &settings = Core::App().settings();
+	_preferredTo = settings.translateTo();
+	_skipTranslationLanguages = settings.skipTranslationLanguages();
+	settings.translateToValue()
+		| rpl::on_next(
+			[=](LanguageId to) {
+				_preferredTo = to;
+				refreshTo();
+			},
+			lifetime());
+	settings.skipTranslationLanguagesValue()
+		| rpl::on_next(
+			[=](const std::vector<LanguageId> &skip) {
+				_skipTranslationLanguages = skip;
+				refreshTo();
+			},
+			lifetime());
 
-	rpl::combine(
-		_to.value(),
-		history->session().changes().historyFlagsValue(
-			history,
-			(Data::HistoryUpdate::Flag::TranslatedTo
-				| Data::HistoryUpdate::Flag::TranslateFrom)),
-		history->session().changes().peerFlagsValue(
-			history->peer,
-			Data::PeerUpdate::Flag::TranslationDisabled)
-	) | rpl::map([=](
-			LanguageId to,
-			const auto&,
-			const auto&) {
-		using Flag = PeerData::TranslationFlag;
-		const auto automatic = history->peer->autoTranslation();
-		return (history->peer->translationFlag() != Flag::Enabled)
-			? rpl::single(QString())
-			: history->translatedTo()
-			? (automatic
-				? tr::lng_translate_return_original(
-					lt_language,
-					rpl::single(Ui::LanguageName(
-						history->translateOfferedFrom())))
-				: tr::lng_translate_show_original())
-			: history->translateOfferedFrom()
-			? Ui::TranslateBarTo(to)
-			: rpl::single(QString());
-	}) | rpl::flatten_latest(
-	) | rpl::distinct_until_changed(
-	) | rpl::on_next([=](QString phrase) {
-		_shouldBeShown = !phrase.isEmpty();
-		if (_shouldBeShown) {
-			if (!_label) {
-				setupControls();
-			}
-			_label->setText(phrase);
-			_updateLabelGeometry();
-		}
-		if (!_forceHidden) {
-			_wrap.toggle(_shouldBeShown, anim::type::normal);
-		}
-	}, lifetime());
+	auto &changes = _history->session().changes();
+	changes.historyUpdates(Data::HistoryUpdate::Flag::TranslatedTo
+						   | Data::HistoryUpdate::Flag::TranslateFrom)
+		| rpl::filter([=](const Data::HistoryUpdate &update) {
+			  return update.history == _history;
+		  })
+		| rpl::on_next(
+			[=](const Data::HistoryUpdate &update) {
+				if (update.flags & Data::HistoryUpdate::Flag::TranslateFrom) {
+					refreshTo();
+				} else {
+					refreshPhrase();
+				}
+			},
+			lifetime());
+	changes.peerUpdates(Data::PeerUpdate::Flag::TranslationDisabled)
+		| rpl::filter([=](const Data::PeerUpdate &update) {
+			  return update.peer == _history->peer;
+		  })
+		| rpl::on_next([=](const Data::PeerUpdate &) { refreshPhrase(); },
+					   lifetime());
+
+	refreshTo();
+}
+
+void TranslateBar::refreshTo() {
+	const auto to = _overridenTo.current()
+						? _overridenTo.current()
+						: Ui::ChooseTranslateTo(_history, _preferredTo,
+												_skipTranslationLanguages);
+	_to = to;
+	const auto now = _history->translatedTo();
+	if (now && (now != to)) {
+		translateTo(to);
+	}
+	refreshPhrase();
+}
+
+void TranslateBar::refreshPhrase() {
+	using Flag = PeerData::TranslationFlag;
+	_phrase
+		= (_history->peer->translationFlag() != Flag::Enabled)
+			  ? rpl::single(QString())
+		  : _history->translatedTo()
+			  ? (_history->peer->autoTranslation()
+					 ? tr::lng_translate_return_original(
+						   lt_language, rpl::single(Ui::LanguageName(
+											_history->translateOfferedFrom())))
+					 : tr::lng_translate_show_original())
+		  : _history->translateOfferedFrom() ? Ui::TranslateBarTo(_to.current())
+											 : rpl::single(QString());
 }
 
 void TranslateBar::translateTo(LanguageId id) {
+#ifdef TDESKTOP_LIFECYCLE_REGRESSION
+	++_translateToCallsForRegression;
+#endif
 	_history->translateTo(id);
 	if (const auto migrated = _history->migrateFrom()) {
 		migrated->translateTo(id);
@@ -379,7 +416,6 @@ void TranslateBar::translateTo(LanguageId id) {
 }
 
 void TranslateBar::setupControls() {
-	const auto history = _history;
 	const auto button = static_cast<Ui::AbstractButton *>(_wrap.entity());
 	button->resize(button->width(), st::historyTranslateBarHeight);
 	button->setAttribute(Qt::WA_OpaquePaintEvent);
@@ -392,7 +428,7 @@ void TranslateBar::setupControls() {
 			button->lifetime());
 
 	button->setClickedCallback([=] {
-		translateTo(history->translatedTo() ? LanguageId() : _to.current());
+		translateTo(_history->translatedTo() ? LanguageId() : _to.current());
 	});
 
 	_label = Ui::CreateChild<Ui::FlatLabel>(button, st::historyTranslateLabel);
@@ -476,9 +512,10 @@ void TranslateBar::showMenu(base::unique_qptr<Ui::PopupMenu> menu) {
 	const auto chooseCallback = [=] {
 		if (const auto strong = weak.get()) {
 			strong->show(Ui::ChooseTranslateToBox(
-				to,
-				crl::guard(guard, [=](LanguageId id) { _overridenTo = id; })
-			));
+				to, crl::guard(guard, [=](LanguageId id) {
+					_overridenTo = id;
+					refreshTo();
+				})));
 		}
 	};
 	_menu->addAction(MakeTranslateToItem(

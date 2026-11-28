@@ -29,6 +29,7 @@ inline bool SkipTaskbarSupported() {
 
 void ActivateThisProcess(not_null<QWidget *> window);
 bool IsApplicationActiveForRegression();
+bool IsWindowKeyForRegression(not_null<QWidget *> window);
 void LogWindowActivationStateForRegression(not_null<QWidget *> window);
 void IgnoreNextApplicationActivation();
 

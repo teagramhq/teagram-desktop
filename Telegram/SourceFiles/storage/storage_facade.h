@@ -58,7 +58,8 @@ public:
 	rpl::producer<SharedMediaSliceUpdate> sharedMediaSliceUpdated() const;
 	rpl::producer<SharedMediaRemoveOne> sharedMediaOneRemoved() const;
 	rpl::producer<SharedMediaRemoveAll> sharedMediaAllRemoved() const;
-	rpl::producer<SharedMediaInvalidateBottom> sharedMediaBottomInvalidated() const;
+	rpl::producer<SharedMediaInvalidateBottom>
+	sharedMediaBottomInvalidated(PeerId peerId) const;
 
 	void add(UserPhotosSetBack &&query);
 	void add(UserPhotosAddNew &&query);

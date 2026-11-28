@@ -10,6 +10,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "base/flags.h"
 #include "data/data_chat_participant_status.h"
 
+#include <map>
+#include <memory>
+
 class History;
 class PeerData;
 class UserData;
@@ -298,6 +301,9 @@ struct ChatMemberRankChange {
 class Changes final {
 public:
 	explicit Changes(not_null<Main::Session*> session);
+#ifdef TDESKTOP_UNIT_TESTS
+	Changes();
+#endif
 
 	[[nodiscard]] Main::Session &session() const;
 
@@ -314,6 +320,8 @@ public:
 	[[nodiscard]] rpl::producer<PeerUpdate> peerUpdates(
 		not_null<PeerData*> peer,
 		PeerUpdate::Flags flags) const;
+	[[nodiscard]] int peerUpdateScopedSubscriptionCountForRegressionTest(
+		not_null<PeerData *> peer) const;
 	[[nodiscard]] rpl::producer<PeerUpdate> peerFlagsValue(
 		not_null<PeerData*> peer,
 		PeerUpdate::Flags flags) const;
@@ -446,9 +454,29 @@ private:
 		void drop(not_null<DataType*> data);
 
 		void sendNotifications();
+		[[nodiscard]] int scopedSubscriptionCountForRegressionTest(
+			not_null<DataType *> data) const {
+			const auto i = _scopedStreams->find(data.get());
+			return (i == _scopedStreams->end())
+					   ? 0
+					   : int(i->second->subscriptions.size());
+		}
 
 	private:
 		static constexpr auto kCount = details::CountBit<Flag>() + 1;
+		struct ScopedStream final {
+			using SubscriptionId = uint64;
+			std::map<SubscriptionId,
+					 std::shared_ptr<rpl::event_stream<UpdateType>>>
+				subscriptions;
+			SubscriptionId nextSubscriptionId = 0;
+		};
+		using ScopedStreams
+			= std::map<DataType *, std::shared_ptr<ScopedStream>>;
+
+		void sendScopedNotifications(
+			const std::shared_ptr<ScopedStream> &scopedStream,
+			const UpdateType &update, uint64 lastSubscriptionId) const;
 
 		void sendRealtimeNotifications(
 			not_null<DataType*> data,
@@ -456,13 +484,19 @@ private:
 
 		std::array<rpl::event_stream<UpdateType>, kCount> _realtimeStreams;
 		base::flat_map<not_null<DataType*>, Flags> _updates;
+		std::shared_ptr<ScopedStreams> _scopedStreams
+			= std::make_shared<ScopedStreams>();
 		rpl::event_stream<UpdateType> _stream;
 
 	};
 
 	void scheduleNotifications();
 
+#ifdef TDESKTOP_UNIT_TESTS
+	Main::Session *_session = nullptr;
+#else
 	const not_null<Main::Session*> _session;
+#endif
 
 	rpl::event_stream<NameUpdate> _nameStream;
 	Manager<PeerData, PeerUpdate> _peerChanges;

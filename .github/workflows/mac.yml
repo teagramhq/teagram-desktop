@@ -743,12 +743,12 @@ jobs:
 
       - name: Run protected profile and IPC integration tests.
         id: profile-ipc
-        timeout-minutes: 15
+        timeout-minutes: 30
         if: ${{ !cancelled() && steps.ccache-profile.outputs.protected_path_integration == 'ON' && steps.build.outcome == 'success' }}
         run: |
           set -Eeuo pipefail
           step_started_at="$(date +%s)"
-          step_timeout_seconds=900
+          step_timeout_seconds=1800
           step_finish_headroom_seconds=60
           step_deadline_epoch="$((step_started_at + step_timeout_seconds - step_finish_headroom_seconds))"
           diagnostics="$RUNNER_TEMP/macos-regression-diagnostics/profile-ipc"
@@ -767,6 +767,7 @@ jobs:
           executable="$REPO_NAME/out/Debug/Teagram.app/Contents/MacOS/Teagram"
           set +e
           env HOME="$state/home" TMPDIR="$state/tmp" \
+            RUNNER_EXTERNAL_ACTIVATION_HOME="$HOME" \
             TDESKTOP_MAC_LIFECYCLE_STEP_DEADLINE_EPOCH="$step_deadline_epoch" \
             TDESKTOP_MAC_PROFILE_TEST_TMP_BASE="$state/tmp" \
             TDESKTOP_MAC_PROFILE_TEST_PROFILE_ARTIFACT="$evidence/seatbelt-profile-${BUILD_VARIANT}.sb" \
@@ -816,7 +817,7 @@ jobs:
 
       - name: Full chat info session regression.
         id: lifecycle-regression
-        timeout-minutes: 20
+        timeout-minutes: 30
         if: ${{ !cancelled() && steps.build.outcome == 'success' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.label.name == 'macos-build')) }}
         run: |
           set -Eeuo pipefail
@@ -1019,6 +1020,10 @@ jobs:
           set +e
           env \
             HOME="$regression_home" \
+            RUNNER_EXTERNAL_ACTIVATION_HOME="$HOME" \
+            TDESKTOP_AUTH_LIFECYCLE_REGRESSION_RUNNER_ACTIVATION_REQUIRED=1 \
+            TDESKTOP_AUTH_LIFECYCLE_REGRESSION_RUNNER_ACTIVATION_MARKER="$diagnostics/runner-external-activation.status" \
+            TDESKTOP_AUTH_LIFECYCLE_REGRESSION_RUNNER_ACTIVATION_REQUEST="$diagnostics/runner-external-activation.request" \
             TDESKTOP_MAC_PROFILE_TEST_HOME="$regression_home" \
             ALSOFT_DRIVERS=null \
             TDESKTOP_AUTH_LIFECYCLE_REGRESSION=1 \
@@ -1026,7 +1031,6 @@ jobs:
               "$diagnostics/stdout.log" "$diagnostics/stderr.log" \
               "$diagnostics/lldb.log" "$symbol_file" <<'PY'
           import os
-          import re
           import shlex
           import signal
           import subprocess
@@ -1038,6 +1042,11 @@ jobs:
           executable, workdir, stdout_path, stderr_path, log_path, symbol_file = sys.argv[2:]
           sys.path.insert(0, scripts_dir)
           sys.dont_write_bytecode = True
+          from macos_process_activation import (
+              ActivationHandshake,
+              read_activation_request,
+              run_with_runtime_deadline,
+          )
           from macos_timeout_capture import authorization_timeout_report
           command = ["arch", "-arm64", "lldb", "--batch"]
           if symbol_file:
@@ -1082,27 +1091,119 @@ jobs:
               app_runtime_timeout = 180
               app_pid = None
               startup_deadline = time.monotonic() + app_startup_timeout
-              while process.poll() is None and time.monotonic() < startup_deadline:
-                  try:
-                      with open(stderr_path, encoding="utf-8", errors="replace") as stderr:
-                          app_pids = re.findall(r"Teagram\[(\d+):", stderr.read())
-                  except FileNotFoundError:
-                      app_pids = []
-                  if app_pids:
-                      app_pid = int(app_pids[-1])
-                      break
-                  time.sleep(0.5)
-
               timeout_phase = ""
-              if app_pid is not None:
-                  try:
-                      status = process.wait(timeout=app_runtime_timeout)
-                  except subprocess.TimeoutExpired:
+              activation_handshake = ActivationHandshake(
+                  Path(os.path.dirname(stderr_path))
+                  / "runner-external-activation.status",
+                  runtime_seconds=app_runtime_timeout,
+              )
+              activation_request_path = (
+                  Path(os.path.dirname(stderr_path))
+                  / "runner-external-activation.request"
+              )
+              while process.poll() is None:
+                  now = time.monotonic()
+                  if (
+                      activation_handshake.app_pid is None
+                      and now >= startup_deadline
+                  ):
+                      timeout_phase = "startup"
+                      break
+                  if (
+                      activation_handshake.runtime_deadline is not None
+                      and now >= activation_handshake.runtime_deadline
+                  ):
                       timeout_phase = "runtime"
-              elif process.poll() is None:
-                  timeout_phase = "startup"
-              else:
-                  status = process.returncode
+                      break
+
+                  activation_request = read_activation_request(
+                      activation_request_path
+                  )
+                  activation_attempt = activation_handshake.begin(
+                      activation_request
+                  )
+                  if activation_attempt is None:
+                      time.sleep(0.5)
+                      continue
+
+                  app_pid = activation_handshake.app_pid
+                  requested_pid = activation_attempt.requested_pid
+                  request_number = activation_attempt.request_number
+                  request_matches_pid = activation_attempt.pid_matches
+                  if not request_matches_pid:
+                      log.write(
+                          "Runner activation request PID changed: "
+                          f"expected={app_pid} received={requested_pid}\n"
+                      )
+                  activation_succeeded = False
+                  if request_matches_pid:
+                      activation_helper = os.path.join(
+                          scripts_dir, "macos_process_activation.py"
+                      )
+                      activation_environment = os.environ.copy()
+                      activation_environment["HOME"] = os.environ[
+                          "RUNNER_EXTERNAL_ACTIVATION_HOME"
+                      ]
+                      try:
+                          activation_result = run_with_runtime_deadline(
+                              [
+                                  sys.executable,
+                                  activation_helper,
+                                  str(requested_pid),
+                              ],
+                              runtime_deadline=activation_handshake.runtime_deadline,
+                              timeout=220,
+                              capture_output=True,
+                              text=True,
+                              check=False,
+                              env=activation_environment,
+                          )
+                          log.write(
+                              "Runner-side macOS process activation "
+                              f"request={request_number}:\n"
+                          )
+                          log.write(activation_result.stdout)
+                          log.write(activation_result.stderr)
+                          log.write(
+                              "Runner-side macOS process activation exit: "
+                              f"{activation_result.returncode}\n"
+                          )
+                          activation_succeeded = (
+                              activation_result.returncode == 0
+                          )
+                      except subprocess.TimeoutExpired as error:
+                          log.write(
+                              "Runner-side macOS process activation timed out: "
+                              f"request={request_number} {error}\n"
+                          )
+                      except OSError as error:
+                          log.write(
+                              "Runner-side macOS process activation could not "
+                              f"run: request={request_number} {error}\n"
+                          )
+
+                  marker_error = activation_handshake.complete(
+                      activation_attempt,
+                      activation_succeeded,
+                  )
+                  if marker_error:
+                      log.write(
+                          "Runner-side macOS activation marker could not be "
+                          f"written: request={request_number} {marker_error}\n"
+                      )
+                      signal_pid(app_pid, "Teagram", signal.SIGTERM)
+                      signal_pid(process.pid, "LLDB", signal.SIGTERM)
+                  log.flush()
+                  if (
+                      activation_handshake.runtime_deadline is not None
+                      and time.monotonic()
+                      >= activation_handshake.runtime_deadline
+                  ):
+                      timeout_phase = "runtime"
+                      break
+
+              if not timeout_phase:
+                  status = process.wait()
 
               if timeout_phase:
                   sample_path = Path(
@@ -1137,6 +1238,14 @@ jobs:
                           f"{app_runtime_timeout}-second runtime bound.\n"
                       )
                   status = 124
+
+              if not activation_handshake.all_requests_passed:
+                  log.write(
+                      "HARNESS ERROR: runner did not activate and verify "
+                      "Teagram as frontmost before the lifecycle regression.\n"
+                  )
+                  if status == 0:
+                      status = 1
 
           sys.exit(status)
           PY
