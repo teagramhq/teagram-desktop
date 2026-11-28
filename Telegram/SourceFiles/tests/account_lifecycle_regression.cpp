@@ -16929,6 +16929,30 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		= GroupCallBarDeferredButtonRegressionPasses();
 	const auto contactStatusRequestText
 		= ContactStatusRequestTextRegressionPasses(controller);
+	auto &translationSettings = Core::App().settings();
+	const auto originalTranslateChatsEnabled
+		= translationSettings.translateChatEnabled();
+	const auto originalSessionPremium = session.premium();
+	auto translationFixtureRestoreAttempted = false;
+	const auto restoreTranslationFixture = [&] {
+		if (translationFixtureRestoreAttempted) {
+			return true;
+		}
+		translationSettings.setTranslateChatEnabled(
+			originalTranslateChatsEnabled);
+		const auto restored = SetRegressionSessionPremium(
+			&session, session.userId(), originalSessionPremium);
+		translationFixtureRestoreAttempted = true;
+		return restored;
+	};
+	const auto restoreTranslationFixtureOnExit
+		= gsl::finally([&] { Expects(restoreTranslationFixture()); });
+	const auto premiumEnabled
+		= SetRegressionSessionPremium(&session, session.userId(), true);
+	translationSettings.setTranslateChatEnabled(true);
+	const auto premiumTranslationFixtureReady
+		= premiumEnabled && session.premium()
+		  && translationSettings.translateChatEnabled();
 	const auto showHistoryForTranslateBar = [&](not_null<History *> history) {
 		controller->showPeerHistory(history);
 		return WaitForRegressionCondition(
@@ -16975,7 +16999,6 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 								&& sameTranslateBarOnSecondHistory
 								&& sameTranslateBarOnReturn;
 	const auto offeredTranslationLanguage = LanguageId::FromName(u"French"_q);
-	auto &translationSettings = Core::App().settings();
 	const auto originalTranslateTo = translationSettings.translateTo();
 	const auto germanLanguage = LanguageId::FromName(u"German"_q);
 	const auto spanishLanguage = LanguageId::FromName(u"Spanish"_q);
@@ -16991,7 +17014,8 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 	auto reopened = false;
 	auto reopenedBarCreated = false;
 	auto visibleOnReopen = false;
-	if (returnedHistoryTranslateBar && firstHistoryReturnedForTranslateBar
+	if (premiumTranslationFixtureReady && returnedHistoryTranslateBar
+		&& firstHistoryReturnedForTranslateBar
 		&& offeredTranslationLanguage.known() && closedTargetLanguage.known()) {
 		firstHistory->peer->setTranslationDisabled(false);
 		firstHistory->translateOfferFrom(offeredTranslationLanguage);
@@ -17052,23 +17076,29 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 					  && (reopenedBar->height() > 0);
 			}
 			result.translateBarClosedReopened
-				= visibleBeforeClose && translatedHistoryReady && closed
-				  && barDestroyedOnClose && noTranslateToWhileClosed && reopened
-				  && visibleOnReopen;
+				= premiumTranslationFixtureReady && visibleBeforeClose
+				  && translatedHistoryReady && closed && barDestroyedOnClose
+				  && noTranslateToWhileClosed && reopened && visibleOnReopen;
 		}
 	}
 	std::fprintf(
 		stderr,
-		"Translation bar close/reopen: bar_ready=%d first_history_returned=%d "
+		"Translation bar close/reopen: premium_fixture_ready=%d "
+		"translate_chats_enabled=%d session_premium=%d bar_ready=%d "
+		"first_history_returned=%d "
 		"language_ready=%d closed_target_ready=%d phrase_shown=%d "
 		"visible_before_close=%d translated_history_ready=%d closed=%d "
 		"bar_destroyed=%d no_translate_while_closed=%d reopened=%d "
 		"reopened_bar_created=%d visible_on_reopen=%d.\n",
+		premiumTranslationFixtureReady,
+		translationSettings.translateChatEnabled(), session.premium(),
 		translateBarExisted, firstHistoryReturnedForTranslateBar,
 		offeredTranslationLanguage.known(), closedTargetLanguage.known(),
 		translationPhraseShown, visibleBeforeClose, translatedHistoryReady,
 		closed, barDestroyedOnClose, noTranslateToWhileClosed, reopened,
 		reopenedBarCreated, visibleOnReopen);
+	result.translateBarClosedReopened
+		= result.translateBarClosedReopened && restoreTranslationFixture();
 	const auto historyBeforeMigration = historyWidget->history();
 	const auto migrationChatId = ChatId(1'050'057);
 	const auto migrationChannelId = ChannelId(1'050'058);
