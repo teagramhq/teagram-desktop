@@ -2363,9 +2363,13 @@ grep -Fq 'RunFirstDialogsHandlerLatencyRegression(' "$native_harness" \
 grep -Fq 'handlerCpuOnlyWithinBudget = MainThreadCpuWorkWithinBudget(' \
   "$native_harness" \
   && grep -Fq 'chatSwitchWindows[i].mainThreadWorkNanoseconds,' "$native_harness" \
-  && grep -Fq 'gap.mainThreadWorkNanoseconds, 100' "$native_harness" \
+  && grep -Fq 'AssessStartupWorkBudget(' "$native_harness" \
+  && grep -Fq 'AssessWorkBudgetWithWatchdogResponsiveness(' "$native_harness" \
+  && grep -Fq 'watchdogCoverage.proven' "$native_harness" \
+  && grep -Fq 'result.withinBudget = MainThreadCpuWorkWithinBudget(' \
+    "$native_harness" \
   && grep -Fq '.initialHistorySelectionMainThreadWorkNanoseconds,' "$native_harness" \
-  || contract_fail 'CPU-only timing fields must be calculated from measured CPU, not scheduler estimates.'
+  || contract_fail 'Startup and switch assessments must retain the strict CPU budget when scheduler traces are incomplete.'
 grep -Fq 'slowHydrationCallbacks.push_back' "$native_harness" \
   && grep -Fq 'hydrationSchedulerPreemptionProven' "$native_harness" \
   && grep -Fq 'maxHydrationMainThreadWorkNanoseconds' "$native_harness" \

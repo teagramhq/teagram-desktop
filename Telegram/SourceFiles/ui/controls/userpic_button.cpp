@@ -1026,10 +1026,18 @@ bool UserpicButton::useForumShape() const {
 }
 
 void UserpicButton::grabOldUserpic() {
-	auto photoRect = QRect(
-		countPhotoPosition(),
-		QSize(_st.photoSize, _st.photoSize)
-	);
+	const auto snapshotCachedUserpic
+		= !_userpic.isNull() && !_notShownYet && !_a_appearance.animating()
+		  && !_streamed && (_role == Role::OpenPhoto || _role == Role::Custom)
+		  && !showSavedMessages() && !showRepliesMessages() && !showMyNotes()
+		  && !showAuthorHidden() && !_changeOverlayEnabled
+		  && (!_uploadOverlay || !_uploadOverlay->shown());
+	if (snapshotCachedUserpic) {
+		_oldUserpic = _userpic;
+		return;
+	}
+	auto photoRect
+		= QRect(countPhotoPosition(), QSize(_st.photoSize, _st.photoSize));
 	_oldUserpic = GrabWidget(this, photoRect);
 }
 
