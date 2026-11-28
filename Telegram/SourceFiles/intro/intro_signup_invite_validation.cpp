@@ -28,10 +28,8 @@ QString NormalizeInviteSecret(const QString &input) {
 	return result;
 }
 
-bool ShouldStartInviteStep(
-		bool inviteMode,
-		bool inviteRejected,
-		bool inviteProvided) {
+bool ShouldStartInviteStep(bool inviteMode, bool inviteRejected,
+						   bool inviteProvided) {
 	return inviteMode || inviteRejected || inviteProvided;
 }
 

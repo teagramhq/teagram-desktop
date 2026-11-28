@@ -412,13 +412,11 @@ void Widget::setInnerFocus() {
 
 void Widget::setSignupInviteSecret(QString secret) {
 	_data.signupInviteSecret = std::move(secret);
-	if (const auto invite = dynamic_cast<details::InviteWidget*>(getStep())) {
+	if (const auto invite = dynamic_cast<details::InviteWidget *>(getStep())) {
 		invite->setInviteSecret(_data.signupInviteSecret);
-	} else if (dynamic_cast<details::SignUpNameWidget*>(getStep())) {
-		moveToStep(
-			new details::InviteWidget(this, _account, getData()),
-			details::StackAction::Forward,
-			details::Animate::Forward);
+	} else if (dynamic_cast<details::SignUpNameWidget *>(getStep())) {
+		moveToStep(new details::InviteWidget(this, _account, getData()),
+				   details::StackAction::Forward, details::Animate::Forward);
 	}
 }
 

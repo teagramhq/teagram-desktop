@@ -262,10 +262,10 @@ QByteArray FormatText(
 		case Type::Unknown: return text;
 		case Type::Mention:
 			return "<a href=\""
-				+ Core::FragmentLinkV1::LinkForPath(
-					QString::fromUtf8(text.mid(1)),
-					internalLinksDomain).toUtf8()
-				+ "\">" + text + "</a>";
+				   + Core::FragmentLinkV1::LinkForPath(
+						 QString::fromUtf8(text.mid(1)), internalLinksDomain)
+						 .toUtf8()
+				   + "\">" + text + "</a>";
 		case Type::Hashtag: return "<a href=\"\" "
 			"onclick=\"return ShowHashtag("
 			+ SerializeString('"' + text.mid(1) + '"')
@@ -868,8 +868,8 @@ std::optional<QByteArray> SafeMentionHref(
 		}
 	}
 	return SafeHttpHref(Core::FragmentLinkV1::LinkForPath(
-		QString::fromLatin1(username),
-		internalLinksDomain).toUtf8());
+							QString::fromLatin1(username), internalLinksDomain)
+							.toUtf8());
 }
 
 bool IsAsciiWord(
@@ -1655,9 +1655,10 @@ QByteArray RichHtmlRenderer::renderChannel(
 			*channel.username,
 			kRichUsernameMinLength,
 			kRichUsernameMaxLength)) {
-		const auto target = Core::FragmentLinkV1::LinkForPath(
-			QString::fromLatin1(*channel.username),
-			_internalLinksDomain).toUtf8();
+		const auto target
+			= Core::FragmentLinkV1::LinkForPath(
+				  QString::fromLatin1(*channel.username), _internalLinksDomain)
+				  .toUtf8();
 		if (const auto href = SafeHttpHref(target)) {
 			media.link = QString::fromUtf8(*href);
 		}

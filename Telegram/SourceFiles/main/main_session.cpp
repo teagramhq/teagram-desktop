@@ -534,9 +534,8 @@ TextWithEntities Session::createInternalLinkFull(
 		TextWithEntities query) const {
 	const auto domain = ValidatedInternalLinksDomain(this);
 	if (query.entities.empty()) {
-		return TextWithEntities::Simple(Core::FragmentLinkV1::LinkForPath(
-			query.text,
-			domain));
+		return TextWithEntities::Simple(
+			Core::FragmentLinkV1::LinkForPath(query.text, domain));
 	}
 	return TextWithEntities::Simple(domain).append(std::move(query));
 }

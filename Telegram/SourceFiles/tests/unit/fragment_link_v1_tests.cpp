@@ -43,8 +43,10 @@ using Core::FragmentLinkV1::Type;
 }
 
 [[nodiscard]] QJsonObject ReadVectors() {
-	const auto path = QDir(QString::fromUtf8(TDESKTOP_TEST_SOURCE_DIR))
-		.filePath(u"Telegram/SourceFiles/tests/data/fragment-link-v1-vectors.json"_q);
+	const auto path
+		= QDir(QString::fromUtf8(TDESKTOP_TEST_SOURCE_DIR))
+			  .filePath(
+				  u"Telegram/SourceFiles/tests/data/fragment-link-v1-vectors.json"_q);
 	auto file = QFile(path);
 	if (!file.open(QIODevice::ReadOnly)) {
 		return {};
@@ -66,7 +68,8 @@ TEST_CASE(FragmentLinkV1MatchesTheSharedVectorFile) {
 		const auto decoded = Decode(code);
 		CHECK(decoded.has_value());
 		if (decoded) {
-			CHECK(*decoded == ExpectedLink(object.value(u"input"_q).toObject()));
+			CHECK(*decoded
+				  == ExpectedLink(object.value(u"input"_q).toObject()));
 			const auto encoded = Encode(*decoded);
 			CHECK(encoded.has_value());
 			if (encoded) {
@@ -84,7 +87,8 @@ TEST_CASE(FragmentLinkV1RejectsHostedLinksForOpening) {
 	auto sawDefault = false;
 	auto sawHosted = false;
 	for (const auto &entry : valid) {
-		const auto decoded = Decode(entry.toObject().value(u"code"_q).toString());
+		const auto decoded
+			= Decode(entry.toObject().value(u"code"_q).toString());
 		if (!decoded) {
 			continue;
 		} else if (decoded->host.isEmpty()) {
@@ -102,12 +106,13 @@ TEST_CASE(FragmentLinkV1RejectsHostedLinksForOpening) {
 TEST_CASE(FragmentLinkV1BuildsSupportedInternalPathsSmoke) {
 	const auto domain = u"https://web.teagram.io/"_q;
 	const auto links = std::vector<std::pair<QString, QString>>{
-		{ u"alice"_q, u"https://web.teagram.io/#~QQHDpNc"_q },
-		{ u"alice/1"_q, u"https://web.teagram.io/#~QgQBw6TXAQ"_q },
-		{ u"c/123456789/42"_q, u"https://web.teagram.io/#~QwQHW80VKg"_q },
-		{ u"+ECAwQFBgcIA"_q, u"https://web.teagram.io/#~RBAgMEBQYHCA"_q },
-		{ u"addstickers/funny_cats"_q, u"https://web.teagram.io/#~Rg-jJAT_640"_q },
-		{ u"addemoji/emoji_pack"_q, u"https://web.teagram.io/#~Rw6FK8h0mt0"_q },
+		{u"alice"_q, u"https://web.teagram.io/#~QQHDpNc"_q},
+		{u"alice/1"_q, u"https://web.teagram.io/#~QgQBw6TXAQ"_q},
+		{u"c/123456789/42"_q, u"https://web.teagram.io/#~QwQHW80VKg"_q},
+		{u"+ECAwQFBgcIA"_q, u"https://web.teagram.io/#~RBAgMEBQYHCA"_q},
+		{u"addstickers/funny_cats"_q,
+		 u"https://web.teagram.io/#~Rg-jJAT_640"_q},
+		{u"addemoji/emoji_pack"_q, u"https://web.teagram.io/#~Rw6FK8h0mt0"_q},
 	};
 	for (const auto &[path, expected] : links) {
 		CHECK_EQ(LinkForPath(path, domain), expected);
@@ -115,19 +120,14 @@ TEST_CASE(FragmentLinkV1BuildsSupportedInternalPathsSmoke) {
 }
 
 TEST_CASE(FragmentLinkV1LeavesUnmappedAndNonDefaultPathsUnchanged) {
-	CHECK_EQ(
-		LinkForPath(u"addtheme/slug"_q, u"https://web.teagram.io/"_q),
-		u"https://web.teagram.io/addtheme/slug"_q);
-	CHECK_EQ(
-		LinkForPath(u"alice?game=chess"_q, u"https://web.teagram.io/"_q),
-		u"https://web.teagram.io/alice?game=chess"_q);
-	CHECK_EQ(
-		LinkForPath(u"+1234567890"_q, u"https://web.teagram.io/"_q),
-		u"https://web.teagram.io/+1234567890"_q);
-	CHECK_EQ(
-		LinkForPath(u"addlist/some_group"_q, u"https://web.teagram.io/"_q),
-		u"https://web.teagram.io/addlist/some_group"_q);
-	CHECK_EQ(
-		LinkForPath(u"alice"_q, u"https://chat.example.org/"_q),
-		u"https://chat.example.org/alice"_q);
+	CHECK_EQ(LinkForPath(u"addtheme/slug"_q, u"https://web.teagram.io/"_q),
+			 u"https://web.teagram.io/addtheme/slug"_q);
+	CHECK_EQ(LinkForPath(u"alice?game=chess"_q, u"https://web.teagram.io/"_q),
+			 u"https://web.teagram.io/alice?game=chess"_q);
+	CHECK_EQ(LinkForPath(u"+1234567890"_q, u"https://web.teagram.io/"_q),
+			 u"https://web.teagram.io/+1234567890"_q);
+	CHECK_EQ(LinkForPath(u"addlist/some_group"_q, u"https://web.teagram.io/"_q),
+			 u"https://web.teagram.io/addlist/some_group"_q);
+	CHECK_EQ(LinkForPath(u"alice"_q, u"https://chat.example.org/"_q),
+			 u"https://chat.example.org/alice"_q);
 }

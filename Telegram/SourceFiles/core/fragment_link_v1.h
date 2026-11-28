@@ -34,14 +34,13 @@ struct Link {
 	QByteArray secret;
 	QString shortName;
 
-	friend bool operator==(const Link&, const Link&) = default;
+	friend bool operator==(const Link &, const Link &) = default;
 };
 
 [[nodiscard]] std::optional<Link> Decode(const QString &fragment);
 [[nodiscard]] std::optional<QString> Encode(const Link &link);
 [[nodiscard]] bool CanOpenOnDefaultServer(const Link &link);
-[[nodiscard]] QString LinkForPath(
-	const QString &path,
-	const QString &internalLinksDomain);
+[[nodiscard]] QString LinkForPath(const QString &path,
+								  const QString &internalLinksDomain);
 
 } // namespace Core::FragmentLinkV1

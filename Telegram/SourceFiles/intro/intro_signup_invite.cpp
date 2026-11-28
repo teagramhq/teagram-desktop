@@ -62,8 +62,7 @@ QWidget *InviteWidget::firstTabWidget() const { return _invite.data(); }
 void InviteWidget::activate() {
 	Step::activate();
 	_invite->show();
-	if (!getData()->signupInviteSecret.isEmpty()
-		&& !_inviteSecretApplied) {
+	if (!getData()->signupInviteSecret.isEmpty() && !_inviteSecretApplied) {
 		setInviteSecret(getData()->signupInviteSecret);
 	}
 	_invite->setFocusFast();

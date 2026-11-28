@@ -1768,24 +1768,20 @@ bool ResolveOAuth(
 
 } // namespace
 
-bool TryOpenFragmentLinkV1(
-		const QString &url,
-		const QVariant &context) {
+bool TryOpenFragmentLinkV1(const QString &url, const QVariant &context) {
 	const auto parsed = QUrl(url, QUrl::TolerantMode);
 	if (parsed.host().compare(u"web.teagram.io"_q, Qt::CaseInsensitive) != 0) {
 		return false;
 	}
 	const auto fragmentStart = url.indexOf(QChar(u'#'));
-	if (fragmentStart < 0
-		|| !url.mid(fragmentStart).startsWith(u"#~"_q)) {
+	if (fragmentStart < 0 || !url.mid(fragmentStart).startsWith(u"#~"_q)) {
 		return false;
 	}
 	const auto fragment = url.mid(fragmentStart);
 	if (!parsed.isValid()
 		|| parsed.scheme().compare(u"https"_q, Qt::CaseInsensitive) != 0
 		|| (parsed.port(-1) != -1 && parsed.port(-1) != 443)
-		|| !parsed.userName().isEmpty()
-		|| !parsed.password().isEmpty()
+		|| !parsed.userName().isEmpty() || !parsed.password().isEmpty()
 		|| (parsed.path() != QString() && parsed.path() != u"/"_q)
 		|| parsed.hasQuery()) {
 		return true;
@@ -1802,14 +1798,12 @@ bool TryOpenFragmentLinkV1(
 	}
 	if (decoded->type == FragmentLinkV1::Type::SignUpInvite) {
 		const auto secret = QString::fromLatin1(decoded->secret.toHex());
-		const auto account = controller
-			? &controller->session().account()
-			: Core::App().domain().maybeLastOrSomeAuthedAccount();
+		const auto account
+			= controller ? &controller->session().account()
+						 : Core::App().domain().maybeLastOrSomeAuthedAccount();
 		if (account) {
-			Core::App().domain().addActivated(
-				account->mtp().environment(),
-				false,
-				secret);
+			Core::App().domain().addActivated(account->mtp().environment(),
+											  false, secret);
 		} else if (primary) {
 			if (!primary->widget()->setSignupInviteSecret(secret)) {
 				primary->account().setPendingSignupInviteSecret(secret);
@@ -1831,8 +1825,8 @@ bool TryOpenFragmentLinkV1(
 		controller->showPeerByLink(Window::PeerByLinkInfo{
 			.usernameOrId = decoded->username,
 			.messageId = (decoded->type == FragmentLinkV1::Type::Profile)
-				? ShowAtUnreadMsgId
-				: messageId,
+							 ? ShowAtUnreadMsgId
+							 : messageId,
 			.clickFromMessageId = clickFromMessageId,
 			.clickFromBotWebviewContext = click.botWebviewContext,
 		});
@@ -1848,22 +1842,21 @@ bool TryOpenFragmentLinkV1(
 		controller->window().activate();
 		return true;
 	case FragmentLinkV1::Type::JoinChat:
-		Api::CheckChatInvite(
-			controller,
-			QString::fromLatin1(decoded->hash.toBase64(
-				QByteArray::Base64UrlEncoding | QByteArray::OmitTrailingEquals)));
+		Api::CheckChatInvite(controller,
+							 QString::fromLatin1(decoded->hash.toBase64(
+								 QByteArray::Base64UrlEncoding
+								 | QByteArray::OmitTrailingEquals)));
 		controller->window().activate();
 		return true;
 	case FragmentLinkV1::Type::StickerSet:
 	case FragmentLinkV1::Type::EmojiSet:
 		Core::App().hideMediaView();
-		controller->show(
-			Box<StickerSetBox>(
-				controller->uiShow(),
-				StickerSetIdentifier{ .shortName = decoded->shortName },
-				(decoded->type == FragmentLinkV1::Type::EmojiSet)
-					? Data::StickersType::Emoji
-					: Data::StickersType::Stickers));
+		controller->show(Box<StickerSetBox>(
+			controller->uiShow(),
+			StickerSetIdentifier{.shortName = decoded->shortName},
+			(decoded->type == FragmentLinkV1::Type::EmojiSet)
+				? Data::StickersType::Emoji
+				: Data::StickersType::Stickers));
 		controller->window().activate();
 		return true;
 	case FragmentLinkV1::Type::SignUpInvite:

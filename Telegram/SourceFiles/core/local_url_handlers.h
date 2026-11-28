@@ -43,9 +43,8 @@ struct LocalUrlHandler {
 	Window::SessionController *controller,
 	const QString &command);
 
-[[nodiscard]] bool TryOpenFragmentLinkV1(
-	const QString &url,
-	const QVariant &context);
+[[nodiscard]] bool TryOpenFragmentLinkV1(const QString &url,
+										 const QVariant &context);
 
 [[nodiscard]] QString TryConvertUrlToLocal(
 	QString url,
