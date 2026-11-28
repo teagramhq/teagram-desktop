@@ -2500,15 +2500,19 @@ run_start_in_tray_regression() {
 	printf 'start_in_tray_regression=PASS hidden=1 alive_after_startup=1\n'
 }
 
-run_authenticated_lifecycle_app_with_runner_activation() {
+RUNNER_ACTIVATED_APP_EXIT_STATUS=0
+
+run_lifecycle_app_with_runner_activation() {
 local auth_home="$1"
 local auth_log="$2"
+local fail_cases="${3:-}"
 local activation_request="$auth_home/runner-external-activation.request"
 local activation_marker="$auth_home/runner-external-activation.status"
 local activation_stop="$auth_home/runner-external-activation.stop"
 local activation_log="$auth_home/runner-external-activation.log"
 local auth_pid
 local activation_pid
+local auth_log_tail_pid
 local auth_status=0
 local activation_status=0
 rm -f "$activation_request" "$activation_marker" "$activation_stop"
@@ -2516,6 +2520,7 @@ env HOME="$auth_home" TMPDIR="$TEST_TMP_BASE" \
 	TDESKTOP_MAC_PROFILE_TEST_HOME="$auth_home" \
 	TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST=1 \
 	TDESKTOP_AUTH_LIFECYCLE_REGRESSION=1 \
+	TDESKTOP_AUTH_LIFECYCLE_REGRESSION_FAIL_CASE="$fail_cases" \
 	TDESKTOP_AUTH_LIFECYCLE_REGRESSION_RUNNER_ACTIVATION_REQUIRED=1 \
 	TDESKTOP_AUTH_LIFECYCLE_REGRESSION_RUNNER_ACTIVATION_MARKER="$activation_marker" \
 	TDESKTOP_AUTH_LIFECYCLE_REGRESSION_RUNNER_ACTIVATION_REQUEST="$activation_request" \
@@ -2527,6 +2532,8 @@ env HOME="${RUNNER_EXTERNAL_ACTIVATION_HOME:-$HOME}" \
 		--watch "$activation_request" "$activation_marker" \
 		"$activation_stop" "$auth_pid" >"$activation_log" 2>&1 &
 activation_pid=$!
+tail -n +1 -f "$auth_log" &
+auth_log_tail_pid=$!
 while process_alive "$auth_pid"; do
 	if ! process_alive "$activation_pid"; then
 		printf 'runner activation watcher exited while pid=%s was alive.\n' \
@@ -2560,9 +2567,11 @@ if ! : > "$activation_stop"; then
 	else
 		auth_status=$?
 	fi
+	kill -TERM "$auth_log_tail_pid" 2>/dev/null || true
+	wait "$auth_log_tail_pid" 2>/dev/null || true
 	cat "$activation_log" >&2
 	cat "$auth_log" >&2
-	echo "authenticated lifecycle runner activation failed." >&2
+	echo "lifecycle runner activation stop failed." >&2
 	return 1
 fi
 if wait "$auth_pid"; then
@@ -2575,13 +2584,17 @@ if wait "$activation_pid"; then
 else
 	activation_status=$?
 fi
+kill -TERM "$auth_log_tail_pid" 2>/dev/null || true
+wait "$auth_log_tail_pid" 2>/dev/null || true
 cat "$activation_log"
-if [[ "$auth_status" -ne 0 || "$activation_status" -ne 0 ]]; then
+if [[ "$activation_status" -ne 0 ]]; then
 	cat "$auth_log" >&2
-	echo "authenticated lifecycle runner activation failed." >&2
+	echo "lifecycle runner activation failed." >&2
 	return 1
 fi
-printf 'profile_ipc_runner_activation=PASS pid=%s\n' "$auth_pid"
+RUNNER_ACTIVATED_APP_EXIT_STATUS="$auth_status"
+printf 'runner_activation_app=PASS pid=%s app_exit_status=%s\n' \
+	"$auth_pid" "$auth_status"
 }
 
 run_authenticated_lifecycle_regression() {
@@ -2592,10 +2605,16 @@ mkdir -p "$AUTH_HOME"
 prepare_authenticated_storage_fixtures "$STORAGE_FIXTURE_ROOT"
 verify_protected_storage_fixtures "$STORAGE_FIXTURE_ROOT"
 
-if ! run_authenticated_lifecycle_app_with_runner_activation \
+if ! run_lifecycle_app_with_runner_activation \
 	"$AUTH_HOME" "$AUTH_LOG"; then
 	verify_protected_storage_fixtures "$STORAGE_FIXTURE_ROOT" || true
 	echo "authenticated lifecycle regression failed." >&2
+	exit 1
+fi
+if [[ "$RUNNER_ACTIVATED_APP_EXIT_STATUS" -ne 0 ]]; then
+	verify_protected_storage_fixtures "$STORAGE_FIXTURE_ROOT" || true
+	cat "$AUTH_LOG" >&2
+	echo "authenticated lifecycle app exited with status $RUNNER_ACTIVATED_APP_EXIT_STATUS." >&2
 	exit 1
 fi
 verify_protected_storage_fixtures "$STORAGE_FIXTURE_ROOT"
@@ -2689,16 +2708,12 @@ run_native_failure_continuation_case() {
 	local promotion_failure_log="$promotion_failure_home.log"
 	local promotion_failure_status=0
 	mkdir -p "$case_home"
-	if env HOME="$case_home" TMPDIR="$TEST_TMP_BASE" \
-		TDESKTOP_MAC_PROFILE_TEST_HOME="$case_home" \
-		TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST=1 \
-		TDESKTOP_AUTH_LIFECYCLE_REGRESSION=1 \
-		TDESKTOP_AUTH_LIFECYCLE_REGRESSION_FAIL_CASE=username-input,teagram-icon-persistence,legacy-cleanup-symlink,cache-callback-timeout,cache-concurrent-deletion,stock-incoming-call-answer,pinned-incoming-call-answer,settings-search,folder-crud,admin-session-identities \
-		"$APP" -noupdate -debug >"$case_log" 2>&1; then
-		exit_status=0
-	else
-		exit_status=$?
+	if ! run_lifecycle_app_with_runner_activation \
+		"$case_home" "$case_log" \
+		username-input,teagram-icon-persistence,legacy-cleanup-symlink,cache-callback-timeout,cache-concurrent-deletion,stock-incoming-call-answer,pinned-incoming-call-answer,settings-search,folder-crud,admin-session-identities; then
+		return 1
 	fi
+	exit_status="$RUNNER_ACTIVATED_APP_EXIT_STATUS"
 	if (( exit_status == 0 )); then
 		cat "$case_log" >&2
 		echo "native lifecycle failure injection unexpectedly passed." >&2
@@ -2826,16 +2841,12 @@ END { exit step != 45 }
 	printf 'native_lifecycle_failure_continuation=PASS tested_revision=%s exit_status=%d failed_cases=username-input,teagram-icon-persistence,legacy-cleanup-symlink,cache-callback-timeout,cache-concurrent-deletion,stock-incoming-call-answer,pinned-incoming-call-answer,settings-search,folder-crud,admin-session-identities later_cases=translation-controls,manage-controls,authenticated-cache-file-symlinks,failed-init-cache-access,failed-init-media-cache-access,cold-post-open-cache,cold-post-open-media-cache,cache-access-no-walk,media-cache-access-no-walk,logout-before-cache-initialization,logout-before-media-cache-initialization,independent-creator-checks,admin-session-identities-skips,chat-migration-pass,post-close-window-lifecycle\n' \
 		"$TESTED_REVISION" "$exit_status"
 	mkdir -p "$fixture_failure_home"
-	if env HOME="$fixture_failure_home" TMPDIR="$TEST_TMP_BASE" \
-		TDESKTOP_MAC_PROFILE_TEST_HOME="$fixture_failure_home" \
-		TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST=1 \
-		TDESKTOP_AUTH_LIFECYCLE_REGRESSION=1 \
-		TDESKTOP_AUTH_LIFECYCLE_REGRESSION_FAIL_CASE=admin-session-identities,pinned-migration-fixture \
-		"$APP" -noupdate -debug >"$fixture_failure_log" 2>&1; then
-		fixture_failure_status=0
-	else
-		fixture_failure_status=$?
+	if ! run_lifecycle_app_with_runner_activation \
+		"$fixture_failure_home" "$fixture_failure_log" \
+		admin-session-identities,pinned-migration-fixture; then
+		return 1
 	fi
+	fixture_failure_status="$RUNNER_ACTIVATED_APP_EXIT_STATUS"
 	if (( fixture_failure_status == 0 )); then
 		cat "$fixture_failure_log" >&2
 		echo "combined identity and migration fixture failures unexpectedly passed." >&2
@@ -2864,16 +2875,12 @@ END { exit step != 45 }
 	fi
 	printf 'native_lifecycle_dependency_reporting=PASS combined_failures=admin-session-identities,pinned-migration-fixture stock_creator=PASS admin_cases=SKIP chat_migration=SKIP:dependency-pinned-migration-fixture\n'
 	mkdir -p "$promotion_failure_home"
-	if env HOME="$promotion_failure_home" TMPDIR="$TEST_TMP_BASE" \
-		TDESKTOP_MAC_PROFILE_TEST_HOME="$promotion_failure_home" \
-		TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST=1 \
-		TDESKTOP_AUTH_LIFECYCLE_REGRESSION=1 \
-		TDESKTOP_AUTH_LIFECYCLE_REGRESSION_FAIL_CASE=stock-live-admin-promotion,custom-live-admin-promotion \
-		"$APP" -noupdate -debug >"$promotion_failure_log" 2>&1; then
-		promotion_failure_status=0
-	else
-		promotion_failure_status=$?
+	if ! run_lifecycle_app_with_runner_activation \
+		"$promotion_failure_home" "$promotion_failure_log" \
+		stock-live-admin-promotion,custom-live-admin-promotion; then
+		return 1
 	fi
+	promotion_failure_status="$RUNNER_ACTIVATED_APP_EXIT_STATUS"
 	if (( promotion_failure_status == 0 )); then
 		cat "$promotion_failure_log" >&2
 		echo "live-admin promotion failure injection unexpectedly passed." >&2

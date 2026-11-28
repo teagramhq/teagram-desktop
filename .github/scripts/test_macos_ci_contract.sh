@@ -877,11 +877,11 @@ fi
   && "$profile_step_finish_headroom_seconds" =~ ^[1-9][0-9]*$ ]] \
   || contract_fail 'The protected profile case, deadline, and cleanup timeout budget must be explicit and positive.'
 grep -Fq 'if (( CASE_RUN_TIMEOUT_SECONDS > CASE_TIMEOUT_LIMIT_SECONDS )); then' "$case_runner" \
-  || contract_fail 'Lifecycle cases must share the existing 10-minute timeout cap.'
+  || contract_fail 'Lifecycle cases must share the 20-minute timeout cap.'
 cleanup_headroom_seconds="$((2 * cleanup_grace_seconds))"
 case_timeout_budget_seconds="$((case_timeout_limit_seconds + cleanup_headroom_seconds))"
 profile_step_deadline_budget_seconds="$((profile_step_timeout_seconds - profile_step_finish_headroom_seconds))"
-((case_timeout_limit_seconds == 600 \
+((case_timeout_limit_seconds == 1200 \
     && case_timeout_budget_seconds < profile_step_deadline_budget_seconds \
     && profile_step_timeout_seconds == profile_step_timeout_minutes * 60 \
     && profile_step_timeout_seconds == 1800 \
@@ -1215,6 +1215,29 @@ for activation_contract in \
   grep -Fq -- "$activation_contract" "$profile_harness" \
     || contract_fail "$profile_harness must externally activate its authenticated lifecycle launch."
 done
+if ! python3 - "$profile_harness" <<'PY'
+import sys
+from pathlib import Path
+
+source = Path(sys.argv[1]).read_text()
+start = source.index("run_native_failure_continuation_case() {")
+end = source.index("\n}", start)
+native_failure = source[start:end]
+if native_failure.count("run_lifecycle_app_with_runner_activation") != 3:
+    raise SystemExit("all native failure-continuation app launches need runner activation")
+for failure_case in (
+    "username-input,teagram-icon-persistence,legacy-cleanup-symlink",
+    "admin-session-identities,pinned-migration-fixture",
+    "stock-live-admin-promotion,custom-live-admin-promotion",
+):
+    if failure_case not in native_failure:
+        raise SystemExit(f"native failure-continuation lost its fixture: {failure_case}")
+if '"$APP" -noupdate -debug' in native_failure:
+    raise SystemExit("native failure-continuation must not launch the app without the activation watcher")
+PY
+then
+  contract_fail "$profile_harness native failure fixtures must service external activation for every app launch."
+fi
 awk '
   /if ! : > "\$activation_stop"/ { in_stop_failure = 1 }
   in_stop_failure && /kill -TERM "\$activation_pid"/ { watcher_stopped = 1 }
