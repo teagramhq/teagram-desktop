@@ -126,6 +126,8 @@ NormalizePublicWebSocketEndpoint(const QString &endpoint,
 [[nodiscard]] bool
 IsPublicDiscoveryOrigin(const ServerSelectionCheck &selection,
 						const QString &origin);
+[[nodiscard]] bool SamePublicDiscoveryOrigin(const QString &expectedOrigin,
+												 const QString &pinnedOrigin);
 [[nodiscard]] QString DefaultTeagramServerDiscoveryOrigin();
 
 // Apply the network policy to every public discovery request, including

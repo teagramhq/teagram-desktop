@@ -257,13 +257,14 @@ bool IsDefaultTeagramServerForOrigin(const QString &expectedOrigin,
 	const auto expected = CheckServerSelection(u"server.teagram.io"_q);
 	const auto selection
 		= CheckServerSelection(QString::fromStdString(server.serverSelection));
+	const auto pinnedOrigin = QString::fromStdString(server.discoveryOrigin);
 	return expected.valid() && selection.valid()
 		   && server.discoveryPolicy == ServerDiscoveryPolicy::PublicHttps
 		   && selection.policy == server.discoveryPolicy
 		   && selection.normalizedSelection == expected.normalizedSelection
 		   && IsPublicDiscoveryOrigin(expected, expectedOrigin)
-		   && IsPublicDiscoveryOrigin(
-			   selection, QString::fromStdString(server.discoveryOrigin));
+		   && IsPublicDiscoveryOrigin(selection, pinnedOrigin)
+		   && SamePublicDiscoveryOrigin(expectedOrigin, pinnedOrigin);
 }
 
 bool SameCustomServerEndpoint(const CustomServer &left,

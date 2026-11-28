@@ -8,6 +8,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "tests/unit/unit_test.h"
 
 #include "core/fragment_link_v1.h"
+#include "core/local_url_conversion.h"
 
 #include <QtCore/QDir>
 #include <QtCore/QFile>
@@ -125,10 +126,13 @@ TEST_CASE(FragmentLinkV1UrlGateRejectsMalformedAndHostedUrls) {
 		  == UrlStatus::NotV1);
 }
 
-TEST_CASE(FragmentLinkV1InvalidHiddenLinkCandidateIsIntercepted) {
+TEST_CASE(FragmentLinkV1InvalidHiddenLinkIsGatedBeforeLegacyConversion) {
 	const auto url = u"https://web.teagram.io/alice#~invalid"_q;
 	CHECK(DecodeUrl(url).status == UrlStatus::Invalid);
 	CHECK(IsV1UrlCandidate(url));
+	CHECK_EQ(
+		Core::TryConvertUrlToLocal(url, u"https://web.teagram.io/"_q, true),
+		u"tg://resolve?domain=alice"_q);
 	CHECK(!IsV1UrlCandidate(
 		u"https://web.teagram.io/turnstile.html?token=abc"_q));
 }

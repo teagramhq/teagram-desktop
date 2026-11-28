@@ -12,6 +12,10 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include <optional>
 
+namespace MTP {
+struct CustomServer;
+} // namespace MTP
+
 namespace Core::FragmentLinkV1 {
 
 enum class Type : uchar {
@@ -54,8 +58,7 @@ struct UrlResult {
 [[nodiscard]] std::optional<QString> Encode(const Link &link);
 [[nodiscard]] bool CanOpenOnDefaultServer(const Link &link);
 [[nodiscard]] std::optional<Type>
-AccountDispatchForClick(const Link &link,
-						bool authenticatedDefaultServerOrigin);
+AccountDispatchForClick(const Link &link, const MTP::CustomServer &server);
 [[nodiscard]] QString LinkForPath(const QString &path,
 								  const QString &internalLinksDomain);
 

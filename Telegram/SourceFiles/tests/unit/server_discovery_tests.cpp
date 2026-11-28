@@ -1684,14 +1684,26 @@ TEST_CASE(SignupInviteBindingRejectsEnrollmentAtAnotherOrigin) {
 	pin.discoveryOrigin
 		= "https://server.teagram.io/.well-known/telegramd/client";
 	CHECK(IsDefaultTeagramServerForOrigin(expected, pin));
+	const auto other = CheckServerSelection(u"other.example.com"_q);
+	const auto otherOrigin = PublicDiscoveryUrl(other);
+	CHECK(!IsDefaultTeagramServerForOrigin(otherOrigin, pin));
 	pin.discoveryOrigin = "https://server.teagram.io/.well-known/other";
 	CHECK(!IsDefaultTeagramServerForOrigin(expected, pin));
 
-	const auto other = CheckServerSelection(u"other.example.com"_q);
 	pin.serverSelection = other.normalizedSelection.toStdString();
 	pin.discoveryOrigin = PublicDiscoveryUrl(other).toStdString();
 	CHECK(!IsDefaultTeagramServer(pin));
 	CHECK(!IsDefaultTeagramServerForOrigin(expected, pin));
+}
+
+TEST_CASE(PublicDiscoveryOriginBindingComparesExpectedAndPinnedOrigins) {
+	const auto selection = CheckServerSelection(u"server.teagram.io"_q);
+	const auto expected = PublicDiscoveryUrl(selection);
+	const auto legacy = u"https://server.teagram.io/"
+						 u".well-known/telegramd/client"_q;
+	CHECK(SamePublicDiscoveryOrigin(expected, legacy));
+	const auto other = CheckServerSelection(u"other.example.com"_q);
+	CHECK(!SamePublicDiscoveryOrigin(expected, PublicDiscoveryUrl(other)));
 }
 
 TEST_CASE(FragmentLinkV1DefaultOriginProfileClickDispatchSmoke) {
@@ -1705,7 +1717,7 @@ TEST_CASE(FragmentLinkV1DefaultOriginProfileClickDispatchSmoke) {
 	CHECK(decoded.status == Core::FragmentLinkV1::UrlStatus::Valid);
 	if (decoded.status == Core::FragmentLinkV1::UrlStatus::Valid) {
 		const auto dispatch = Core::FragmentLinkV1::AccountDispatchForClick(
-			decoded.link, IsDefaultTeagramServer(pin));
+			decoded.link, pin);
 		CHECK(dispatch.has_value());
 		if (dispatch) {
 			CHECK(*dispatch == Core::FragmentLinkV1::Type::Profile);
@@ -1715,7 +1727,7 @@ TEST_CASE(FragmentLinkV1DefaultOriginProfileClickDispatchSmoke) {
 		pin.serverSelection = other.normalizedSelection.toStdString();
 		pin.discoveryOrigin = PublicDiscoveryUrl(other).toStdString();
 		CHECK(!Core::FragmentLinkV1::AccountDispatchForClick(
-				   decoded.link, IsDefaultTeagramServer(pin))
+				   decoded.link, pin)
 				   .has_value());
 	}
 }

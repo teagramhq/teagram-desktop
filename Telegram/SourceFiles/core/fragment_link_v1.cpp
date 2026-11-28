@@ -8,6 +8,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/fragment_link_v1.h"
 
 #include "core/sticker_import.h"
+#include "mtproto/mtproto_dc_options.h"
 
 #include <QtCore/QUrl>
 
@@ -663,8 +664,8 @@ bool CanOpenOnDefaultServer(const Link &link) { return link.host.isEmpty(); }
 
 std::optional<Type>
 AccountDispatchForClick(const Link &link,
-						bool authenticatedDefaultServerOrigin) {
-	if (!authenticatedDefaultServerOrigin || !CanOpenOnDefaultServer(link)) {
+						const MTP::CustomServer &server) {
+	if (!MTP::IsDefaultTeagramServer(server) || !CanOpenOnDefaultServer(link)) {
 		return std::nullopt;
 	}
 	switch (link.type) {

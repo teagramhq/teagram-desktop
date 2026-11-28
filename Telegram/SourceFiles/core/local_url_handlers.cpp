@@ -1824,8 +1824,7 @@ bool TryOpenFragmentLinkV1(const QString &url, const QVariant &context) {
 		return true;
 	}
 	const auto dispatch = FragmentLinkV1::AccountDispatchForClick(
-		*decoded, MTP::IsDefaultTeagramServer(
-					  controller->session().mtp().config().customServer()));
+		*decoded, controller->session().mtp().config().customServer());
 	if (!dispatch) {
 		controller->showFeatureUnavailableOnServerToast();
 		return true;
