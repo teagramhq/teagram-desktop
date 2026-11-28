@@ -14872,9 +14872,9 @@ struct CacheChatSwitchRegressionResult final {
 	bool dialogHistoriesReady = false;
 	bool syntheticHistoriesReady = false;
 	bool peerScopedUpdateRouting = false;
-        bool requestsBarDeferredForEmptyPeer = false;
-        bool requestsBarCreatedAfterPendingUpdate = false;
-        bool attachMenuCacheReused = false;
+	bool requestsBarDeferredForEmptyPeer = false;
+	bool requestsBarCreatedAfterPendingUpdate = false;
+	bool attachMenuCacheReused = false;
 	bool attachMenuInvalidationRebuilt = false;
 	bool attachMenuBuildDeferredUntilHover = false;
 	bool attachMenuCacheBounded = false;
@@ -16927,37 +16927,34 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		std::max(result.attachMenuHoverNanoseconds,
 				 result.attachMenuInvalidationCallbackCpuNanoseconds));
 	result.cachedDocuments = int(mediaViews.size());
-        const auto requestsBarHistory = makeUiHistory(ChatId(1058), 10'580'001);
-        controller->showPeerHistory(requestsBarHistory);
-        const auto requestsBarHistoryShown = WaitForRegressionCondition(
-            [&] {
-              return (historyWidget->history() == requestsBarHistory.get()) &&
-                     historyWidget
-                         ->historyTransitionFinishedForRegressionTest();
-            },
-            1500);
-        result.requestsBarDeferredForEmptyPeer =
-            requestsBarHistoryShown &&
-            !historyWidget->requestsBarCreatedForRegressionTest();
-        data.chat(ChatId(1058))
-            ->setPendingRequestsCount(1, std::vector<UserId>{UserId(1)});
-        result.requestsBarCreatedAfterPendingUpdate =
-            WaitForRegressionCondition(
-                [&] {
-                  return (historyWidget->history() ==
-                          requestsBarHistory.get()) &&
-                         historyWidget->requestsBarCreatedForRegressionTest();
-                },
-                1000);
-        data.chat(ChatId(1058))
-            ->setPendingRequestsCount(0, std::vector<UserId>());
-        QCoreApplication::processEvents();
-        std::fprintf(stderr,
-                     "Requests bar deferred creation: empty_peer_deferred=%d "
-                     "created_after_pending_update=%d.\n",
-                     result.requestsBarDeferredForEmptyPeer,
-                     result.requestsBarCreatedAfterPendingUpdate);
-        const auto groupCallBarDeferred
+	const auto requestsBarHistory = makeUiHistory(ChatId(1058), 10'580'001);
+	controller->showPeerHistory(requestsBarHistory);
+	const auto requestsBarHistoryShown = WaitForRegressionCondition(
+		[&] {
+			return (historyWidget->history() == requestsBarHistory.get())
+				   && historyWidget
+						  ->historyTransitionFinishedForRegressionTest();
+		},
+		1500);
+	result.requestsBarDeferredForEmptyPeer
+		= requestsBarHistoryShown
+		  && !historyWidget->requestsBarCreatedForRegressionTest();
+	data.chat(ChatId(1058))
+		->setPendingRequestsCount(1, std::vector<UserId>{UserId(1)});
+	result.requestsBarCreatedAfterPendingUpdate = WaitForRegressionCondition(
+		[&] {
+			return (historyWidget->history() == requestsBarHistory.get())
+				   && historyWidget->requestsBarCreatedForRegressionTest();
+		},
+		1000);
+	data.chat(ChatId(1058))->setPendingRequestsCount(0, std::vector<UserId>());
+	QCoreApplication::processEvents();
+	std::fprintf(stderr,
+				 "Requests bar deferred creation: empty_peer_deferred=%d "
+				 "created_after_pending_update=%d.\n",
+				 result.requestsBarDeferredForEmptyPeer,
+				 result.requestsBarCreatedAfterPendingUpdate);
+	const auto groupCallBarDeferred
 		= GroupCallBarDeferredButtonRegressionPasses();
 	const auto contactStatusRequestText
 		= ContactStatusRequestTextRegressionPasses(controller);
@@ -17301,100 +17298,100 @@ RunCacheChatSwitchLatencyRegression(not_null<Main::Account *> account,
 		= MainThreadBlockedWorkBudgetRegressionPasses();
 	const auto startupWatchdogRegressionPassed
 		= StartupWatchdogStallEvidenceRegressionPasses();
-        std::fprintf(
-            stderr,
-            "Chat switch gate checks: completed=%d timed_out=%d "
-            "cached_documents=%d expected_cached_documents=%d "
-            "hydration_cpu_clock=%d hydration_process_cpu_clock=%d "
-            "chat_switch_cpu_clock=%d chat_switch_process_cpu_clock=%d "
-            "scale_rebuilt=%d transitions_settled=%d "
-            "requests_bar_empty_deferred=%d "
-            "requests_bar_created_after_pending_update=%d "
-            "initial_selection_within_budget=%d switch_work_within_budget=%d "
-            "startup_budget=%d blocked_work_fixtures=%d "
-            "startup_watchdog_fixtures=%d.\n",
-            completed, timedOut, result.cachedDocuments,
-            (kReactionCount / 2 + 1) * kDocumentsPerReaction,
-            hydrationCpuClockAvailable, hydrationProcessCpuClockAvailable,
-            chatSwitchCpuClockAvailable, chatSwitchProcessCpuClockAvailable,
-            result.historyScaleInvalidationRebuilt,
-            result.chatSwitchTransitionsSettled,
-            result.requestsBarDeferredForEmptyPeer,
-            result.requestsBarCreatedAfterPendingUpdate,
-            result.initialHistorySelectionWithinBudget,
-            result.chatSwitchWorkWithinBudget,
-            startupTimingBudgetRun.WithinBudget(),
-            blockedWorkBudgetRegressionPassed, startupWatchdogRegressionPassed);
-        result.passed =
-            completed && !timedOut && (result.reactions == kReactionCount) &&
-            (result.attachMenuBotCount >= 20) &&
-            (result.hydratedDocuments ==
-             kReactionCount * kDocumentsPerReaction) &&
-            (result.chatSwitches == kExpectedChatSwitches) &&
-            result.dialogHistoriesReady && result.syntheticHistoriesReady &&
-            result.peerScopedUpdateRouting &&
-            result.requestsBarDeferredForEmptyPeer &&
-            result.requestsBarCreatedAfterPendingUpdate &&
-            (result.cachedDocuments ==
-             (kReactionCount / 2 + 1) * kDocumentsPerReaction) &&
-            result.historyScaleInvalidationRebuilt &&
-            result.historyChatModeInvalidationRebuilt && groupCallBarDeferred &&
-            groupCallBarCreationPassed && contactStatusRequestText &&
-            MainThreadCpuWorkWithinBudget(
-                result.attachMenuFirstHoverCallbackCpuNanoseconds,
-                kMaxChatSwitchNanoseconds) &&
-            result.attachMenuCacheReused &&
-            MainThreadCpuWorkWithinBudget(result.attachMenuHoverNanoseconds,
-                                          kMaxChatSwitchNanoseconds) &&
-            result.attachMenuInvalidationRebuilt &&
-            MainThreadCpuWorkWithinBudget(
-                result.attachMenuInvalidationCallbackCpuNanoseconds,
-                kMaxChatSwitchNanoseconds) &&
-            result.attachMenuBuildDeferredUntilHover &&
-            result.attachMenuUncachedPeersReady &&
-            MainThreadCpuWorkWithinBudget(
-                result.attachMenuUncachedPeerCallbackCpuNanoseconds,
-                kMaxChatSwitchNanoseconds) &&
-            MainThreadEstimatedWorkWithinBudget(
-                result.attachMenuFirstHoverEstimatedWorkNanoseconds,
-                kMaxChatSwitchNanoseconds) &&
-            MainThreadEstimatedWorkWithinBudget(
-                result.attachMenuHoverEstimatedWorkNanoseconds,
-                kMaxChatSwitchNanoseconds) &&
-            MainThreadEstimatedWorkWithinBudget(
-                result.attachMenuInvalidationEstimatedWorkNanoseconds,
-                kMaxChatSwitchNanoseconds) &&
-            MainThreadEstimatedWorkWithinBudget(
-                result.attachMenuUncachedPeerEstimatedWorkNanoseconds,
-                kMaxChatSwitchNanoseconds) &&
-            result.attachMenuCacheBounded && result.chatSwitchComposeUiReused &&
-            result.translateBarReused && result.translateBarClosedReopened &&
-            result.translateBarRetainedAcrossSwitches &&
-            result.translateBarTracksCurrentHistory &&
-            result.openPeerMigrationRebind &&
-            result.fieldAutocompleteSuggestionsReady &&
-            result.botCommandsShownWhileFieldUnfocused &&
-            result.pendingRevealStartedAfterControlsGeometry &&
-            result.minimizedRestore && hydrationCpuClockAvailable &&
-            result.initialHistoryWindowActivated &&
-            result.chatSwitchWindowsActivated &&
-            startupTimingBudgetRun.WithinBudget() &&
-            (result.maxHydrationMainThreadWorkNanoseconds >= 0) &&
-            MainThreadCpuWorkWithinBudget(
-                result.maxHydrationMainThreadWorkNanoseconds,
-                kMaxChatSwitchNanoseconds) &&
-            chatSwitchCpuClockAvailable &&
-            (result.maxChatSwitchMainThreadWorkNanoseconds >= 0) &&
-            (result.maxChatSwitchIndex >= 0) &&
-            (result.maxChatSwitchPeerId >= 0) &&
-            result.chatSwitchWorkWithinBudget &&
-            (result.maxRecurringChatSwitchMainThreadWorkNanoseconds >= 0) &&
-            (result.maxRecurringChatSwitchEstimatedWorkNanoseconds >= 0) &&
-            (result.maxRecurringChatSwitchEstimatedWorkNanoseconds <
-             kMaxChatSwitchNanoseconds) &&
-            blockedWorkBudgetRegressionPassed &&
-            startupWatchdogRegressionPassed;
-        regressionSettings.setTabbedSelectorSectionEnabled(
+	std::fprintf(
+		stderr,
+		"Chat switch gate checks: completed=%d timed_out=%d "
+		"cached_documents=%d expected_cached_documents=%d "
+		"hydration_cpu_clock=%d hydration_process_cpu_clock=%d "
+		"chat_switch_cpu_clock=%d chat_switch_process_cpu_clock=%d "
+		"scale_rebuilt=%d transitions_settled=%d "
+		"requests_bar_empty_deferred=%d "
+		"requests_bar_created_after_pending_update=%d "
+		"initial_selection_within_budget=%d switch_work_within_budget=%d "
+		"startup_budget=%d blocked_work_fixtures=%d "
+		"startup_watchdog_fixtures=%d.\n",
+		completed, timedOut, result.cachedDocuments,
+		(kReactionCount / 2 + 1) * kDocumentsPerReaction,
+		hydrationCpuClockAvailable, hydrationProcessCpuClockAvailable,
+		chatSwitchCpuClockAvailable, chatSwitchProcessCpuClockAvailable,
+		result.historyScaleInvalidationRebuilt,
+		result.chatSwitchTransitionsSettled,
+		result.requestsBarDeferredForEmptyPeer,
+		result.requestsBarCreatedAfterPendingUpdate,
+		result.initialHistorySelectionWithinBudget,
+		result.chatSwitchWorkWithinBudget,
+		startupTimingBudgetRun.WithinBudget(),
+		blockedWorkBudgetRegressionPassed, startupWatchdogRegressionPassed);
+	result.passed
+		= completed && !timedOut && (result.reactions == kReactionCount)
+		  && (result.attachMenuBotCount >= 20)
+		  && (result.hydratedDocuments
+			  == kReactionCount * kDocumentsPerReaction)
+		  && (result.chatSwitches == kExpectedChatSwitches)
+		  && result.dialogHistoriesReady && result.syntheticHistoriesReady
+		  && result.peerScopedUpdateRouting
+		  && result.requestsBarDeferredForEmptyPeer
+		  && result.requestsBarCreatedAfterPendingUpdate
+		  && (result.cachedDocuments
+			  == (kReactionCount / 2 + 1) * kDocumentsPerReaction)
+		  && result.historyScaleInvalidationRebuilt
+		  && result.historyChatModeInvalidationRebuilt && groupCallBarDeferred
+		  && groupCallBarCreationPassed && contactStatusRequestText
+		  && MainThreadCpuWorkWithinBudget(
+			  result.attachMenuFirstHoverCallbackCpuNanoseconds,
+			  kMaxChatSwitchNanoseconds)
+		  && result.attachMenuCacheReused
+		  && MainThreadCpuWorkWithinBudget(result.attachMenuHoverNanoseconds,
+										   kMaxChatSwitchNanoseconds)
+		  && result.attachMenuInvalidationRebuilt
+		  && MainThreadCpuWorkWithinBudget(
+			  result.attachMenuInvalidationCallbackCpuNanoseconds,
+			  kMaxChatSwitchNanoseconds)
+		  && result.attachMenuBuildDeferredUntilHover
+		  && result.attachMenuUncachedPeersReady
+		  && MainThreadCpuWorkWithinBudget(
+			  result.attachMenuUncachedPeerCallbackCpuNanoseconds,
+			  kMaxChatSwitchNanoseconds)
+		  && MainThreadEstimatedWorkWithinBudget(
+			  result.attachMenuFirstHoverEstimatedWorkNanoseconds,
+			  kMaxChatSwitchNanoseconds)
+		  && MainThreadEstimatedWorkWithinBudget(
+			  result.attachMenuHoverEstimatedWorkNanoseconds,
+			  kMaxChatSwitchNanoseconds)
+		  && MainThreadEstimatedWorkWithinBudget(
+			  result.attachMenuInvalidationEstimatedWorkNanoseconds,
+			  kMaxChatSwitchNanoseconds)
+		  && MainThreadEstimatedWorkWithinBudget(
+			  result.attachMenuUncachedPeerEstimatedWorkNanoseconds,
+			  kMaxChatSwitchNanoseconds)
+		  && result.attachMenuCacheBounded && result.chatSwitchComposeUiReused
+		  && result.translateBarReused && result.translateBarClosedReopened
+		  && result.translateBarRetainedAcrossSwitches
+		  && result.translateBarTracksCurrentHistory
+		  && result.openPeerMigrationRebind
+		  && result.fieldAutocompleteSuggestionsReady
+		  && result.botCommandsShownWhileFieldUnfocused
+		  && result.pendingRevealStartedAfterControlsGeometry
+		  && result.minimizedRestore && hydrationCpuClockAvailable
+		  && result.initialHistoryWindowActivated
+		  && result.chatSwitchWindowsActivated
+		  && startupTimingBudgetRun.WithinBudget()
+		  && (result.maxHydrationMainThreadWorkNanoseconds >= 0)
+		  && MainThreadCpuWorkWithinBudget(
+			  result.maxHydrationMainThreadWorkNanoseconds,
+			  kMaxChatSwitchNanoseconds)
+		  && chatSwitchCpuClockAvailable
+		  && (result.maxChatSwitchMainThreadWorkNanoseconds >= 0)
+		  && (result.maxChatSwitchIndex >= 0)
+		  && (result.maxChatSwitchPeerId >= 0)
+		  && result.chatSwitchWorkWithinBudget
+		  && (result.maxRecurringChatSwitchMainThreadWorkNanoseconds >= 0)
+		  && (result.maxRecurringChatSwitchEstimatedWorkNanoseconds >= 0)
+		  && (result.maxRecurringChatSwitchEstimatedWorkNanoseconds
+			  < kMaxChatSwitchNanoseconds)
+		  && blockedWorkBudgetRegressionPassed
+		  && startupWatchdogRegressionPassed;
+	regressionSettings.setTabbedSelectorSectionEnabled(
 		originalTabbedSelectorSectionEnabled);
 	regressionSettings.setThirdSectionInfoEnabled(
 		originalThirdSectionInfoEnabled);
@@ -18500,176 +18497,148 @@ void RunAuthenticatedCacheSymlinkCases(
 					chatSwitch.historyChatModeLayoutWideAfter,
 					chatSwitch.chatSwitchTransitionsSettled,
 					chatSwitch.historyChatModeInvalidationRebuilt);
-                                std::fprintf(
-                                    stderr,
-                                    "Cache chat switch latency regression: "
-                                    "seeded_directories=125 seeded_files=169 "
-                                    "reactions=%d "
-                                    "hydrated_documents=%d chat_switches=%d "
-                                    "attach_menu_bot_count=%d "
-                                    "minimized_restore=%d "
-                                    "initial_history_window_activated=%d "
-                                    "all_chat_switch_windows_activated=%d "
-                                    "minimized_switch_ns=%lld "
-                                    "minimized_restore_budget_ns=%lld "
-                                    "max_hydration_ns=%lld "
-                                    "max_hydration_work_ns=%lld "
-                                    "hydration_scheduler_preemption_proven=%d "
-                                    "max_switch_ns=%lld "
-                                    "max_switch_work_ns=%lld "
-                                    "max_recurring_switch_work_ns=%lld "
-                                    "max_switch_estimated_work_ns=%lld "
-                                    "max_recurring_switch_estimated_work_ns=%"
-                                    "lld "
-                                    "max_switch_index=%d "
-                                    "max_switch_peer_id=%lld "
-                                    "switch_scheduler_preemption_proven=%d "
-                                    "attach_menu_first_hover_ns=%lld "
-                                    "attach_menu_hover_ns=%lld "
-                                    "attach_menu_update_hover_ns=%lld "
-                                    "attach_menu_uncached_peer_ns=%lld "
-                                    "attach_menu_first_hover_callback_cpu_ns=%"
-                                    "lld "
-                                    "attach_menu_update_hover_callback_cpu_ns=%"
-                                    "lld "
-                                    "attach_menu_uncached_peer_callback_cpu_ns="
-                                    "%lld "
-                                    "attach_menu_first_hover_callback_wall_ns=%"
-                                    "lld "
-                                    "attach_menu_update_hover_callback_wall_ns="
-                                    "%lld "
-                                    "attach_menu_uncached_peer_callback_wall_"
-                                    "ns=%lld "
-                                    "attach_menu_scheduler_preemption_proven=%"
-                                    "d "
-                                    "attach_menu_cached=%d "
-                                    "attach_menu_invalidated=%d "
-                                    "attach_menu_build_deferred=%d "
-                                    "attach_menu_uncached_ready=%d "
-                                    "attach_menu_uncached_deferred_failures=%d "
-                                    "attach_menu_uncached_missing_bot_failures="
-                                    "%d "
-                                    "attach_menu_uncached_build_count_failures="
-                                    "%d "
-                                    "attach_menu_cache_bound=%d "
-                                    "pending_reveal_after_controls_geometry=%d "
-                                    "chat_switch_compose_ui_reused=%d "
-                                    "translate_bar_reused=%d "
-                                    "translate_bar_tracks_history=%d "
-                                    "field_autocomplete_suggestions_ready=%d "
-                                    "menu_commands_unfocused=%d "
-                                    "bot_commands_unfocused=%d "
-                                    "history_chat_mode_invalidation_rebuilt=%d "
-                                    "dialog_histories_ready=%d "
-                                    "synthetic_histories_ready=%d "
-                                    "peer_scoped_update_routing=%d "
-                                    "requests_bar_empty_deferred=%d "
-                                    "requests_bar_created_after_pending_update="
-                                    "%d "
-                                    "max_stall_ns=%lld within_budgets=%d.\n",
-                                    chatSwitch.reactions,
-                                    chatSwitch.hydratedDocuments,
-                                    chatSwitch.chatSwitches,
-                                    chatSwitch.attachMenuBotCount,
-                                    chatSwitch.minimizedRestore,
-                                    chatSwitch.initialHistoryWindowActivated,
-                                    chatSwitch.chatSwitchWindowsActivated,
-                                    static_cast<long long>(
-                                        chatSwitch.minimizedSwitchNanoseconds),
-                                    static_cast<long long>(
-                                        kMaxMinimizedRestoreNanoseconds),
-                                    static_cast<long long>(
-                                        chatSwitch.maxHydrationNanoseconds),
-                                    static_cast<long long>(
-                                        chatSwitch
-                                            .maxHydrationMainThreadWorkNanoseconds),
-                                    chatSwitch
-                                        .hydrationSchedulerPreemptionProven,
-                                    static_cast<long long>(
-                                        chatSwitch.maxChatSwitchNanoseconds),
-                                    static_cast<long long>(
-                                        chatSwitch
-                                            .maxChatSwitchMainThreadWorkNanoseconds),
-                                    static_cast<long long>(
-                                        chatSwitch
-                                            .maxRecurringChatSwitchMainThreadWorkNanoseconds),
-                                    static_cast<long long>(
-                                        chatSwitch
-                                            .maxChatSwitchEstimatedWorkNanoseconds),
-                                    static_cast<long long>(
-                                        chatSwitch
-                                            .maxRecurringChatSwitchEstimatedWorkNanoseconds),
-                                    chatSwitch.maxChatSwitchIndex,
-                                    static_cast<long long>(
-                                        chatSwitch.maxChatSwitchPeerId),
-                                    chatSwitch
-                                        .chatSwitchSchedulerPreemptionProven,
-                                    static_cast<long long>(
-                                        chatSwitch
-                                            .attachMenuFirstHoverNanoseconds),
-                                    static_cast<long long>(
-                                        chatSwitch.attachMenuHoverNanoseconds),
-                                    static_cast<long long>(
-                                        chatSwitch
-                                            .attachMenuInvalidationHoverNanoseconds),
-                                    static_cast<long long>(
-                                        chatSwitch
-                                            .attachMenuUncachedPeerNanoseconds),
-                                    static_cast<long long>(
-                                        chatSwitch
-                                            .attachMenuFirstHoverCallbackCpuNanoseconds),
-                                    static_cast<long long>(
-                                        chatSwitch
-                                            .attachMenuInvalidationCallbackCpuNanoseconds),
-                                    static_cast<long long>(
-                                        chatSwitch
-                                            .attachMenuUncachedPeerCallbackCpuNanoseconds),
-                                    static_cast<long long>(
-                                        chatSwitch
-                                            .attachMenuFirstHoverCallbackWallNanoseconds),
-                                    static_cast<long long>(
-                                        chatSwitch
-                                            .attachMenuInvalidationCallbackWallNanoseconds),
-                                    static_cast<long long>(
-                                        chatSwitch
-                                            .attachMenuUncachedPeerCallbackWallNanoseconds),
-                                    chatSwitch
-                                        .attachMenuSchedulerPreemptionProven,
-                                    chatSwitch.attachMenuCacheReused,
-                                    chatSwitch.attachMenuInvalidationRebuilt,
-                                    chatSwitch
-                                        .attachMenuBuildDeferredUntilHover,
-                                    chatSwitch.attachMenuUncachedPeersReady,
-                                    chatSwitch
-                                        .attachMenuUncachedDeferredFailures,
-                                    chatSwitch
-                                        .attachMenuUncachedMissingBotFailures,
-                                    chatSwitch
-                                        .attachMenuUncachedBuildCountFailures,
-                                    chatSwitch.attachMenuCacheBounded,
-                                    chatSwitch
-                                        .pendingRevealStartedAfterControlsGeometry,
-                                    chatSwitch.chatSwitchComposeUiReused,
-                                    chatSwitch.translateBarReused,
-                                    chatSwitch.translateBarTracksCurrentHistory,
-                                    chatSwitch
-                                        .fieldAutocompleteSuggestionsReady,
-                                    chatSwitch
-                                        .menuCommandsShownWhileFieldUnfocused,
-                                    chatSwitch
-                                        .botCommandsShownWhileFieldUnfocused,
-                                    chatSwitch
-                                        .historyChatModeInvalidationRebuilt,
-                                    chatSwitch.dialogHistoriesReady,
-                                    chatSwitch.syntheticHistoriesReady,
-                                    chatSwitch.peerScopedUpdateRouting,
-                                    chatSwitch.requestsBarDeferredForEmptyPeer,
-                                    chatSwitch
-                                        .requestsBarCreatedAfterPendingUpdate,
-                                    static_cast<long long>(
-                                        chatSwitch.maxStallNanoseconds),
-                                    chatSwitch.passed);
-                                std::fprintf(
+				std::fprintf(
+					stderr,
+					"Cache chat switch latency regression: "
+					"seeded_directories=125 seeded_files=169 "
+					"reactions=%d "
+					"hydrated_documents=%d chat_switches=%d "
+					"attach_menu_bot_count=%d "
+					"minimized_restore=%d "
+					"initial_history_window_activated=%d "
+					"all_chat_switch_windows_activated=%d "
+					"minimized_switch_ns=%lld "
+					"minimized_restore_budget_ns=%lld "
+					"max_hydration_ns=%lld "
+					"max_hydration_work_ns=%lld "
+					"hydration_scheduler_preemption_proven=%d "
+					"max_switch_ns=%lld "
+					"max_switch_work_ns=%lld "
+					"max_recurring_switch_work_ns=%lld "
+					"max_switch_estimated_work_ns=%lld "
+					"max_recurring_switch_estimated_work_ns=%"
+					"lld "
+					"max_switch_index=%d "
+					"max_switch_peer_id=%lld "
+					"switch_scheduler_preemption_proven=%d "
+					"attach_menu_first_hover_ns=%lld "
+					"attach_menu_hover_ns=%lld "
+					"attach_menu_update_hover_ns=%lld "
+					"attach_menu_uncached_peer_ns=%lld "
+					"attach_menu_first_hover_callback_cpu_ns=%"
+					"lld "
+					"attach_menu_update_hover_callback_cpu_ns=%"
+					"lld "
+					"attach_menu_uncached_peer_callback_cpu_ns="
+					"%lld "
+					"attach_menu_first_hover_callback_wall_ns=%"
+					"lld "
+					"attach_menu_update_hover_callback_wall_ns="
+					"%lld "
+					"attach_menu_uncached_peer_callback_wall_"
+					"ns=%lld "
+					"attach_menu_scheduler_preemption_proven=%"
+					"d "
+					"attach_menu_cached=%d "
+					"attach_menu_invalidated=%d "
+					"attach_menu_build_deferred=%d "
+					"attach_menu_uncached_ready=%d "
+					"attach_menu_uncached_deferred_failures=%d "
+					"attach_menu_uncached_missing_bot_failures="
+					"%d "
+					"attach_menu_uncached_build_count_failures="
+					"%d "
+					"attach_menu_cache_bound=%d "
+					"pending_reveal_after_controls_geometry=%d "
+					"chat_switch_compose_ui_reused=%d "
+					"translate_bar_reused=%d "
+					"translate_bar_tracks_history=%d "
+					"field_autocomplete_suggestions_ready=%d "
+					"menu_commands_unfocused=%d "
+					"bot_commands_unfocused=%d "
+					"history_chat_mode_invalidation_rebuilt=%d "
+					"dialog_histories_ready=%d "
+					"synthetic_histories_ready=%d "
+					"peer_scoped_update_routing=%d "
+					"requests_bar_empty_deferred=%d "
+					"requests_bar_created_after_pending_update="
+					"%d "
+					"max_stall_ns=%lld within_budgets=%d.\n",
+					chatSwitch.reactions, chatSwitch.hydratedDocuments,
+					chatSwitch.chatSwitches, chatSwitch.attachMenuBotCount,
+					chatSwitch.minimizedRestore,
+					chatSwitch.initialHistoryWindowActivated,
+					chatSwitch.chatSwitchWindowsActivated,
+					static_cast<long long>(
+						chatSwitch.minimizedSwitchNanoseconds),
+					static_cast<long long>(kMaxMinimizedRestoreNanoseconds),
+					static_cast<long long>(chatSwitch.maxHydrationNanoseconds),
+					static_cast<long long>(
+						chatSwitch.maxHydrationMainThreadWorkNanoseconds),
+					chatSwitch.hydrationSchedulerPreemptionProven,
+					static_cast<long long>(chatSwitch.maxChatSwitchNanoseconds),
+					static_cast<long long>(
+						chatSwitch.maxChatSwitchMainThreadWorkNanoseconds),
+					static_cast<long long>(
+						chatSwitch
+							.maxRecurringChatSwitchMainThreadWorkNanoseconds),
+					static_cast<long long>(
+						chatSwitch.maxChatSwitchEstimatedWorkNanoseconds),
+					static_cast<long long>(
+						chatSwitch
+							.maxRecurringChatSwitchEstimatedWorkNanoseconds),
+					chatSwitch.maxChatSwitchIndex,
+					static_cast<long long>(chatSwitch.maxChatSwitchPeerId),
+					chatSwitch.chatSwitchSchedulerPreemptionProven,
+					static_cast<long long>(
+						chatSwitch.attachMenuFirstHoverNanoseconds),
+					static_cast<long long>(
+						chatSwitch.attachMenuHoverNanoseconds),
+					static_cast<long long>(
+						chatSwitch.attachMenuInvalidationHoverNanoseconds),
+					static_cast<long long>(
+						chatSwitch.attachMenuUncachedPeerNanoseconds),
+					static_cast<long long>(
+						chatSwitch.attachMenuFirstHoverCallbackCpuNanoseconds),
+					static_cast<long long>(
+						chatSwitch
+							.attachMenuInvalidationCallbackCpuNanoseconds),
+					static_cast<long long>(
+						chatSwitch
+							.attachMenuUncachedPeerCallbackCpuNanoseconds),
+					static_cast<long long>(
+						chatSwitch.attachMenuFirstHoverCallbackWallNanoseconds),
+					static_cast<long long>(
+						chatSwitch
+							.attachMenuInvalidationCallbackWallNanoseconds),
+					static_cast<long long>(
+						chatSwitch
+							.attachMenuUncachedPeerCallbackWallNanoseconds),
+					chatSwitch.attachMenuSchedulerPreemptionProven,
+					chatSwitch.attachMenuCacheReused,
+					chatSwitch.attachMenuInvalidationRebuilt,
+					chatSwitch.attachMenuBuildDeferredUntilHover,
+					chatSwitch.attachMenuUncachedPeersReady,
+					chatSwitch.attachMenuUncachedDeferredFailures,
+					chatSwitch.attachMenuUncachedMissingBotFailures,
+					chatSwitch.attachMenuUncachedBuildCountFailures,
+					chatSwitch.attachMenuCacheBounded,
+					chatSwitch.pendingRevealStartedAfterControlsGeometry,
+					chatSwitch.chatSwitchComposeUiReused,
+					chatSwitch.translateBarReused,
+					chatSwitch.translateBarTracksCurrentHistory,
+					chatSwitch.fieldAutocompleteSuggestionsReady,
+					chatSwitch.menuCommandsShownWhileFieldUnfocused,
+					chatSwitch.botCommandsShownWhileFieldUnfocused,
+					chatSwitch.historyChatModeInvalidationRebuilt,
+					chatSwitch.dialogHistoriesReady,
+					chatSwitch.syntheticHistoriesReady,
+					chatSwitch.peerScopedUpdateRouting,
+					chatSwitch.requestsBarDeferredForEmptyPeer,
+					chatSwitch.requestsBarCreatedAfterPendingUpdate,
+					static_cast<long long>(chatSwitch.maxStallNanoseconds),
+					chatSwitch.passed);
+				std::fprintf(
 					stderr,
 					"Attach-menu callback work: "
 					"cached_hover_wall_ns=%lld "
