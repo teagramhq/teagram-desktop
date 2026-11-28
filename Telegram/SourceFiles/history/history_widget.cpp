@@ -3318,7 +3318,9 @@ void HistoryWidget::setHistory(History *history) {
 	// Do not handle old-peer updates while the history is being torn down.
 	_peerUpdatesLifetime.destroy();
 	_peerUpdatesLifetime = rpl::lifetime();
-	_groupCallBar = nullptr;
+        _requestsBarLifetime.destroy();
+        _requestsBarLifetime = rpl::lifetime();
+        _groupCallBar = nullptr;
 	_groupCallBarContentLifetime.destroy();
 	_pullToNext->setHistory(history);
 
@@ -10248,45 +10250,67 @@ void HistoryWidget::createGroupCallBar(
 
 void HistoryWidget::setupRequestsBar() {
 	Expects(_history != nullptr);
+        _requestsBarLifetime.destroy();
+        _requestsBarLifetime = rpl::lifetime();
+        _requestsBar = nullptr;
+        _requestsBarHeight = 0;
 
-	const auto peer = _history->peer;
+        const auto peer = _history->peer;
 	if (!peer->isChannel() && !peer->isChat()) {
-		_requestsBar = nullptr;
 		return;
 	}
-	_requestsBar = std::make_unique<Ui::RequestsBar>(
-		_topBars.get(),
-		HistoryView::RequestsBarContentByPeer(
-			peer,
-			st::historyRequestsUserpics.size,
-			false));
+        const auto createBar = [=] {
+          if (!_history || (_history->peer != peer) || _requestsBar) {
+            return;
+          }
+          _requestsBar = std::make_unique<Ui::RequestsBar>(
+              _topBars.get(),
+              HistoryView::RequestsBarContentByPeer(
+                  peer, st::historyRequestsUserpics.size, false));
 
-	controller()->adaptive().oneColumnValue(
-	) | rpl::on_next([=](bool one) {
-		_requestsBar->setShadowGeometryPostprocess([=](QRect geometry) {
-			if (!one) {
-				geometry.setLeft(geometry.left() + st::lineWidth);
-			}
-			return geometry;
-		});
-	}, _requestsBar->lifetime());
+          controller()->adaptive().oneColumnValue() |
+              rpl::on_next(
+                  [=](bool one) {
+                    _requestsBar->setShadowGeometryPostprocess(
+                        [=](QRect geometry) {
+                          if (!one) {
+                            geometry.setLeft(geometry.left() + st::lineWidth);
+                          }
+                          return geometry;
+                        });
+                  },
+                  _requestsBar->lifetime());
 
-	_requestsBar->barClicks(
-	) | rpl::on_next([=] {
-		RequestsBoxController::Start(controller(), _peer);
-	}, _requestsBar->lifetime());
+          _requestsBar->barClicks() |
+              rpl::on_next(
+                  [=] { RequestsBoxController::Start(controller(), _peer); },
+                  _requestsBar->lifetime());
 
-	_requestsBarHeight = 0;
-	_requestsBar->heightValue(
-	) | rpl::on_next([=](int height) {
-		_topDelta = _preserveScrollTop ? 0 : (height - _requestsBarHeight);
-		_requestsBarHeight = height;
-		updateHistoryGeometry();
-		updateControlsGeometry();
-		_topDelta = 0;
-	}, _requestsBar->lifetime());
+          _requestsBar->heightValue() |
+              rpl::on_next(
+                  [=](int height) {
+                    _topDelta =
+                        _preserveScrollTop ? 0 : (height - _requestsBarHeight);
+                    _requestsBarHeight = height;
+                    updateHistoryGeometry();
+                    updateControlsGeometry();
+                    _topDelta = 0;
+                  },
+                  _requestsBar->lifetime());
 
-	orderWidgets();
+          orderWidgets();
+        };
+        const auto pendingRequests =
+            peer->isChat() ? peer->asChat()->pendingRequestsCount()
+                           : peer->asChannel()->pendingRequestsCount();
+        if (pendingRequests > 0) {
+          createBar();
+        } else {
+          Info::Profile::PendingRequestsCountValue(peer) |
+              rpl::filter([](int count) { return (count > 0); }) |
+              rpl::take(1) |
+              rpl::on_next([=](int) { createBar(); }, _requestsBarLifetime);
+        }
 }
 
 void HistoryWidget::requestMessageData(MsgId msgId) {

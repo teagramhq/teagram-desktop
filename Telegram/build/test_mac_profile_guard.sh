@@ -454,6 +454,7 @@ run_spoiler_cache_symlink_case() {
 	local SOCKET_PATH_READY=false
 	local SOCKET_LISTENER_READY=false
 	local SOCKET_FILE_READY=false
+	local APP_READY=false
 	local FIRST_PROCESS_ALIVE=false
 	local FAILURES=0
 	local quit_status
@@ -490,7 +491,9 @@ run_spoiler_cache_symlink_case() {
 	env HOME="$case_home" TMPDIR="$TEST_TMP_BASE" \
 		TDESKTOP_MAC_PROFILE_TEST_HOME="$case_home" \
 		TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST=1 \
-		"$APP" >"$START_LOG" 2>&1 &
+		TDESKTOP_MAC_EMOJI_CACHE_FOLDER_REGRESSION=1 \
+		TDESKTOP_MAC_PROFILE_TEST_WAIT_FOR_APP_READY=1 \
+		"$APP" -noupdate -debug >"$START_LOG" 2>&1 &
 	FIRST_PID=$!
 	for ((attempt = 0; attempt < 150; ++attempt)); do
 		if grep -F -q "Working dir: $PROFILE/" "$PROFILE/log.txt" 2>/dev/null; then
@@ -508,6 +511,9 @@ run_spoiler_cache_symlink_case() {
 		if has_start_record "Mac profile IPC ready: listening=1 full_server_name=$SOCKET_PATH"; then
 			SOCKET_LISTENER_READY=true
 		fi
+		if has_start_record "Mac profile app ready: startup=complete"; then
+			APP_READY=true
+		fi
 		if [[ -S "$SOCKET_PATH" ]]; then
 			SOCKET_FILE_READY=true
 		fi
@@ -520,6 +526,7 @@ run_spoiler_cache_symlink_case() {
 			&& "$SOCKET_PATH_READY" == true \
 			&& "$SOCKET_LISTENER_READY" == true \
 			&& "$SOCKET_FILE_READY" == true \
+			&& "$APP_READY" == true \
 			&& "$FIRST_PROCESS_ALIVE" == true ]]; then
 			break
 		fi
@@ -536,6 +543,12 @@ run_spoiler_cache_symlink_case() {
 		"expected=$LOCK_PATH found=$(find_lock_path)" || FAILURES=$((FAILURES + 1))
 	report_result "${case_name}_bound_socket" "$SOCKET_LISTENER_READY" \
 		"path=$SOCKET_PATH filesystem_socket=$SOCKET_FILE_READY" || FAILURES=$((FAILURES + 1))
+	report_result "${case_name}_app_ready" "$APP_READY" \
+		"marker=Mac profile app ready: startup=complete" || FAILURES=$((FAILURES + 1))
+	if [[ "$APP_READY" != true ]]; then
+		cat "$START_LOG" >&2
+		return 1
+	fi
 	if ! fixture_unchanged "$fixture" "$fixture_is_file" "$fixture_contents"; then
 		report_result "${case_name}_fixture_untouched" false "fixture=$fixture" || FAILURES=$((FAILURES + 1))
 	else
@@ -574,10 +587,13 @@ run_spoiler_cache_symlink_case() {
 		"status=$first_status" || FAILURES=$((FAILURES + 1))
 	refusal="$(grep -F 'class=group-container callsite=emojiCacheFolder' \
 		"$START_LOG" "$PROFILE/log.txt" 2>/dev/null || true)"
-	if [[ -n "$refusal" ]]; then
+	if [[ -n "$refusal" ]] && grep -F -q \
+		'Mac emoji cache folder regression: rejected=1' "$START_LOG"; then
 		report_result "${case_name}_cache_refusal" true "$refusal"
 	else
-		report_result "${case_name}_cache_refusal" false "missing protected-path refusal from emojiCacheFolder" || FAILURES=$((FAILURES + 1))
+		report_result "${case_name}_cache_refusal" false \
+			"missing rejected emojiCacheFolder result or protected-path refusal" \
+			|| FAILURES=$((FAILURES + 1))
 	fi
 	if ! fixture_unchanged "$fixture" "$fixture_is_file" "$fixture_contents"; then
 		report_result "${case_name}_fixture_untouched_after_exit" false "fixture=$fixture" || FAILURES=$((FAILURES + 1))
@@ -1708,7 +1724,7 @@ if ! work_value_within_budget \
 fi
 local chat_switch_evidence
 chat_switch_evidence="$(grep -E \
-	'^Cache chat switch latency regression: seeded_directories=125 seeded_files=169 reactions=73 hydrated_documents=292 chat_switches=73 attach_menu_bot_count=[0-9]+ minimized_restore=1 initial_history_window_activated=1 all_chat_switch_windows_activated=1 minimized_switch_ns=[0-9]+ minimized_restore_budget_ns=50000000 max_hydration_ns=[0-9]+ max_hydration_work_ns=[0-9]+ hydration_scheduler_preemption_proven=[01] max_switch_ns=[0-9]+ max_switch_work_ns=[0-9]+ max_recurring_switch_work_ns=[0-9]+ max_switch_estimated_work_ns=[0-9]+ max_recurring_switch_estimated_work_ns=[0-9]+ max_switch_index=[0-9]+ max_switch_peer_id=[0-9]+ switch_scheduler_preemption_proven=[01] attach_menu_first_hover_ns=[0-9]+ attach_menu_hover_ns=[0-9]+ attach_menu_update_hover_ns=[0-9]+ attach_menu_uncached_peer_ns=[0-9]+ attach_menu_first_hover_callback_cpu_ns=[0-9]+ attach_menu_update_hover_callback_cpu_ns=[0-9]+ attach_menu_uncached_peer_callback_cpu_ns=[0-9]+ attach_menu_first_hover_callback_wall_ns=[0-9]+ attach_menu_update_hover_callback_wall_ns=[0-9]+ attach_menu_uncached_peer_callback_wall_ns=[0-9]+ attach_menu_scheduler_preemption_proven=[01] attach_menu_cached=1 attach_menu_invalidated=1 attach_menu_build_deferred=1 attach_menu_uncached_ready=1 attach_menu_uncached_deferred_failures=0 attach_menu_uncached_missing_bot_failures=0 attach_menu_uncached_build_count_failures=0 attach_menu_cache_bound=1 pending_reveal_after_controls_geometry=1 chat_switch_compose_ui_reused=1 translate_bar_reused=1 translate_bar_tracks_history=1 field_autocomplete_suggestions_ready=1 menu_commands_unfocused=[01] bot_commands_unfocused=1 history_chat_mode_invalidation_rebuilt=1 dialog_histories_ready=1 synthetic_histories_ready=1 peer_scoped_update_routing=1 max_stall_ns=[0-9]+ within_budgets=1\.$' \
+	'^Cache chat switch latency regression: seeded_directories=125 seeded_files=169 reactions=73 hydrated_documents=292 chat_switches=73 attach_menu_bot_count=[0-9]+ minimized_restore=1 initial_history_window_activated=1 all_chat_switch_windows_activated=1 minimized_switch_ns=[0-9]+ minimized_restore_budget_ns=50000000 max_hydration_ns=[0-9]+ max_hydration_work_ns=[0-9]+ hydration_scheduler_preemption_proven=[01] max_switch_ns=[0-9]+ max_switch_work_ns=[0-9]+ max_recurring_switch_work_ns=[0-9]+ max_switch_estimated_work_ns=[0-9]+ max_recurring_switch_estimated_work_ns=[0-9]+ max_switch_index=[0-9]+ max_switch_peer_id=[0-9]+ switch_scheduler_preemption_proven=[01] attach_menu_first_hover_ns=[0-9]+ attach_menu_hover_ns=[0-9]+ attach_menu_update_hover_ns=[0-9]+ attach_menu_uncached_peer_ns=[0-9]+ attach_menu_first_hover_callback_cpu_ns=[0-9]+ attach_menu_update_hover_callback_cpu_ns=[0-9]+ attach_menu_uncached_peer_callback_cpu_ns=[0-9]+ attach_menu_first_hover_callback_wall_ns=[0-9]+ attach_menu_update_hover_callback_wall_ns=[0-9]+ attach_menu_uncached_peer_callback_wall_ns=[0-9]+ attach_menu_scheduler_preemption_proven=[01] attach_menu_cached=1 attach_menu_invalidated=1 attach_menu_build_deferred=1 attach_menu_uncached_ready=1 attach_menu_uncached_deferred_failures=0 attach_menu_uncached_missing_bot_failures=0 attach_menu_uncached_build_count_failures=0 attach_menu_cache_bound=1 pending_reveal_after_controls_geometry=1 chat_switch_compose_ui_reused=1 translate_bar_reused=1 translate_bar_tracks_history=1 field_autocomplete_suggestions_ready=1 menu_commands_unfocused=[01] bot_commands_unfocused=1 history_chat_mode_invalidation_rebuilt=1 dialog_histories_ready=1 synthetic_histories_ready=1 peer_scoped_update_routing=1 requests_bar_empty_deferred=1 requests_bar_created_after_pending_update=1 max_stall_ns=[0-9]+ within_budgets=1\.$' \
 	"$AUTH_LOG" || true)"
 if [[ -z "$chat_switch_evidence" ]]; then
 	cat "$AUTH_LOG" >&2

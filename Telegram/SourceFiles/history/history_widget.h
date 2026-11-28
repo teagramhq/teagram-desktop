@@ -337,7 +337,10 @@ public:
 	translateBarForRegressionTest() const {
 		return _translateBar.get();
 	}
-	void hideFieldAutocompleteForRegressionTest();
+        [[nodiscard]] bool requestsBarCreatedForRegressionTest() const {
+          return bool(_requestsBar);
+        }
+        void hideFieldAutocompleteForRegressionTest();
 	void sendForRegressionTest(Api::SendOptions options);
 	void chooseReactionForRegressionTest(FullMsgId context,
 										 Data::ReactionId id);
@@ -941,7 +944,8 @@ private:
 	rpl::lifetime _groupCallBarContentLifetime;
 	std::unique_ptr<Ui::GroupCallBar> _groupCallBar;
 	int _groupCallBarHeight = 0;
-	std::unique_ptr<Ui::RequestsBar> _requestsBar;
+        rpl::lifetime _requestsBarLifetime;
+        std::unique_ptr<Ui::RequestsBar> _requestsBar;
 	int _requestsBarHeight = 0;
 
 	base::unique_qptr<Ui::SlideWrap<Ui::RpWidget>> _sponsoredMessageBar;

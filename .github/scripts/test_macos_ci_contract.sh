@@ -599,6 +599,26 @@ for source in \
   grep -Fq -- "$source" <<< "$protected_path_sources" \
     || contract_fail "The protected-path define must stay scoped to $source."
 done
+grep -Fq 'TDESKTOP_MAC_EMOJI_CACHE_FOLDER_REGRESSION' \
+  Telegram/SourceFiles/core/application.cpp \
+  || contract_fail 'The protected-path profile fixture must exercise emojiCacheFolder in the app.'
+grep -Fq 'Mac emoji cache folder regression: rejected=%d' \
+  Telegram/SourceFiles/core/application.cpp \
+  || contract_fail 'The profile fixture must report the emoji cache path decision.'
+grep -Fq 'TDESKTOP_MAC_PROFILE_TEST_WAIT_FOR_APP_READY' \
+  Telegram/SourceFiles/core/application.cpp \
+  || contract_fail 'The profile fixture must publish startup readiness only after the app is ready.'
+grep -Fq 'Mac profile app ready: startup=complete' \
+  Telegram/SourceFiles/core/application.cpp \
+  || contract_fail 'The profile fixture must expose a startup completion marker.'
+for profile_marker in \
+  TDESKTOP_MAC_EMOJI_CACHE_FOLDER_REGRESSION=1 \
+  TDESKTOP_MAC_PROFILE_TEST_WAIT_FOR_APP_READY=1; do
+  grep -Fq "$profile_marker" Telegram/build/test_mac_profile_guard.sh \
+    || contract_fail "The profile IPC harness must set $profile_marker."
+done
+grep -Fq 'APP_READY' Telegram/build/test_mac_profile_guard.sh \
+  || contract_fail 'The profile IPC harness must wait for the app-ready marker before sending quit.'
 hash_expression="\${{ hashFiles('CCACHE_KEY.txt') }}"
 profile_expression="\${{ steps.ccache-profile.outputs.name }}"
 require_step_field "$mac_workflow" build-macos 'Teagram compiler cache.' '.uses | sub("@.*", "")' \
@@ -1493,7 +1513,7 @@ Cache startup watchdog stall: cache=cache started_at=2026-11-06T00:47:53.000Z du
 Cache access latency regression: cache=media_cache seeded_directories=125 seeded_files=169 closed_clear_missing_active=1 cache_initialization_ns=120678959 initialization_allowed=1 queued_ops_before_ready=1 queued_ops_passed=1 cache_usable_ns=120763125 under_10s=1 max_main_thread_work_ns=48247625 max_startup_estimated_work_ns=48247625 max_heartbeat_gap_ns=48247625 max_heartbeat_gap_work_ns=48247625 heartbeat_gap_process_work_ns=25000000 heartbeat_gap_started_at=2026-11-06T00:47:53.000Z startup_heartbeat_gap_count=0 startup_uncovered_heartbeat_gaps=0 startup_heartbeat_gap_coverage_proven=1 startup_stall_count=0 max_startup_stall_ns=0 startup_stall_main_thread_work_ns=0 startup_stall_process_work_ns=0 startup_stall_started_at=none startup_stall_heartbeat_gap_started_at=none startup_stall_scheduler_samples=0 startup_stall_scheduler_running=0 startup_stall_scheduler_waiting=0 startup_stall_scheduler_uninterruptible=0 startup_stall_scheduler_other=0 startup_stall_scheduler_trace=none startup_stall_stack_captured=0 startup_stall_evidence_matched=0 startup_stall_scheduler_preemption_proven=0 startup_within_budget=1 first_access_ns=83292 under_50ms=1 root_swap_refused=1 direct_fallback_closed=1 root_restored=1 startup_walks=2 main_thread_walks=0.
 First messages.getDialogs handler latency regression: seeded_directories=125 seeded_files=169 requests=1 parsed=1 chats=2 dialogs=1 messages=73 documents=73 cache_walks=2 max_handler_ns=9893666 main_thread_cpu_ns=9893666 blocked_estimate_ns=0 estimated_work_ns=9893666 trace=R within_budget=1 cpu_only_within_budget=1 runner_noise_eligible=0 under_50ms=1.
 Initial history selection: peer_id=281474977760707 wall_ns=135344750 main_thread_work_ns=40000000 blocked_estimate_ns=0 estimated_work_ns=40000000 budget_ns=50000000 trace=R within_budget=1 cpu_only_within_budget=1 scheduler_preemption_proven=0.
-Cache chat switch latency regression: seeded_directories=125 seeded_files=169 reactions=73 hydrated_documents=292 chat_switches=73 attach_menu_bot_count=20 minimized_restore=1 initial_history_window_activated=1 all_chat_switch_windows_activated=1 minimized_switch_ns=45000000 minimized_restore_budget_ns=50000000 max_hydration_ns=5210625 max_hydration_work_ns=4000000 hydration_scheduler_preemption_proven=0 max_switch_ns=45000000 max_switch_work_ns=40000000 max_recurring_switch_work_ns=40000000 max_switch_estimated_work_ns=40000000 max_recurring_switch_estimated_work_ns=40000000 max_switch_index=3 max_switch_peer_id=281474976711707 switch_scheduler_preemption_proven=0 attach_menu_first_hover_ns=12000000 attach_menu_hover_ns=92000000 attach_menu_update_hover_ns=11000000 attach_menu_uncached_peer_ns=20000000 attach_menu_first_hover_callback_cpu_ns=12000000 attach_menu_update_hover_callback_cpu_ns=1000000 attach_menu_uncached_peer_callback_cpu_ns=20000000 attach_menu_first_hover_callback_wall_ns=92000000 attach_menu_update_hover_callback_wall_ns=92000000 attach_menu_uncached_peer_callback_wall_ns=92000000 attach_menu_scheduler_preemption_proven=0 attach_menu_cached=1 attach_menu_invalidated=1 attach_menu_build_deferred=1 attach_menu_uncached_ready=1 attach_menu_uncached_deferred_failures=0 attach_menu_uncached_missing_bot_failures=0 attach_menu_uncached_build_count_failures=0 attach_menu_cache_bound=1 pending_reveal_after_controls_geometry=1 chat_switch_compose_ui_reused=1 translate_bar_reused=1 translate_bar_tracks_history=1 field_autocomplete_suggestions_ready=1 menu_commands_unfocused=1 bot_commands_unfocused=1 history_chat_mode_invalidation_rebuilt=1 dialog_histories_ready=1 synthetic_histories_ready=1 peer_scoped_update_routing=1 max_stall_ns=40000000 within_budgets=1.
+Cache chat switch latency regression: seeded_directories=125 seeded_files=169 reactions=73 hydrated_documents=292 chat_switches=73 attach_menu_bot_count=20 minimized_restore=1 initial_history_window_activated=1 all_chat_switch_windows_activated=1 minimized_switch_ns=45000000 minimized_restore_budget_ns=50000000 max_hydration_ns=5210625 max_hydration_work_ns=4000000 hydration_scheduler_preemption_proven=0 max_switch_ns=45000000 max_switch_work_ns=40000000 max_recurring_switch_work_ns=40000000 max_switch_estimated_work_ns=40000000 max_recurring_switch_estimated_work_ns=40000000 max_switch_index=3 max_switch_peer_id=281474976711707 switch_scheduler_preemption_proven=0 attach_menu_first_hover_ns=12000000 attach_menu_hover_ns=92000000 attach_menu_update_hover_ns=11000000 attach_menu_uncached_peer_ns=20000000 attach_menu_first_hover_callback_cpu_ns=12000000 attach_menu_update_hover_callback_cpu_ns=1000000 attach_menu_uncached_peer_callback_cpu_ns=20000000 attach_menu_first_hover_callback_wall_ns=92000000 attach_menu_update_hover_callback_wall_ns=92000000 attach_menu_uncached_peer_callback_wall_ns=92000000 attach_menu_scheduler_preemption_proven=0 attach_menu_cached=1 attach_menu_invalidated=1 attach_menu_build_deferred=1 attach_menu_uncached_ready=1 attach_menu_uncached_deferred_failures=0 attach_menu_uncached_missing_bot_failures=0 attach_menu_uncached_build_count_failures=0 attach_menu_cache_bound=1 pending_reveal_after_controls_geometry=1 chat_switch_compose_ui_reused=1 translate_bar_reused=1 translate_bar_tracks_history=1 field_autocomplete_suggestions_ready=1 menu_commands_unfocused=1 bot_commands_unfocused=1 history_chat_mode_invalidation_rebuilt=1 dialog_histories_ready=1 synthetic_histories_ready=1 peer_scoped_update_routing=1 requests_bar_empty_deferred=1 requests_bar_created_after_pending_update=1 max_stall_ns=40000000 within_budgets=1.
 Attach-menu callback work: cached_hover_wall_ns=92000000 cached_hover_estimated_work_ns=12000000 first_hover_estimated_work_ns=12000000 invalidation_estimated_work_ns=1000000 uncached_peer_estimated_work_ns=20000000 budget_ns=50000000.
 EOF
 sed \
@@ -2230,6 +2250,9 @@ grep -Fq 'attachMenuHoverNanoseconds' "$temp_dir/cache-chat-switch-regression.cp
   && grep -Fq 'RecentSchedulerSamplesForTesting' "$temp_dir/cache-chat-switch-regression.cpp" \
   && grep -Fq 'SchedulerTraceForInterval' "$temp_dir/cache-chat-switch-regression.cpp" \
   || contract_fail 'The cache regression must measure attach-menu hover and identify the slowest peer switch.'
+grep -Fq 'requestsBarDeferredForEmptyPeer' "$temp_dir/cache-chat-switch-regression.cpp" \
+  && grep -Fq 'requestsBarCreatedAfterPendingUpdate' "$temp_dir/cache-chat-switch-regression.cpp" \
+  || contract_fail 'The cache regression must verify lazy requests-bar creation and its pending-count update.'
 grep -Fq 'schedulerTraceComplete = true' Telegram/SourceFiles/core/ui_stall_watchdog.cpp \
 	&& grep -Fq 'schedulerSampleOffsetsNanoseconds' Telegram/SourceFiles/core/ui_stall_watchdog.h \
   || contract_fail 'The watchdog must retain completed per-ack scheduler samples for chat-switch windows.'

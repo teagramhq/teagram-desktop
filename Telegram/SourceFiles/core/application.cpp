@@ -377,6 +377,16 @@ void Application::run() {
 	Ui::StartCachedCorners();
 	Ui::Emoji::Init();
 
+#if defined(Q_OS_MAC) && defined(TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST)
+        if (qEnvironmentVariableIsSet(
+                "TDESKTOP_MAC_EMOJI_CACHE_FOLDER_REGRESSION")) {
+          const auto folder = Ui::Integration::Instance().emojiCacheFolder();
+          std::fprintf(stderr,
+                       "Mac emoji cache folder regression: rejected=%d\n",
+                       folder.isEmpty());
+        }
+#endif // Q_OS_MAC && TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST
+
 #if defined(TDESKTOP_LIFECYCLE_REGRESSION)
 	if (fontStartupRegression) {
 #ifdef Q_OS_MAC
@@ -593,7 +603,14 @@ void Application::run() {
 
 	processCreatedWindow(_lastActivePrimaryWindow);
 
-	Test::Fire(u"launch_finished"_q);
+#if defined(Q_OS_MAC) && defined(TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST)
+        if (qEnvironmentVariableIsSet(
+                "TDESKTOP_MAC_PROFILE_TEST_WAIT_FOR_APP_READY")) {
+          std::fprintf(stderr, "Mac profile app ready: startup=complete\n");
+        }
+#endif // Q_OS_MAC && TDESKTOP_MAC_PROTECTED_PATH_INTEGRATION_TEST
+
+        Test::Fire(u"launch_finished"_q);
 	Test::Start();
 }
 
