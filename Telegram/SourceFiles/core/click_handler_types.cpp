@@ -286,8 +286,7 @@ void HiddenUrlClickHandler::Open(QString url, QVariant context) {
 		url = external;
 	}
 	const auto originController = my.sessionWindow.get();
-	if (Core::FragmentLinkV1::IsV1UrlCandidate(url)) {
-		Core::TryOpenFragmentLinkV1(url, context);
+	if (Core::TryOpenFragmentLinkV1(url, context)) {
 		return;
 	}
 	url = Core::TryConvertUrlToLocal(
